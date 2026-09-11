@@ -101,7 +101,7 @@ export const TOOLS: ToolMetadata[] = [
   {
     id: 'pdfToWord',
     title: 'PDF to Word',
-    description: 'Extract text from a PDF into an editable .docx document.',
+    description: 'Extract text into a .docx document, detecting real headings by font size.',
     icon: 'FileText',
     color: '#2563EB',
     category: 'convert',
@@ -110,7 +110,7 @@ export const TOOLS: ToolMetadata[] = [
   {
     id: 'wordToPdf',
     title: 'Word to PDF',
-    description: 'Convert a .docx document into a PDF.',
+    description: 'Convert a .docx document into a PDF, keeping fonts, tables, and named styles.',
     icon: 'FileType',
     color: '#1E40AF',
     category: 'convert',
@@ -119,7 +119,7 @@ export const TOOLS: ToolMetadata[] = [
   {
     id: 'pdfToPpt',
     title: 'PDF to PowerPoint',
-    description: 'Turn every PDF page into a slide in a new .pptx presentation.',
+    description: 'Turn every PDF page into a slide, with real editable text frames on top.',
     icon: 'Presentation',
     color: '#F59E0B',
     category: 'convert',
@@ -128,7 +128,7 @@ export const TOOLS: ToolMetadata[] = [
   {
     id: 'pptToPdf',
     title: 'PowerPoint to PDF',
-    description: 'Convert a .pptx presentation into a PDF.',
+    description: 'Convert a .pptx presentation into a PDF, keeping real backgrounds, colors, and layout.',
     icon: 'MonitorPlay',
     color: '#B45309',
     category: 'convert',

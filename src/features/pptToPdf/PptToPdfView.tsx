@@ -10,7 +10,7 @@ import type { PptToPdfPayload, OfficeConversionResult } from '../../types/worker
 const TOOL_METADATA: ToolMetadata = {
   id: 'pptToPdf',
   title: 'PowerPoint to PDF',
-  description: 'Convert a .pptx presentation into a PDF.',
+  description: 'Convert a .pptx presentation into a PDF, keeping real backgrounds, colors, and layout.',
   icon: 'MonitorPlay',
   color: '#F59E0B',
   category: 'convert',
@@ -104,8 +104,9 @@ export const PptToPdfView: React.FC<PptToPdfViewProps> = ({ onBack }) => {
             <span>Ready to Convert</span>
           </h3>
           <p className="text-sm text-slate-600 dark:text-slate-400">
-            This carries over each slide's text content into a new PDF (one page per slide). Slide
-            design, images, and animations from the original presentation are not preserved.
+            Redraws each slide with its real background (including gradients), shape fills, tables,
+            bullets, and text color/bold/italic/position — one PDF page per slide, at the slide's real
+            dimensions. Embedded pictures (PNG/JPEG) and layout placeholders are preserved.
           </p>
         </div>
       )}

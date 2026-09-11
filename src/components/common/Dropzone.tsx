@@ -119,8 +119,10 @@ export const Dropzone: React.FC<DropzoneProps> = ({
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
-          if ((e.key === 'Enter' || e.key === ' ') && !disabled && !isValidating) {
-            fileInputRef.current?.click();
+          if (e.key === 'Enter' || e.key === ' ') {
+            if (!disabled && !isValidating) {
+              fileInputRef.current?.click();
+            }
           }
         }}
         className={`relative flex flex-col items-center justify-center p-8 sm:p-14 border-2 border-dashed rounded-3xl cursor-pointer transition-all duration-300 ease-out-expo outline-hidden focus:ring-4 focus:ring-brand-500/20 ${

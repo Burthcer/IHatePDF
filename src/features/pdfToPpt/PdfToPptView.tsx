@@ -11,7 +11,7 @@ import type { BuildPptxPayload, OfficeConversionResult } from '../../types/worke
 const TOOL_METADATA: ToolMetadata = {
   id: 'pdfToPpt',
   title: 'PDF to PowerPoint',
-  description: 'Turn every PDF page into a slide in a new .pptx presentation.',
+  description: 'Turn every PDF page into a slide, with real editable text frames on top.',
   icon: 'Presentation',
   color: '#F59E0B',
   category: 'convert',
@@ -28,7 +28,7 @@ export const PdfToPptView: React.FC<PdfToPptViewProps> = ({ initialFiles = [], o
   const [result, setResult] = useState<OfficeConversionResult | null>(null);
   const [renderProgress, setRenderProgress] = useState<{ current: number; total: number } | null>(null);
 
-  const { renderAllPageImages } = usePdfRenderer();
+  const { renderAllPageImages, extractPositionedText } = usePdfRenderer();
   const { runTask, isProcessing, progress, stage, error, resetState } =
     useWorkerBridge<OfficeConversionResult>(
       () => new Worker(new URL('./buildPptx.worker.ts', import.meta.url), { type: 'module' })
@@ -55,9 +55,10 @@ export const PdfToPptView: React.FC<PdfToPptViewProps> = ({ initialFiles = [], o
       const slides = await renderAllPageImages(file.rawBuffer, 1280, (current, total) =>
         setRenderProgress({ current, total })
       );
+      const pageText = await extractPositionedText(file.rawBuffer);
       setRenderProgress(null);
 
-      const payload: BuildPptxPayload = { slides, fileName: file.name };
+      const payload: BuildPptxPayload = { slides, pageText, fileName: file.name };
       const res = await runTask<BuildPptxPayload>('BUILD_PPTX', payload);
       setResult(res);
     } catch (err) {
@@ -111,8 +112,10 @@ export const PdfToPptView: React.FC<PdfToPptViewProps> = ({ initialFiles = [], o
             <span>Ready to Convert</span>
           </h3>
           <p className="text-sm text-slate-600 dark:text-slate-400">
-            Each page is rendered as a full-slide image — this preserves exact visual appearance, but
-            slide content is an image, not editable text or shapes.
+            Each page is rendered as a full-slide image for exact visual appearance, with each line
+            of real text also placed on top as an editable, selectable text box at its true position
+            and size. Text color/bold aren't detected from the source PDF, so overlaid text renders
+            in plain dark grey.
           </p>
         </div>
       )}

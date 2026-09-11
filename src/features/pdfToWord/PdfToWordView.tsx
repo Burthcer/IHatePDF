@@ -11,7 +11,7 @@ import type { PdfToWordPayload, OfficeConversionResult } from '../../types/worke
 const TOOL_METADATA: ToolMetadata = {
   id: 'pdfToWord',
   title: 'PDF to Word',
-  description: 'Extract text from a PDF into an editable .docx document.',
+  description: 'Extract text into a .docx document, detecting real headings by font size.',
   icon: 'FileText',
   color: '#0284C7',
   category: 'convert',
@@ -28,7 +28,7 @@ export const PdfToWordView: React.FC<PdfToWordViewProps> = ({ initialFiles = [],
   const [result, setResult] = useState<OfficeConversionResult | null>(null);
   const [extractProgress, setExtractProgress] = useState<{ current: number; total: number } | null>(null);
 
-  const { extractAllText } = usePdfRenderer();
+  const { extractStyledParagraphs } = usePdfRenderer();
   const { runTask, isProcessing, progress, stage, error, resetState } =
     useWorkerBridge<OfficeConversionResult>(
       () => new Worker(new URL('./pdfToWord.worker.ts', import.meta.url), { type: 'module' })
@@ -52,7 +52,7 @@ export const PdfToWordView: React.FC<PdfToWordViewProps> = ({ initialFiles = [],
     const file = files[0];
 
     try {
-      const pages = await extractAllText(file.rawBuffer, (current, total) =>
+      const pages = await extractStyledParagraphs(file.rawBuffer, (current, total) =>
         setExtractProgress({ current, total })
       );
       setExtractProgress(null);
@@ -111,8 +111,9 @@ export const PdfToWordView: React.FC<PdfToWordViewProps> = ({ initialFiles = [],
             <span>Ready to Convert</span>
           </h3>
           <p className="text-sm text-slate-600 dark:text-slate-400">
-            This extracts the PDF's text into a formatted .docx document. Layout, images, and tables
-            from the original PDF are not preserved — only the text content carries over.
+            Extracts the PDF's text into a .docx document, detecting headings by their real font
+            size (large text becomes a Heading, not a plain paragraph) and keeping each paragraph's
+            actual size. Per-run color, images, and tables aren't preserved.
           </p>
         </div>
       )}

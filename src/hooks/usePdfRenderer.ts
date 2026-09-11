@@ -360,6 +360,150 @@ export function usePdfRenderer(options: UsePdfRendererOptions = {}) {
   );
 
   /**
+   * Like `extractAllText`, but keeps each paragraph's dominant font size —
+   * for PDF -> Word's heading detection (a paragraph notably larger than
+   * the document's median body size is rendered as a real docx Heading,
+   * not just a plain paragraph).
+   */
+  const extractStyledParagraphs = useCallback(
+    async (
+      pdfBuffer: ArrayBuffer,
+      onProgress?: (current: number, total: number) => void
+    ): Promise<Array<{ pageNumber: number; paragraphs: Array<{ text: string; fontSizePt: number }> }>> => {
+      let doc: PDFDocumentProxy | null = null;
+      try {
+        doc = await loadDocument(pdfBuffer);
+        const total = doc.numPages;
+        const pages: Array<{ pageNumber: number; paragraphs: Array<{ text: string; fontSizePt: number }> }> = [];
+
+        for (let i = 1; i <= total; i++) {
+          const page = await doc.getPage(i);
+          const textContent = await page.getTextContent();
+          const rawItems = textContent.items.filter(
+            (item): item is import('pdfjs-dist/types/src/display/api').TextItem => 'str' in item
+          );
+
+          const paragraphs: Array<{ text: string; fontSizePt: number }> = [];
+          let currentText = '';
+          let currentSizes: number[] = [];
+          let prevY: number | null = null;
+
+          const flush = () => {
+            const text = currentText.trim();
+            if (text) {
+              const avgSize = currentSizes.reduce((a, b) => a + b, 0) / Math.max(1, currentSizes.length);
+              paragraphs.push({ text, fontSizePt: avgSize || 12 });
+            }
+            currentText = '';
+            currentSizes = [];
+          };
+
+          for (const item of rawItems) {
+            if (item.str === '') continue;
+            const y = item.transform[5];
+            const size = Math.hypot(item.transform[2], item.transform[3]) || 12;
+            const h = item.height || size || 10;
+
+            if (prevY === null) {
+              currentText = item.str;
+            } else {
+              const gap = Math.abs(prevY - y);
+              if (gap > h * 1.6) {
+                flush();
+                currentText = item.str;
+              } else if (gap > h * 0.3) {
+                currentText += ' ' + item.str;
+              } else {
+                currentText += item.str;
+              }
+            }
+            currentSizes.push(size);
+            prevY = y;
+          }
+          flush();
+
+          pages.push({ pageNumber: i, paragraphs });
+          onProgress?.(i, total);
+        }
+
+        return pages;
+      } finally {
+        if (doc) {
+          await memoryManager.destroyPdfDocument(doc);
+          activeDocumentsRef.current = activeDocumentsRef.current.filter((d) => d !== doc);
+        }
+      }
+    },
+    [loadDocument]
+  );
+
+  /**
+   * Extracts every text item's real position and size (not grouped into
+   * paragraphs), for PDF -> PowerPoint's positioned text frames and PDF ->
+   * Word's heading detection. `xPt`/`yPt` are the item's baseline in PDF
+   * user space (origin bottom-left, matching pdf-lib); `fontSizePt` is
+   * derived from the item's transform matrix scale.
+   *
+   * Per-run color and bold/italic are deliberately NOT extracted here —
+   * pdf.js's TextItem doesn't expose color, and reliably inferring
+   * bold/italic would need a second lookup into the page's font resources
+   * (`commonObjs`) that isn't dependable enough across arbitrary PDFs to be
+   * worth shipping as a "real" feature. Position and size are.
+   */
+  const extractPositionedText = useCallback(
+    async (
+      pdfBuffer: ArrayBuffer,
+      onProgress?: (current: number, total: number) => void
+    ): Promise<
+      Array<{
+        pageNumber: number;
+        widthPt: number;
+        heightPt: number;
+        items: Array<{ text: string; xPt: number; yPt: number; fontSizePt: number }>;
+      }>
+    > => {
+      let doc: PDFDocumentProxy | null = null;
+      try {
+        doc = await loadDocument(pdfBuffer);
+        const total = doc.numPages;
+        const pages: Array<{
+          pageNumber: number;
+          widthPt: number;
+          heightPt: number;
+          items: Array<{ text: string; xPt: number; yPt: number; fontSizePt: number }>;
+        }> = [];
+
+        for (let i = 1; i <= total; i++) {
+          const page = await doc.getPage(i);
+          const viewport = page.getViewport({ scale: 1 });
+          const textContent = await page.getTextContent();
+          const rawItems = textContent.items.filter(
+            (item): item is import('pdfjs-dist/types/src/display/api').TextItem => 'str' in item
+          );
+          const items = rawItems
+            .filter((item) => item.str.trim() !== '')
+            .map((item) => ({
+              text: item.str,
+              xPt: item.transform[4],
+              yPt: item.transform[5],
+              fontSizePt: Math.hypot(item.transform[2], item.transform[3]) || 12,
+            }));
+          pages.push({ pageNumber: i, widthPt: viewport.width, heightPt: viewport.height, items });
+          onProgress?.(i, total);
+        }
+
+        return pages;
+      } finally {
+        if (doc) {
+          await memoryManager.destroyPdfDocument(doc);
+          activeDocumentsRef.current = activeDocumentsRef.current.filter((d) => d !== doc);
+        }
+      }
+    },
+    [loadDocument]
+  );
+
+  /**
    * Extracts a row/cell table structure from every page, for PDF -> Excel.
    */
   const extractAllTables = useCallback(
@@ -460,6 +604,8 @@ export function usePdfRenderer(options: UsePdfRendererOptions = {}) {
     renderThumbnails,
     renderPage,
     extractAllText,
+    extractStyledParagraphs,
+    extractPositionedText,
     extractAllTables,
     renderAllPageImages,
     getPageCount,
