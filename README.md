@@ -2,9 +2,11 @@
 
 **Every tool you need to work with PDFs — 100% client-side, zero server, zero uploads.**
 
-![Architecture](https://img.shields.io/badge/Architecture-100%25%20Client--Side%20%2F%20Zero--Server-16A34A?style=for-the-badge)
-![Platform](https://img.shields.io/badge/Platform-Windows%20Desktop-2563EB?style=for-the-badge)
-![License](https://img.shields.io/badge/AI%20Features-None%2C%20Ever-DC2626?style=for-the-badge)
+![Architecture](https://img.shields.io/badge/architecture-100%25%20client--side-16A34A)
+![Platform](https://img.shields.io/badge/platform-Windows-2563EB?logo=windows&logoColor=white)
+![Stack](https://img.shields.io/badge/stack-React%20%2B%20Electron-61DAFB?logo=react&logoColor=black)
+![AI](https://img.shields.io/badge/AI%20features-none-DC2626)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 IHatePDF is a full PDF tool suite modeled on the iLovePDF catalog — merge, split, compress, convert, sign, redact, and more — with one hard rule: your files never leave your device. There is no backend, no upload endpoint, and no network call in the entire application. Every operation runs inside your own browser (or the bundled Electron shell) using WebAssembly and Web Workers.
 
