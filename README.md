@@ -1,0 +1,85 @@
+# IHatePDF
+
+**Every tool you need to work with PDFs — 100% client-side, zero server, zero uploads.**
+
+![Architecture](https://img.shields.io/badge/Architecture-100%25%20Client--Side%20%2F%20Zero--Server-16A34A?style=for-the-badge)
+![Platform](https://img.shields.io/badge/Platform-Windows%20Desktop-2563EB?style=for-the-badge)
+![License](https://img.shields.io/badge/AI%20Features-None%2C%20Ever-DC2626?style=for-the-badge)
+
+IHatePDF is a full PDF tool suite modeled on the iLovePDF catalog — merge, split, compress, convert, sign, redact, and more — with one hard rule: your files never leave your device. There is no backend, no upload endpoint, and no network call in the entire application. Every operation runs inside your own browser (or the bundled Electron shell) using WebAssembly and Web Workers.
+
+There are deliberately no "AI" features — no summarizer, no AI translate, no cloud inference of any kind.
+
+---
+
+## Tool Matrix
+
+| Category | Tools |
+|---|---|
+| **Organize** | Merge PDF · Split PDF · Organize PDF (reorder/delete/duplicate pages) · Rotate PDF · Crop PDF · Compare PDF |
+| **Optimize** | Compress PDF · Repair PDF |
+| **Convert** | PDF ↔ Word · PDF ↔ PowerPoint · PDF ↔ JPG/PNG · PDF ↔ Excel · PDF → Markdown · HTML → PDF · Scan to PDF (camera capture) |
+| **Edit** | Watermark · Page Numbers · PDF Forms (fill AcroForm fields) · Edit PDF (freeform text/images) · Redact PDF (irrecoverable) |
+| **Security** | Protect PDF (AES-256 encryption) · Unlock PDF · PDF → PDF/A (archival metadata) · Sign PDF |
+
+28 tools total. Full technical details, Web Worker contracts, and per-tool verification status are in [`HANDOFF.md`](./HANDOFF.md).
+
+---
+
+## Security Model: Why Your Files Never Leave Your Device
+
+IHatePDF has no backend. There is nothing to upload to, and nothing that could leak your documents even if it wanted to:
+
+- **No network layer** — the app makes zero HTTP requests for document processing. Open your browser's Network tab during any operation and you'll see nothing but the initial page load.
+- **RAM-only buffers** — files are read into `ArrayBuffer`s in memory and processed there. Nothing is written to disk unless you explicitly click Download.
+- **Web Workers + WebAssembly** — every heavy operation (rendering, compression, encryption, format conversion) runs in an isolated Worker thread using `pdf-lib` and `pdfjs-dist`, not a remote service.
+- **No accounts, no telemetry, no analytics** — there's nothing to sign in to and nothing phoning home.
+- **Open source and verifiable** — don't take our word for it. Read the source, or just watch the Network tab yourself.
+
+This isn't a policy promise ("we won't look at your files") — it's an architectural guarantee ("there is no server that could").
+
+### Known dependency vulnerabilities (disclosed, not hidden)
+
+`npm audit` flags two: `xlsx` (SheetJS, used by PDF↔Excel) has a prototype-pollution/ReDoS advisory with no fix on npm — the patched build lives on SheetJS's own CDN, which this project deliberately doesn't fetch from (that would violate the zero-network/zero-CDN architecture above). Excel→PDF is the affected direction (it reads an `.xlsx` you choose to open — same trust boundary as opening any other local file); PDF→Excel only *writes* with the library and is unaffected. `image-size` (a transitive dependency of `pptxgenjs`, used by PDF→PowerPoint) has a DoS advisory in its ICNS/JXL/HEIF parsers - this app never feeds it anything but JPEGs it renders itself, so that code path isn't reachable through normal use. Both are why an unqualified `npm audit fix --force` isn't run blindly here: it would downgrade `pptxgenjs` from v4 to v1 for a vector this app doesn't trigger.
+
+---
+
+## Installation
+
+### Windows Desktop App (recommended)
+
+1. Download `IHatePDF-Setup.exe` from the [Releases](../../releases) page.
+2. Run the installer. You'll get a normal setup wizard — choose your install location, and choose whether to create a desktop shortcut and Start Menu entry.
+3. Launch IHatePDF from your Start Menu or desktop shortcut. No installation of Node, Python, or any runtime is required — everything is bundled.
+
+### Run it in any browser instead
+
+IHatePDF is also a static web app — see [Local Development](#local-development) below to build and serve `dist/` yourself, no Electron required.
+
+---
+
+## Local Development
+
+```bash
+# Install dependencies
+npm install
+
+# Start the Vite dev server (hot-reload)
+npm run dev
+
+# Type-check and build production web assets to dist/
+npm run build
+
+# Package the Windows installer (IHatePDF-Setup.exe) into FinalApp/
+npm run build:exe
+```
+
+**Stack:** React + TypeScript + Vite, Tailwind CSS, `pdf-lib` + `pdfjs-dist` for all PDF processing (in Web Workers), Electron for the desktop shell, `electron-builder` (NSIS target) for the Windows installer.
+
+No PDF processing dependency ever makes a network call — everything ships bundled in the app.
+
+---
+
+## License & Contributions
+
+[MIT](LICENSE). See [`HANDOFF.md`](./HANDOFF.md) for architecture details, worker contracts, and the current implementation/verification status of every tool before contributing.

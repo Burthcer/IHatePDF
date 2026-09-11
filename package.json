@@ -1,0 +1,75 @@
+{
+  "name": "ihatepdf",
+  "private": true,
+  "version": "0.0.0",
+  "description": "IHatePDF - 100% client-side, zero-server PDF tools suite.",
+  "author": "IHatePDF",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "electron:dev": "electron .",
+    "build:exe": "npm run build && electron-builder --win nsis"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "docx": "^9.7.1",
+    "lucide-react": "^1.43.0",
+    "mammoth": "^1.12.2",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.3.289",
+    "pptxgenjs": "^4.0.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwind-merge": "^3.6.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.1.0",
+    "autoprefixer": "^10.5.5",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
+    "oxlint": "^1.79.0",
+    "postcss": "^8.5.28",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.2"
+  },
+  "build": {
+    "appId": "com.ihatepdf.desktop",
+    "productName": "IHatePDF",
+    "directories": {
+      "output": "FinalApp"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "IHatePDF",
+      "artifactName": "IHatePDF-Setup.${ext}",
+      "uninstallDisplayName": "IHatePDF",
+      "runAfterFinish": true
+    }
+  }
+}
