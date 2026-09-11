@@ -174,8 +174,18 @@ export interface ExtractedPageText {
   paragraphs: string[];
 }
 
+export interface StyledParagraph {
+  text: string;
+  fontSizePt: number;
+}
+
+export interface StyledPageText {
+  pageNumber: number;
+  paragraphs: StyledParagraph[];
+}
+
 export interface PdfToWordPayload {
-  pages: ExtractedPageText[];
+  pages: StyledPageText[];
   fileName: string;
 }
 
@@ -191,8 +201,23 @@ export interface PptxSlideImage {
   heightPt: number;
 }
 
+export interface PositionedTextItem {
+  text: string;
+  xPt: number;
+  yPt: number;
+  fontSizePt: number;
+}
+
+export interface PositionedPageText {
+  pageNumber: number;
+  widthPt: number;
+  heightPt: number;
+  items: PositionedTextItem[];
+}
+
 export interface BuildPptxPayload {
   slides: PptxSlideImage[];
+  pageText?: PositionedPageText[];
   fileName: string;
 }
 

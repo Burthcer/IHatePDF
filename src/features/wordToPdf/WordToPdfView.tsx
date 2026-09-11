@@ -1,16 +1,16 @@
 import React, { useState } from 'react';
 import { GenericFileInput } from '../../components/common/GenericFileInput';
 import { ToolLayout } from '../../components/layout/ToolLayout';
-import { useWorkerBridge } from '../../hooks/useWorkerBridge';
 import { memoryManager } from '../../services/memoryManager';
+import { renderDocxToPdf } from './renderDocxToPdf';
 import { FileType } from 'lucide-react';
 import type { PDFFile, ToolMetadata } from '../../types/pdf';
-import type { WordToPdfPayload, OfficeConversionResult } from '../../types/worker';
+import type { OfficeConversionResult } from '../../types/worker';
 
 const TOOL_METADATA: ToolMetadata = {
   id: 'wordToPdf',
   title: 'Word to PDF',
-  description: 'Convert a .docx document into a PDF.',
+  description: 'Convert a .docx document into a PDF, preserving layout, styles, and tables.',
   icon: 'FileType',
   color: '#0284C7',
   category: 'convert',
@@ -24,11 +24,10 @@ interface WordToPdfViewProps {
 export const WordToPdfView: React.FC<WordToPdfViewProps> = ({ onBack }) => {
   const [files, setFiles] = useState<PDFFile[]>([]);
   const [result, setResult] = useState<OfficeConversionResult | null>(null);
-
-  const { runTask, isProcessing, progress, stage, error, resetState } =
-    useWorkerBridge<OfficeConversionResult>(
-      () => new Worker(new URL('./wordToPdf.worker.ts', import.meta.url), { type: 'module' })
-    );
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [stage, setStage] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
   const handleFileAccepted = async (file: File) => {
     const buffer = await file.arrayBuffer();
@@ -43,26 +42,32 @@ export const WordToPdfView: React.FC<WordToPdfViewProps> = ({ onBack }) => {
       },
     ]);
     setResult(null);
-    resetState();
+    setError(null);
   };
 
   const handleClearFiles = () => {
     setFiles([]);
     setResult(null);
-    resetState();
+    setError(null);
   };
 
   const executeConvert = async () => {
     if (files.length === 0) return;
     const file = files[0];
-
+    setIsProcessing(true);
+    setError(null);
+    setProgress(0);
     try {
-      const bufferCopy = file.rawBuffer.slice(0);
-      const payload: WordToPdfPayload = { fileBuffer: bufferCopy, fileName: file.name };
-      const res = await runTask<WordToPdfPayload>('WORD_TO_PDF', payload, [bufferCopy]);
+      const res = await renderDocxToPdf(file.rawBuffer.slice(0), file.name, (p, s) => {
+        setProgress(p);
+        setStage(s);
+      });
       setResult(res);
     } catch (err) {
       console.error('Word to PDF error:', err);
+      setError(err instanceof Error ? err.message : 'Failed to convert Word document to PDF');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -104,8 +109,10 @@ export const WordToPdfView: React.FC<WordToPdfViewProps> = ({ onBack }) => {
             <span>Ready to Convert</span>
           </h3>
           <p className="text-sm text-slate-600 dark:text-slate-400">
-            This carries over the document's text content into a new PDF. Bold/italic formatting,
-            images, and tables from the original document are not preserved in this version.
+            Renders the document as real styled HTML (fonts, bold/italic, headings, tables with
+            borders, colored callouts from named styles) and rasterizes it page-by-page into the PDF.
+            Text picked with an ad-hoc color swatch (not tied to a named style) won't carry its color
+            over — that's a limitation of the underlying converter, not this step.
           </p>
         </div>
       )}

@@ -24,21 +24,19 @@ const FONT_SIZE = 9;
 const ROW_HEIGHT = 18;
 const MAX_COL_WIDTH = 140;
 
-self.addEventListener('message', async (event: MessageEvent<WorkerRequest<XlsxToPdfPayload>>) => {
-  const { id, action, payload } = event.data;
-
-  if (action !== 'XLSX_TO_PDF') return;
-
-  const emitProgress = (progress: number, stage: string) => {
-    const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-    self.postMessage(msg);
-  };
-
-  try {
-    const { fileBuffer, fileName } = payload;
+/**
+ * Full .xlsx -> PDF conversion. Plain exported function (no Worker/`self`
+ * dependency) so it's directly testable from a Node script — see
+ * scripts/test-all-features.ts.
+ */
+export async function convertXlsxToPdf(
+  fileBuffer: ArrayBuffer,
+  fileName: string,
+  onProgress?: (progress: number, stage: string) => void
+): Promise<OfficeConversionResult> {
     if (!fileBuffer) throw new Error('No Excel file provided.');
 
-    emitProgress(15, 'Reading workbook...');
+    onProgress?.(15, 'Reading workbook...');
     const workbook = XLSX.read(new Uint8Array(fileBuffer), { type: 'array' });
     if (workbook.SheetNames.length === 0) throw new Error('This workbook has no sheets.');
 
@@ -47,7 +45,7 @@ self.addEventListener('message', async (event: MessageEvent<WorkerRequest<XlsxTo
     const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
     const availW = PAGE_WIDTH - MARGIN * 2;
 
-    emitProgress(30, 'Laying out sheets...');
+    onProgress?.(30, 'Laying out sheets...');
     workbook.SheetNames.forEach((sheetName, sheetIdx) => {
       const ws = workbook.Sheets[sheetName];
       const rows: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
@@ -87,29 +85,40 @@ self.addEventListener('message', async (event: MessageEvent<WorkerRequest<XlsxTo
         }
       }
 
-      emitProgress(30 + Math.round(((sheetIdx + 1) / workbook.SheetNames.length) * 55), `Laying out "${sheetName}"...`);
+      onProgress?.(30 + Math.round(((sheetIdx + 1) / workbook.SheetNames.length) * 55), `Laying out "${sheetName}"...`);
     });
 
-    emitProgress(95, 'Saving PDF...');
+    onProgress?.(95, 'Saving PDF...');
     const pdfBytes = await pdfDoc.save();
     const resultBuffer = pdfBytes.buffer.slice(
       pdfBytes.byteOffset,
       pdfBytes.byteOffset + pdfBytes.byteLength
     ) as ArrayBuffer;
 
-    emitProgress(100, 'PDF ready.');
+    onProgress?.(100, 'PDF ready.');
     const cleanBaseName = fileName.replace(/\.[^/.]+$/, '');
-    const result: OfficeConversionResult = {
+    return {
       fileName: `${cleanBaseName}.pdf`,
       buffer: resultBuffer,
       size: resultBuffer.byteLength,
       mimeType: 'application/pdf',
     };
+}
+
+if (typeof self !== 'undefined') self.addEventListener('message', async (event: MessageEvent<WorkerRequest<XlsxToPdfPayload>>) => {
+  const { id, action, payload } = event.data;
+  if (action !== 'XLSX_TO_PDF') return;
+
+  try {
+    const result = await convertXlsxToPdf(payload.fileBuffer, payload.fileName, (progress, stage) => {
+      const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
+      self.postMessage(msg);
+    });
     const responseMsg: WorkerIncomingMessage<OfficeConversionResult> = {
       type: 'RESPONSE',
       payload: { id, success: true, data: result },
     };
-    (self as any).postMessage(responseMsg, [resultBuffer]);
+    (self as any).postMessage(responseMsg, [result.buffer]);
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : 'Failed to convert Excel to PDF';
     const responseMsg: WorkerIncomingMessage = {
