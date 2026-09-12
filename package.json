@@ -1,7 +1,7 @@
 {
   "name": "ihatepdf",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "IHatePDF - 100% client-side, zero-server PDF tools suite.",
   "author": "IHatePDF",
   "type": "module",
@@ -10,6 +10,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test": "tsx scripts/verify-conversions.ts",
     "preview": "vite preview",
     "electron:dev": "electron .",
     "build:exe": "npm run build && electron-builder --win nsis"

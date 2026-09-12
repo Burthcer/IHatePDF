@@ -231,6 +231,7 @@ export interface OfficeConversionResult {
   buffer: ArrayBuffer;
   size: number;
   mimeType: string;
+  pageCount?: number;
 }
 
 /** One rendered page image (data URL) for PDF -> JPG. */

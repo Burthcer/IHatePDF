@@ -48,6 +48,13 @@ class MemoryManagerService {
   }
 
   /**
+   * Alias for revokeUrl to manage Object URL lifecycles explicitly.
+   */
+  public revokeManagedObjectURL(url: string): void {
+    this.revokeUrl(url);
+  }
+
+  /**
    * Batch revokes all tracked Object URLs.
    */
   public revokeAllUrls(): void {
@@ -135,4 +142,5 @@ class MemoryManagerService {
 }
 
 export const memoryManager = new MemoryManagerService();
+export const revokeManagedObjectURL = (url: string) => memoryManager.revokeManagedObjectURL(url);
 export default memoryManager;

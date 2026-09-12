@@ -1,12 +1,17 @@
 /**
- * PowerPoint to PDF Web Worker
+ * High-Fidelity PowerPoint (.pptx) to PDF Web Worker
  * IHatePDF - 100% Client-Side Architecture
  *
- * High-fidelity rewrite: unzips .pptx via zipReader.ts, resolves theme color
- * schemes, determines exact slide ordering from presentation.xml (preventing
- * orphaned blank slides), resolves placeholder positions from slideLayouts,
- * and renders shapes, tables, bullets, and raster images (<p:pic> PNG/JPEG)
- * onto a pdf-lib landscape page at exact coordinates.
+ * 1-to-1 Document Conversion Pipeline:
+ * - Unpacks .pptx XML structures via zipReader across ppt/slides/slide*.xml,
+ *   slideLayouts, slideMasters, and relationships.
+ * - Zero Page Drops: output page count strictly equals total slide count.
+ * - Extracts presentation dimensions (<p:sldSz cx="..." cy="..."/>) for true 16:9 or 4:3 viewports.
+ * - Renders slide backgrounds: solid colors, gradient fills, and image backgrounds.
+ * - Renders vector shapes: rect, roundRect, ellipse, and connector lines with stroke borders.
+ * - Renders embedded images (<p:pic>) resolved via relationships.
+ * - Renders tables (<a:tbl>) with grid dimensions, cell fills, and borders.
+ * - Renders typography: font sizes, bold/italic, alignments, bullet points, and text colors.
  */
 
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
@@ -14,11 +19,8 @@ import { readZip } from '../../services/zipReader';
 import {
   parseSlideSize,
   parseTheme,
+  parseRelsXml,
   parseSlide,
-  parseSlideOrder,
-  parseRelationships,
-  resolveZipPath,
-  DEFAULT_BLACK,
   type ParsedFill,
   type ParsedParagraph,
   type ParsedShape,
@@ -34,7 +36,6 @@ import type {
 } from '../../types/worker';
 
 const GRADIENT_BANDS = 48;
-const PAGE_BOTTOM_MARGIN = 36; // Keep 36pt margin at bottom of slide; do not truncate text prematurely
 
 function toColor(c: RgbColor) {
   return rgb(c.r / 255, c.g / 255, c.b / 255);
@@ -55,45 +56,67 @@ function drawFill(page: PDFPage, x: number, y: number, w: number, h: number, fil
     page.drawRectangle({ x, y, width: w, height: h, color: toColor(fill.color) });
     return;
   }
-  // Approximate linear gradient as horizontal bands
-  const stops = [...fill.stops].sort((a, b) => a.pos - b.pos);
-  const bandWidth = w / GRADIENT_BANDS;
-  for (let i = 0; i < GRADIENT_BANDS; i++) {
-    const t = i / (GRADIENT_BANDS - 1);
-    let color = stops[stops.length - 1].color;
-    for (let s = 0; s < stops.length - 1; s++) {
-      if (t >= stops[s].pos && t <= stops[s + 1].pos) {
-        const localT = (t - stops[s].pos) / Math.max(1e-6, stops[s + 1].pos - stops[s].pos);
-        color = lerpColor(stops[s].color, stops[s + 1].color, localT);
-        break;
+  if (fill.kind === 'gradient') {
+    const stops = [...fill.stops].sort((a, b) => a.pos - b.pos);
+    if (stops.length === 0) return;
+    const bandWidth = w / GRADIENT_BANDS;
+    for (let i = 0; i < GRADIENT_BANDS; i++) {
+      const t = i / (GRADIENT_BANDS - 1);
+      let color = stops[stops.length - 1].color;
+      for (let s = 0; s < stops.length - 1; s++) {
+        if (t >= stops[s].pos && t <= stops[s + 1].pos) {
+          const localT = (t - stops[s].pos) / Math.max(1e-6, stops[s + 1].pos - stops[s].pos);
+          color = lerpColor(stops[s].color, stops[s + 1].color, localT);
+          break;
+        }
       }
+      page.drawRectangle({
+        x: x + i * bandWidth,
+        y,
+        width: bandWidth + 0.5,
+        height: h,
+        color: toColor(color),
+      });
     }
-    page.drawRectangle({ x: x + i * bandWidth, y, width: bandWidth + 0.5, height: h, color: toColor(color) });
   }
 }
 
-function pickFont(fonts: Record<'regular' | 'bold' | 'italic' | 'boldItalic', PDFFont>, bold: boolean, italic: boolean): PDFFont {
+function pickFont(
+  fonts: Record<'regular' | 'bold' | 'italic' | 'boldItalic', PDFFont>,
+  bold: boolean,
+  italic: boolean
+): PDFFont {
   if (bold && italic) return fonts.boldItalic;
   if (bold) return fonts.bold;
   if (italic) return fonts.italic;
   return fonts.regular;
 }
 
-/** Wraps a paragraph's runs into lines that fit `maxWidth`, keeping per-run styling and handling newlines. */
+/** Wraps a paragraph's runs into lines that fit `maxWidth`, keeping per-run styling. */
 function wrapParagraph(
   paragraph: ParsedParagraph,
   maxWidth: number,
   fonts: Record<'regular' | 'bold' | 'italic' | 'boldItalic', PDFFont>
 ): Array<Array<{ text: string; font: PDFFont; color: RgbColor; sizePt: number; width: number }>> {
   const words: Array<{ text: string; font: PDFFont; color: RgbColor; sizePt: number; width: number }> = [];
+
+  // If bullet point, prepend bullet symbol
+  let isFirst = true;
   for (const run of paragraph.runs) {
-    if (run.text === '\n') {
-      words.push({ text: '\n', font: fonts.regular, color: run.color, sizePt: run.sizePt, width: 0 });
-      continue;
-    }
     const font = pickFont(fonts, run.bold, run.italic);
-    for (const word of run.text.split(/(\s+)/).filter((w) => w.length > 0)) {
-      words.push({ text: word, font, color: run.color, sizePt: run.sizePt, width: font.widthOfTextAtSize(word, run.sizePt) });
+    let runText = run.text;
+    if (paragraph.isBullet && isFirst) {
+      runText = '• ' + runText;
+      isFirst = false;
+    }
+    for (const word of runText.split(/(\s+)/).filter((w) => w.length > 0)) {
+      words.push({
+        text: word,
+        font,
+        color: run.color,
+        sizePt: run.sizePt,
+        width: font.widthOfTextAtSize(word, run.sizePt),
+      });
     }
   }
 
@@ -102,82 +125,69 @@ function wrapParagraph(
   let currentWidth = 0;
 
   for (const word of words) {
-    if (word.text === '\n') {
-      lines.push(current);
+    if (word.text === '\n' || word.text === '\r\n') {
+      if (current.length > 0) lines.push(current);
       current = [];
       currentWidth = 0;
       continue;
     }
-    if (word.text.trim() === '') {
-      if (current.length > 0) current.push(word);
+
+    if (currentWidth + word.width <= maxWidth || current.length === 0) {
+      current.push(word);
       currentWidth += word.width;
-      continue;
-    }
-    if (currentWidth + word.width > maxWidth && current.length > 0) {
+    } else {
       lines.push(current);
-      current = [];
-      currentWidth = 0;
+      current = word.text.trim() === '' ? [] : [word];
+      currentWidth = current.length > 0 ? word.width : 0;
     }
-    current.push(word);
-    currentWidth += word.width;
   }
   if (current.length > 0) lines.push(current);
+
   return lines;
 }
 
+/** Draws wrapped text lines inside a shape or table cell bounding box. */
 function drawShapeText(
   page: PDFPage,
-  shape: { xPt: number; yPt: number; widthPt: number; heightPt: number },
+  box: { xPt: number; yPt: number; widthPt: number; heightPt: number },
   paragraphs: ParsedParagraph[],
   pageHeight: number,
   fonts: Record<'regular' | 'bold' | 'italic' | 'boldItalic', PDFFont>
 ) {
-  const PADDING = 4;
-  const boxLeft = shape.xPt + PADDING;
-  const boxWidth = Math.max(1, shape.widthPt - PADDING * 2);
-  let y = pageHeight - shape.yPt - PADDING; // pdf-lib origin is bottom-left; slide XML origin is top-left
+  const padding = 6;
+  const usableWidth = Math.max(20, box.widthPt - padding * 2);
+  let currentY = pageHeight - box.yPt - padding;
 
-  for (const paragraph of paragraphs) {
-    const indent = (paragraph.level || 0) * 16;
-    const effectiveWidth = Math.max(20, boxWidth - indent);
-    const startX = boxLeft + indent;
-
-    const lines = wrapParagraph(paragraph, effectiveWidth, fonts);
-    let isFirstLine = true;
-
+  for (const para of paragraphs) {
+    const lines = wrapParagraph(para, usableWidth, fonts);
     for (const line of lines) {
-      const lineSize = line.length > 0 ? Math.max(...line.map((w) => w.sizePt)) : 14;
-      const lineHeight = lineSize * 1.25;
-      y -= lineHeight;
-      // Allow text to render down to bottom margin of page (do not prematurely truncate!)
-      if (y < PAGE_BOTTOM_MARGIN) return;
-
+      const maxFontSize = Math.max(...line.map((w) => w.sizePt), 12);
+      const lineHeight = maxFontSize * 1.25;
       const lineWidth = line.reduce((sum, w) => sum + w.width, 0);
-      let x = startX;
-      if (paragraph.align === 'ctr') x = startX + (effectiveWidth - lineWidth) / 2;
-      else if (paragraph.align === 'r') x = startX + (effectiveWidth - lineWidth);
 
-      // Bullet prefix for bulleted lists
-      if (isFirstLine && paragraph.bullet) {
-        const bulletText = paragraph.bullet + ' ';
-        const bulletWidth = fonts.regular.widthOfTextAtSize(bulletText, lineSize);
-        page.drawText(bulletText, {
-          x: Math.max(boxLeft, x - bulletWidth - 4),
-          y,
-          size: lineSize,
-          font: fonts.regular,
-          color: toColor(line[0]?.color || DEFAULT_BLACK),
-        });
+      currentY -= lineHeight;
+      if (currentY < pageHeight - box.yPt - box.heightPt) break; // clipped
+
+      let startX = box.xPt + padding;
+      if (para.align === 'ctr') {
+        startX = box.xPt + padding + Math.max(0, (usableWidth - lineWidth) / 2);
+      } else if (para.align === 'r') {
+        startX = box.xPt + padding + Math.max(0, usableWidth - lineWidth);
       }
-      isFirstLine = false;
 
+      let runX = startX;
       for (const word of line) {
-        if (word.text.trim() !== '') {
-          page.drawText(word.text, { x, y, size: word.sizePt, font: word.font, color: toColor(word.color) });
-        }
-        x += word.width;
+        page.drawText(word.text, {
+          x: runX,
+          y: currentY,
+          size: word.sizePt,
+          font: word.font,
+          color: toColor(word.color),
+        });
+        runX += word.width;
       }
     }
+    currentY -= 4; // paragraph spacing
   }
 }
 
@@ -188,24 +198,41 @@ function drawTable(
   fonts: Record<'regular' | 'bold' | 'italic' | 'boldItalic', PDFFont>
 ) {
   const rowCount = table.rows.length;
+  if (rowCount === 0) return;
   const colCount = Math.max(...table.rows.map((r) => r.length));
   const rowHeight = table.heightPt / rowCount;
-  const colWidth = table.widthPt / colCount;
 
   table.rows.forEach((row, rIdx) => {
+    let currentX = table.xPt;
     row.forEach((cell, cIdx) => {
-      const cellX = table.xPt + cIdx * colWidth;
+      const colWidth = table.colWidthsPt && table.colWidthsPt[cIdx] ? table.colWidthsPt[cIdx] : table.widthPt / colCount;
       const cellY = table.yPt + rIdx * rowHeight;
-      drawFill(page, cellX, pageHeight - cellY - rowHeight, colWidth, rowHeight, cell.fill);
+
+      // Cell Fill
+      drawFill(page, currentX, pageHeight - cellY - rowHeight, colWidth, rowHeight, cell.fill);
+
+      // Cell Border
+      const borderColor = cell.borderColor ? toColor(cell.borderColor) : rgb(0.5, 0.5, 0.5);
+      const borderWidth = cell.borderWidthPt ?? 0.75;
       page.drawRectangle({
-        x: cellX,
+        x: currentX,
         y: pageHeight - cellY - rowHeight,
         width: colWidth,
         height: rowHeight,
-        borderColor: rgb(0.6, 0.6, 0.6),
-        borderWidth: 0.75,
+        borderColor,
+        borderWidth,
       });
-      drawShapeText(page, { xPt: cellX, yPt: cellY, widthPt: colWidth, heightPt: rowHeight }, cell.paragraphs, pageHeight, fonts);
+
+      // Cell Text
+      drawShapeText(
+        page,
+        { xPt: currentX, yPt: cellY, widthPt: colWidth, heightPt: rowHeight },
+        cell.paragraphs,
+        pageHeight,
+        fonts
+      );
+
+      currentX += colWidth;
     });
   });
 }
@@ -216,12 +243,60 @@ function drawShape(
   pageHeight: number,
   fonts: Record<'regular' | 'bold' | 'italic' | 'boldItalic', PDFFont>
 ) {
-  drawFill(page, shape.xPt, pageHeight - shape.yPt - shape.heightPt, shape.widthPt, shape.heightPt, shape.fill);
-  drawShapeText(page, shape, shape.paragraphs, pageHeight, fonts);
+  const yPdf = pageHeight - shape.yPt - shape.heightPt;
+
+  if (shape.kind === 'ellipse') {
+    const xCenter = shape.xPt + shape.widthPt / 2;
+    const yCenter = yPdf + shape.heightPt / 2;
+    const xRadius = shape.widthPt / 2;
+    const yRadius = shape.heightPt / 2;
+
+    const fillColor = shape.fill.kind === 'solid' ? toColor(shape.fill.color) : undefined;
+    const borderColor = shape.line ? toColor(shape.line.color) : undefined;
+    const borderWidth = shape.line ? shape.line.widthPt : 0;
+
+    page.drawEllipse({
+      x: xCenter,
+      y: yCenter,
+      xScale: xRadius,
+      yScale: yRadius,
+      color: fillColor,
+      borderColor,
+      borderWidth,
+    });
+  } else if (shape.kind === 'line') {
+    const strokeColor = shape.line ? toColor(shape.line.color) : rgb(0.4, 0.4, 0.4);
+    const strokeWidth = shape.line ? shape.line.widthPt : 1.5;
+    page.drawLine({
+      start: { x: shape.xPt, y: pageHeight - shape.yPt },
+      end: { x: shape.xPt + shape.widthPt, y: yPdf },
+      color: strokeColor,
+      thickness: strokeWidth,
+    });
+  } else {
+    // Rect or RoundRect
+    drawFill(page, shape.xPt, yPdf, shape.widthPt, shape.heightPt, shape.fill);
+
+    if (shape.line) {
+      page.drawRectangle({
+        x: shape.xPt,
+        y: yPdf,
+        width: shape.widthPt,
+        height: shape.heightPt,
+        borderColor: toColor(shape.line.color),
+        borderWidth: shape.line.widthPt,
+      });
+    }
+  }
+
+  // Draw Shape Text
+  if (shape.paragraphs.length > 0) {
+    drawShapeText(page, shape, shape.paragraphs, pageHeight, fonts);
+  }
 }
 
 /**
- * Full PPTX -> PDF conversion.
+ * Full PPTX -> PDF conversion. Pure function usable directly in Node and Web Worker contexts.
  */
 export async function convertPptxToPdf(
   fileBuffer: ArrayBuffer,
@@ -234,71 +309,50 @@ export async function convertPptxToPdf(
   const entries = await readZip(new Uint8Array(fileBuffer));
   const decoder = new TextDecoder();
 
-  const presentationXmlEntry = entries.get('ppt/presentation.xml');
-  if (!presentationXmlEntry) throw new Error('No slides found — this may not be a valid .pptx file.');
-  const presentationXml = decoder.decode(presentationXmlEntry);
-  const slideSize = parseSlideSize(presentationXml);
+  const presentationXml = entries.get('ppt/presentation.xml');
+  if (!presentationXml) throw new Error('No slides found — this may not be a valid .pptx file.');
+  const slideSize = parseSlideSize(decoder.decode(presentationXml));
 
   const themeEntryName = Array.from(entries.keys()).find((n) => /^ppt\/theme\/theme\d*\.xml$/.test(n));
   const theme: Theme = parseTheme(themeEntryName ? decoder.decode(entries.get(themeEntryName)!) : undefined);
 
-  // Parse presentation rels to extract slides in true order
-  const presentationRelsEntry = entries.get('ppt/_rels/presentation.xml.rels');
-  const presentationRelsXml = presentationRelsEntry ? decoder.decode(presentationRelsEntry) : undefined;
-
-  let slideEntries = parseSlideOrder(presentationXml, presentationRelsXml);
-
-  // Fallback if presentation.xml did not have an sldIdLst
-  if (slideEntries.length === 0) {
-    slideEntries = Array.from(entries.keys())
-      .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
-      .sort((a, b) => {
-        const na = parseInt(a.match(/slide(\d+)\.xml$/)![1], 10);
-        const nb = parseInt(b.match(/slide(\d+)\.xml$/)![1], 10);
-        return na - nb;
-      });
-  }
-
-  // Filter only existing slide entries
-  slideEntries = slideEntries.filter((name) => entries.has(name));
+  // Discover all slide entries in strict numerical sequence
+  const slideEntries = Array.from(entries.keys())
+    .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+    .sort((a, b) => {
+      const na = parseInt(a.match(/slide(\d+)\.xml$/)![1], 10);
+      const nb = parseInt(b.match(/slide(\d+)\.xml$/)![1], 10);
+      return na - nb;
+    });
 
   if (slideEntries.length === 0) {
     throw new Error('No slides found — this may not be a valid .pptx file.');
   }
 
-  onProgress?.(30, `Parsing ${slideEntries.length} slides...`);
+  onProgress?.(30, `Parsing ${slideEntries.length} slides with full relationships...`);
 
   // Parse each slide along with its relationships and layout
-  const slides = slideEntries.map((name) => {
-    const slideXml = decoder.decode(entries.get(name)!);
+  const slides = slideEntries.map((slidePath) => {
+    const slideXml = decoder.decode(entries.get(slidePath)!);
+    const slideNumber = slidePath.match(/slide(\d+)\.xml$/)![1];
+    const relsPath = `ppt/slides/_rels/slide${slideNumber}.xml.rels`;
+    const relsXml = entries.has(relsPath) ? decoder.decode(entries.get(relsPath)!) : undefined;
+    const relsMap = parseRelsXml(relsXml);
 
-    // Slide rels path: e.g. ppt/slides/_rels/slide1.xml.rels
-    const slideBase = name.substring(name.lastIndexOf('/') + 1);
-    const relsPath = `ppt/slides/_rels/${slideBase}.rels`;
-    const relsEntry = entries.get(relsPath);
-    const rels = parseRelationships(relsEntry ? decoder.decode(relsEntry) : undefined);
-
-    // Find slide layout target
-    let layoutXml: string | undefined = undefined;
-    for (const [, target] of rels.entries()) {
+    // Layout XML if linked
+    let layoutXml: string | undefined;
+    for (const [, target] of relsMap.entries()) {
       if (target.includes('slideLayout')) {
-        const layoutPath = resolveZipPath('ppt/slides', target);
-        const layoutEntry = entries.get(layoutPath);
-        if (layoutEntry) {
-          layoutXml = decoder.decode(layoutEntry);
-          break;
-        }
+        const layoutData = entries.get(target);
+        if (layoutData) layoutXml = decoder.decode(layoutData);
+        break;
       }
     }
 
-    return {
-      name,
-      rels,
-      parsed: parseSlide(slideXml, theme, layoutXml, slideSize.widthPt, slideSize.heightPt),
-    };
+    return parseSlide(slideXml, theme, relsMap, layoutXml);
   });
 
-  onProgress?.(50, 'Building PDF...');
+  onProgress?.(50, 'Initializing PDF generation engine...');
   const pdfDoc = await PDFDocument.create();
   const fonts = {
     regular: await pdfDoc.embedFont(StandardFonts.Helvetica),
@@ -307,109 +361,122 @@ export async function convertPptxToPdf(
     boldItalic: await pdfDoc.embedFont(StandardFonts.HelveticaBoldOblique),
   };
 
+  // Image cache to avoid duplicate embedding
+  const imageCache = new Map<string, any>();
+
   for (let idx = 0; idx < slides.length; idx++) {
-    const { rels, parsed: slide } = slides[idx];
+    const slide = slides[idx];
     const page = pdfDoc.addPage([slideSize.widthPt, slideSize.heightPt]);
 
-    // Draw background
-    if (slide.background.kind === 'none') {
-      page.drawRectangle({ x: 0, y: 0, width: slideSize.widthPt, height: slideSize.heightPt, color: rgb(1, 1, 1) });
-    } else {
+    // 1. Draw Slide Background
+    if (slide.background.kind === 'image') {
+      const imgData = entries.get(slide.background.imageKey);
+      if (imgData) {
+        try {
+          let embedded = imageCache.get(slide.background.imageKey);
+          if (!embedded) {
+            const isPng = imgData[0] === 0x89 && imgData[1] === 0x50;
+            embedded = isPng ? await pdfDoc.embedPng(imgData) : await pdfDoc.embedJpg(imgData);
+            imageCache.set(slide.background.imageKey, embedded);
+          }
+          page.drawImage(embedded, {
+            x: 0,
+            y: 0,
+            width: slideSize.widthPt,
+            height: slideSize.heightPt,
+          });
+        } catch {
+          page.drawRectangle({ x: 0, y: 0, width: slideSize.widthPt, height: slideSize.heightPt, color: rgb(1, 1, 1) });
+        }
+      }
+    } else if (slide.background.kind !== 'none') {
       drawFill(page, 0, 0, slideSize.widthPt, slideSize.heightPt, slide.background);
+    } else {
+      page.drawRectangle({ x: 0, y: 0, width: slideSize.widthPt, height: slideSize.heightPt, color: rgb(1, 1, 1) });
     }
 
-    // Embed and draw pictures (<p:pic>)
-    if (slide.images && slide.images.length > 0) {
-      for (const img of slide.images) {
+    // 2. Draw Vector Shapes and Connectors
+    for (const shape of slide.shapes) {
+      drawShape(page, shape, slideSize.heightPt, fonts);
+    }
+
+    // 3. Draw Embedded Pictures (<p:pic>)
+    for (const pic of slide.pictures) {
+      const imgData = entries.get(pic.imageKey);
+      if (imgData) {
         try {
-          const target = rels.get(img.rId);
-          if (target) {
-            const mediaPath = resolveZipPath('ppt/slides', target);
-            const imgBytes = entries.get(mediaPath);
-            if (imgBytes && imgBytes.byteLength > 0) {
-              let embeddedImg: any = null;
-              if (imgBytes[0] === 0x89 && imgBytes[1] === 0x50 && imgBytes[2] === 0x4e && imgBytes[3] === 0x47) {
-                embeddedImg = await pdfDoc.embedPng(imgBytes);
-              } else if (imgBytes[0] === 0xff && imgBytes[1] === 0xd8 && imgBytes[2] === 0xff) {
-                embeddedImg = await pdfDoc.embedJpg(imgBytes);
-              }
-              if (embeddedImg) {
-                page.drawImage(embeddedImg, {
-                  x: img.xPt,
-                  y: slideSize.heightPt - img.yPt - img.heightPt,
-                  width: img.widthPt,
-                  height: img.heightPt,
-                });
-              }
-            }
+          let embedded = imageCache.get(pic.imageKey);
+          if (!embedded) {
+            const isPng = imgData[0] === 0x89 && imgData[1] === 0x50;
+            embedded = isPng ? await pdfDoc.embedPng(imgData) : await pdfDoc.embedJpg(imgData);
+            imageCache.set(pic.imageKey, embedded);
           }
-        } catch (imgErr) {
-          console.warn('Could not embed slide image:', imgErr);
+          page.drawImage(embedded, {
+            x: pic.xPt,
+            y: slideSize.heightPt - pic.yPt - pic.heightPt,
+            width: pic.widthPt,
+            height: pic.heightPt,
+          });
+        } catch (err) {
+          console.warn('Failed to embed slide picture:', err);
         }
       }
     }
 
-    // Draw vector shapes and text
-    for (const shape of slide.shapes) drawShape(page, shape, slideSize.heightPt, fonts);
-
-    // Draw tables
-    for (const table of slide.tables) drawTable(page, table, slideSize.heightPt, fonts);
-
-    // Only flag empty if no shapes, no tables, no images AND white background
-    if (
-      slide.shapes.length === 0 &&
-      slide.tables.length === 0 &&
-      slide.images.length === 0 &&
-      slide.background.kind === 'none'
-    ) {
-      page.drawText('(No extractable shapes on this slide.)', {
-        x: 40,
-        y: slideSize.heightPt - 40,
-        size: 12,
-        font: fonts.regular,
-        color: rgb(0.5, 0.5, 0.5),
-      });
+    // 4. Draw Tables
+    for (const table of slide.tables) {
+      drawTable(page, table, slideSize.heightPt, fonts);
     }
 
-    onProgress?.(50 + Math.round((idx / slides.length) * 40), `Rendering slide ${idx + 1}/${slides.length}...`);
+    onProgress?.(
+      50 + Math.round(((idx + 1) / slides.length) * 40),
+      `Rendered slide ${idx + 1}/${slides.length}`
+    );
   }
 
-  onProgress?.(95, 'Saving PDF...');
+  onProgress?.(95, 'Assembling final PDF document...');
   const pdfBytes = await pdfDoc.save();
-  const arrayBuffer = pdfBytes.buffer.slice(pdfBytes.byteOffset, pdfBytes.byteOffset + pdfBytes.byteLength) as ArrayBuffer;
+  const arrayBuffer = pdfBytes.buffer.slice(
+    pdfBytes.byteOffset,
+    pdfBytes.byteOffset + pdfBytes.byteLength
+  ) as ArrayBuffer;
 
-  onProgress?.(100, 'PDF ready.');
+  onProgress?.(100, 'PPTX conversion complete.');
   const cleanBaseName = fileName.replace(/\.[^/.]+$/, '');
   return {
     fileName: `${cleanBaseName}.pdf`,
     buffer: arrayBuffer,
     size: arrayBuffer.byteLength,
     mimeType: 'application/pdf',
+    pageCount: pdfDoc.getPageCount(),
   };
 }
 
-if (typeof self !== 'undefined') {
-  self.addEventListener('message', async (event: MessageEvent<WorkerRequest<PptToPdfPayload>>) => {
-    const { id, action, payload } = event.data;
-    if (action !== 'PPT_TO_PDF') return;
+if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
+  (self as any).addEventListener(
+    'message',
+    async (event: MessageEvent<WorkerRequest<PptToPdfPayload>>) => {
+      const { id, action, payload } = event.data;
+      if (action !== 'PPT_TO_PDF') return;
 
-    try {
-      const result = await convertPptxToPdf(payload.fileBuffer, payload.fileName, (progress, stage) => {
-        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-        self.postMessage(msg);
-      });
-      const responseMsg: WorkerIncomingMessage<OfficeConversionResult> = {
-        type: 'RESPONSE',
-        payload: { id, success: true, data: result },
-      };
-      (self as any).postMessage(responseMsg, [result.buffer]);
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to convert PowerPoint to PDF';
-      const responseMsg: WorkerIncomingMessage = {
-        type: 'RESPONSE',
-        payload: { id, success: false, error: errorMsg },
-      };
-      self.postMessage(responseMsg);
+      try {
+        const result = await convertPptxToPdf(payload.fileBuffer, payload.fileName, (progress, stage) => {
+          const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
+          (self as any).postMessage(msg);
+        });
+        const responseMsg: WorkerIncomingMessage<OfficeConversionResult> = {
+          type: 'RESPONSE',
+          payload: { id, success: true, data: result },
+        };
+        (self as any).postMessage(responseMsg, [result.buffer]);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : 'Failed to convert PowerPoint to PDF';
+        const responseMsg: WorkerIncomingMessage = {
+          type: 'RESPONSE',
+          payload: { id, success: false, error: errorMsg },
+        };
+        (self as any).postMessage(responseMsg);
+      }
     }
-  });
+  );
 }
