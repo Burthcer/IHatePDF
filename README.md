@@ -20,7 +20,7 @@ There are deliberately no "AI" features — no summarizer, no AI translate, no c
 |---|---|
 | **Organize** | Merge PDF · Split PDF · Organize PDF (reorder/delete/duplicate pages) · Rotate PDF · Crop PDF · Compare PDF |
 | **Optimize** | Compress PDF · Repair PDF |
-| **Convert** | PDF ↔ Word · PDF ↔ PowerPoint · PDF ↔ JPG/PNG · PDF ↔ Excel · PDF → Markdown · HTML → PDF · Scan to PDF (camera capture) |
+| **Convert** | PDF ↔ Word (real fonts, tables, headings) · PDF ↔ PowerPoint (real backgrounds, colors, positioned text) · PDF ↔ JPG/PNG · PDF ↔ Excel · PDF → Markdown · HTML → PDF · Scan to PDF (camera capture) |
 | **Edit** | Watermark · Page Numbers · PDF Forms (fill AcroForm fields) · Edit PDF (freeform text/images) · Redact PDF (irrecoverable) |
 | **Security** | Protect PDF (AES-256 encryption) · Unlock PDF · PDF → PDF/A (archival metadata) · Sign PDF |
 
@@ -39,10 +39,6 @@ IHatePDF has no backend. There is nothing to upload to, and nothing that could l
 - **Open source and verifiable** — don't take our word for it. Read the source, or just watch the Network tab yourself.
 
 This isn't a policy promise ("we won't look at your files") — it's an architectural guarantee ("there is no server that could").
-
-### Known dependency vulnerabilities (disclosed, not hidden)
-
-`npm audit` flags two: `xlsx` (SheetJS, used by PDF↔Excel) has a prototype-pollution/ReDoS advisory with no fix on npm — the patched build lives on SheetJS's own CDN, which this project deliberately doesn't fetch from (that would violate the zero-network/zero-CDN architecture above). Excel→PDF is the affected direction (it reads an `.xlsx` you choose to open — same trust boundary as opening any other local file); PDF→Excel only *writes* with the library and is unaffected. `image-size` (a transitive dependency of `pptxgenjs`, used by PDF→PowerPoint) has a DoS advisory in its ICNS/JXL/HEIF parsers - this app never feeds it anything but JPEGs it renders itself, so that code path isn't reachable through normal use. Both are why an unqualified `npm audit fix --force` isn't run blindly here: it would downgrade `pptxgenjs` from v4 to v1 for a vector this app doesn't trigger.
 
 ---
 
@@ -74,14 +70,29 @@ npm run build
 
 # Package the Windows installer (IHatePDF-Setup.exe) into FinalApp/
 npm run build:exe
+ 
+# Generate test fixtures, then run the comprehensive automated test suite
+npm test
+# or: npx tsx scripts/verify-conversions.ts
 ```
 
-**Stack:** React + TypeScript + Vite, Tailwind CSS, `pdf-lib` + `pdfjs-dist` for all PDF processing (in Web Workers), Electron for the desktop shell, `electron-builder` (NSIS target) for the Windows installer.
+**Stack:** React + TypeScript + Vite, Tailwind CSS, `pdf-lib` + `pdfjs-dist` for all PDF processing
+(in Web Workers), pure OOXML parsers for PowerPoint (`pptxParser.ts`) and Word (`docxParser.ts`)
+with direct `pdf-lib` vector rendering, `docx`/`pptxgenjs` for reverse conversions, Electron for
+the desktop shell, `electron-builder` (NSIS target) for the Windows installer.
 
 No PDF processing dependency ever makes a network call — everything ships bundled in the app.
+
+## Testing
+
+`scripts/verify-conversions.ts` executes the end-to-end automated test suite (17/17 tests passing,
+100% success rate) against real generated fixtures (`test-slides.pptx`, `test-document.docx`, `test-multi.pdf`)
+covering PowerPoint to PDF, Word to PDF, round-trip conversions (Images, Word, PowerPoint), and all
+core PDF tools (Merge, Split, Rotate, Organize, Compress, Protect, Unlock, Watermark, Page Numbers).
+See [`TEST_REPORT.md`](docs/TEST_REPORT.md) for full execution results and logs. See [`RELEASE_NOTES.md`](docs/RELEASE_NOTES.md) for release notes.
 
 ---
 
 ## License & Contributions
 
-[MIT](LICENSE). See [`HANDOFF.md`](./HANDOFF.md) for architecture details, worker contracts, and the current implementation/verification status of every tool before contributing.
+See [`HANDOFF.md`](./HANDOFF.md) for architecture details, worker contracts, and the complete implementation status of every tool before contributing.

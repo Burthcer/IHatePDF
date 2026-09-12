@@ -23,96 +23,104 @@ function formatLabel(format: PageNumbersPayload['format'], n: number, total: num
   return String(n);
 }
 
-self.addEventListener('message', async (event: MessageEvent<WorkerRequest<PageNumbersPayload>>) => {
-  const { id, action, payload } = event.data;
+export async function addPageNumbers(
+  payload: PageNumbersPayload,
+  onProgress?: (progress: number, stage: string) => void
+): Promise<ProcessedPdfResult> {
+  const { fileBuffer, fileName, format, position, fontSize, color, marginMm, startPage, endPage, startingNumber } =
+    payload;
+  if (!fileBuffer) {
+    throw new Error('No PDF buffer provided.');
+  }
 
-  if (action !== 'ADD_PAGE_NUMBERS') return;
+  onProgress?.(10, 'Loading PDF document...');
+  const pdfDoc = await PDFDocument.load(fileBuffer);
+  const pages = pdfDoc.getPages();
+  const totalPages = pages.length;
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const { r, g, b } = hexToRgb01(color);
+  const marginPt = marginMm * MM_TO_PT;
 
-  const emitProgress = (progress: number, stage: string) => {
-    const msg: WorkerIncomingMessage = {
-      type: 'PROGRESS',
-      payload: { id, progress, stage },
-    };
-    self.postMessage(msg);
-  };
+  const from = Math.max(1, startPage) - 1;
+  const to = Math.min(totalPages, endPage || totalPages) - 1;
 
-  try {
-    const { fileBuffer, fileName, format, position, fontSize, color, marginMm, startPage, endPage, startingNumber } =
-      payload;
-    if (!fileBuffer) {
-      throw new Error('No PDF buffer provided.');
+  onProgress?.(35, 'Stamping page numbers...');
+  let counter = startingNumber;
+  for (let i = from; i <= to; i++) {
+    const page = pages[i];
+    const label = formatLabel(format, counter, totalPages);
+    counter++;
+
+    const textWidth = font.widthOfTextAtSize(label, fontSize);
+    const textHeight = font.heightAtSize(fontSize);
+    const { x, y } = computeAnchor(
+      page.getWidth(),
+      page.getHeight(),
+      textWidth,
+      textHeight,
+      position,
+      marginPt
+    );
+
+    page.drawText(label, {
+      x,
+      y,
+      size: fontSize,
+      font,
+      color: rgb(r, g, b),
+    });
+
+    if (to > from) {
+      onProgress?.(35 + Math.round(((i - from) / (to - from)) * 50), `Stamping page ${i + 1}...`);
     }
+  }
 
-    emitProgress(10, 'Loading PDF document...');
-    const pdfDoc = await PDFDocument.load(fileBuffer);
-    const pages = pdfDoc.getPages();
-    const totalPages = pages.length;
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    const { r, g, b } = hexToRgb01(color);
-    const marginPt = marginMm * MM_TO_PT;
+  onProgress?.(90, 'Saving document...');
+  const outBytes = await pdfDoc.save();
+  const resultBuffer = outBytes.buffer.slice(
+    outBytes.byteOffset,
+    outBytes.byteOffset + outBytes.byteLength
+  ) as ArrayBuffer;
 
-    const from = Math.max(1, startPage) - 1;
-    const to = Math.min(totalPages, endPage || totalPages) - 1;
+  onProgress?.(100, 'Page numbers added successfully.');
 
-    emitProgress(35, 'Stamping page numbers...');
-    let counter = startingNumber;
-    for (let i = from; i <= to; i++) {
-      const page = pages[i];
-      const label = formatLabel(format, counter, totalPages);
-      counter++;
+  const cleanBaseName = fileName.replace(/\.[^/.]+$/, '');
+  return {
+    fileName: `${cleanBaseName}_numbered.pdf`,
+    buffer: resultBuffer,
+    size: resultBuffer.byteLength,
+    pageCount: totalPages,
+  };
+}
 
-      const textWidth = font.widthOfTextAtSize(label, fontSize);
-      const textHeight = font.heightAtSize(fontSize);
-      const { x, y } = computeAnchor(
-        page.getWidth(),
-        page.getHeight(),
-        textWidth,
-        textHeight,
-        position,
-        marginPt
-      );
+if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
+  (self as any).addEventListener('message', async (event: MessageEvent<WorkerRequest<PageNumbersPayload>>) => {
+    const { id, action, payload } = event.data;
 
-      page.drawText(label, {
-        x,
-        y,
-        size: fontSize,
-        font,
-        color: rgb(r, g, b),
+    if (action !== 'ADD_PAGE_NUMBERS') return;
+
+    try {
+      const result = await addPageNumbers(payload, (progress, stage) => {
+        const msg: WorkerIncomingMessage = {
+          type: 'PROGRESS',
+          payload: { id, progress, stage },
+        };
+        (self as any).postMessage(msg);
       });
 
-      if (to > from) {
-        emitProgress(35 + Math.round(((i - from) / (to - from)) * 50), `Stamping page ${i + 1}...`);
-      }
+      const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = {
+        type: 'RESPONSE',
+        payload: { id, success: true, data: result },
+      };
+      (self as any).postMessage(responseMsg, [result.buffer]);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to add page numbers';
+      const responseMsg: WorkerIncomingMessage = {
+        type: 'RESPONSE',
+        payload: { id, success: false, error: errorMsg },
+      };
+      (self as any).postMessage(responseMsg);
     }
+  });
+}
 
-    emitProgress(90, 'Saving document...');
-    const outBytes = await pdfDoc.save();
-    const resultBuffer = outBytes.buffer.slice(
-      outBytes.byteOffset,
-      outBytes.byteOffset + outBytes.byteLength
-    ) as ArrayBuffer;
-
-    emitProgress(100, 'Page numbers added successfully.');
-
-    const cleanBaseName = fileName.replace(/\.[^/.]+$/, '');
-    const result: ProcessedPdfResult = {
-      fileName: `${cleanBaseName}_numbered.pdf`,
-      buffer: resultBuffer,
-      size: resultBuffer.byteLength,
-      pageCount: totalPages,
-    };
-
-    const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = {
-      type: 'RESPONSE',
-      payload: { id, success: true, data: result },
-    };
-    (self as any).postMessage(responseMsg, [resultBuffer]);
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : 'Failed to add page numbers';
-    const responseMsg: WorkerIncomingMessage = {
-      type: 'RESPONSE',
-      payload: { id, success: false, error: errorMsg },
-    };
-    self.postMessage(responseMsg);
-  }
-});

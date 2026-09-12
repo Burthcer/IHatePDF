@@ -89,8 +89,7 @@ export async function buildDocxFromPages(
 
   onProgress?.(70, 'Packing .docx archive...');
   const doc = new Document({ sections: [{ children }] });
-  const blob = await Packer.toBlob(doc);
-  const arrayBuffer = await blob.arrayBuffer();
+  const arrayBuffer = await Packer.toArrayBuffer(doc);
 
   onProgress?.(100, 'Word document ready.');
   const cleanBaseName = fileName.replace(/\.[^/.]+$/, '');

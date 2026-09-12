@@ -105,8 +105,9 @@ export const PptToPdfView: React.FC<PptToPdfViewProps> = ({ onBack }) => {
           </h3>
           <p className="text-sm text-slate-600 dark:text-slate-400">
             Redraws each slide with its real background (including gradients), shape fills, tables,
-            bullets, and text color/bold/italic/position — one PDF page per slide, at the slide's real
-            dimensions. Embedded pictures (PNG/JPEG) and layout placeholders are preserved.
+            and text color/bold/italic/position — one PDF page per slide, at the slide's real
+            dimensions. Embedded pictures aren't extracted yet, and non-rectangular shapes render as
+            rectangles.
           </p>
         </div>
       )}

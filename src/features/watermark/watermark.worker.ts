@@ -38,134 +38,142 @@ function moveWatermarkBehindContent(page: import('pdf-lib').PDFPage): void {
   }
 }
 
-self.addEventListener('message', async (event: MessageEvent<WorkerRequest<WatermarkPayload>>) => {
-  const { id, action, payload } = event.data;
-
-  if (action !== 'WATERMARK_PDF') return;
-
-  const emitProgress = (progress: number, stage: string) => {
-    const msg: WorkerIncomingMessage = {
-      type: 'PROGRESS',
-      payload: { id, progress, stage },
-    };
-    self.postMessage(msg);
-  };
-
-  try {
-    const {
-      fileBuffer,
-      fileName,
-      mode,
-      text,
-      imageBytes,
-      imageType,
-      fontSize,
-      color,
-      opacity,
-      rotationDegrees,
-      position,
-      layer,
-    } = payload;
-    if (!fileBuffer) throw new Error('No PDF buffer provided.');
-    if (mode === 'text' && (!text || text.trim().length === 0)) {
-      throw new Error('Watermark text is required.');
-    }
-    if (mode === 'image' && !imageBytes) {
-      throw new Error('Watermark image is required.');
-    }
-
-    emitProgress(10, 'Loading PDF document...');
-    const pdfDoc = await PDFDocument.load(fileBuffer);
-    const pages = pdfDoc.getPages();
-
-    let font: import('pdf-lib').PDFFont | null = null;
-    let embeddedImage: import('pdf-lib').PDFImage | null = null;
-    const { r, g, b } = hexToRgb01(color);
-
-    if (mode === 'text') {
-      font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-    } else {
-      emitProgress(20, 'Embedding watermark image...');
-      embeddedImage =
-        imageType === 'jpg'
-          ? await pdfDoc.embedJpg(new Uint8Array(imageBytes!))
-          : await pdfDoc.embedPng(new Uint8Array(imageBytes!));
-    }
-
-    emitProgress(35, 'Stamping watermark onto pages...');
-    for (let i = 0; i < pages.length; i++) {
-      const page = pages[i];
-      const pageWidth = page.getWidth();
-      const pageHeight = page.getHeight();
-
-      if (mode === 'text' && font) {
-        const contentWidth = font.widthOfTextAtSize(text!, fontSize);
-        const contentHeight = font.heightAtSize(fontSize);
-        const { x, y } = computeAnchor(pageWidth, pageHeight, contentWidth, contentHeight, position, 24);
-
-        page.drawText(text!, {
-          x,
-          y,
-          size: fontSize,
-          font,
-          color: rgb(r, g, b),
-          opacity,
-          rotate: degrees(rotationDegrees),
-        });
-      } else if (embeddedImage) {
-        const scale = Math.min((pageWidth * 0.5) / embeddedImage.width, (pageHeight * 0.5) / embeddedImage.height, 1);
-        const contentWidth = embeddedImage.width * scale;
-        const contentHeight = embeddedImage.height * scale;
-        const { x, y } = computeAnchor(pageWidth, pageHeight, contentWidth, contentHeight, position, 24);
-
-        page.drawImage(embeddedImage, {
-          x,
-          y,
-          width: contentWidth,
-          height: contentHeight,
-          opacity,
-          rotate: degrees(rotationDegrees),
-        });
-      }
-
-      if (layer === 'below') {
-        moveWatermarkBehindContent(page);
-      }
-
-      if (pages.length > 1) {
-        emitProgress(35 + Math.round((i / pages.length) * 50), `Stamping page ${i + 1} of ${pages.length}...`);
-      }
-    }
-
-    emitProgress(90, 'Saving watermarked document...');
-    const outBytes = await pdfDoc.save();
-    const resultBuffer = outBytes.buffer.slice(
-      outBytes.byteOffset,
-      outBytes.byteOffset + outBytes.byteLength
-    ) as ArrayBuffer;
-
-    emitProgress(100, 'Watermark applied successfully.');
-
-    const cleanBaseName = fileName.replace(/\.[^/.]+$/, '');
-    const result: ProcessedPdfResult = {
-      fileName: `${cleanBaseName}_watermarked.pdf`,
-      buffer: resultBuffer,
-      size: resultBuffer.byteLength,
-      pageCount: pages.length,
-    };
-
-    const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = {
-      type: 'RESPONSE',
-      payload: { id, success: true, data: result },
-    };
-    const transferList = [resultBuffer];
-    (self as any).postMessage(responseMsg, transferList);
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : 'Failed to watermark PDF document';
-    const responseMsg: WorkerIncomingMessage = {
-      type: 'RESPONSE',
-      payload: { id, success: false, error: errorMsg },
-    };
-    self.postMessage(responseMsg);
+export async function applyWatermark(
+  payload: WatermarkPayload,
+  onProgress?: (progress: number, stage: string) => void
+): Promise<ProcessedPdfResult> {
+  const {
+    fileBuffer,
+    fileName,
+    mode,
+    text,
+    imageBytes,
+    imageType,
+    fontSize,
+    color,
+    opacity,
+    rotationDegrees,
+    position,
+    layer,
+  } = payload;
+  if (!fileBuffer) throw new Error('No PDF buffer provided.');
+  if (mode === 'text' && (!text || text.trim().length === 0)) {
+    throw new Error('Watermark text is required.');
   }
-});
+  if (mode === 'image' && !imageBytes) {
+    throw new Error('Watermark image is required.');
+  }
+
+  onProgress?.(10, 'Loading PDF document...');
+  const pdfDoc = await PDFDocument.load(fileBuffer);
+  const pages = pdfDoc.getPages();
+
+  let font: import('pdf-lib').PDFFont | null = null;
+  let embeddedImage: import('pdf-lib').PDFImage | null = null;
+  const { r, g, b } = hexToRgb01(color);
+
+  if (mode === 'text') {
+    font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  } else {
+    onProgress?.(20, 'Embedding watermark image...');
+    embeddedImage =
+      imageType === 'jpg'
+        ? await pdfDoc.embedJpg(new Uint8Array(imageBytes!))
+        : await pdfDoc.embedPng(new Uint8Array(imageBytes!));
+  }
+
+  onProgress?.(35, 'Stamping watermark onto pages...');
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    const pageWidth = page.getWidth();
+    const pageHeight = page.getHeight();
+
+    if (mode === 'text' && font) {
+      const contentWidth = font.widthOfTextAtSize(text!, fontSize);
+      const contentHeight = font.heightAtSize(fontSize);
+      const { x, y } = computeAnchor(pageWidth, pageHeight, contentWidth, contentHeight, position, 24);
+
+      page.drawText(text!, {
+        x,
+        y,
+        size: fontSize,
+        font,
+        color: rgb(r, g, b),
+        opacity,
+        rotate: degrees(rotationDegrees),
+      });
+    } else if (embeddedImage) {
+      const scale = Math.min((pageWidth * 0.5) / embeddedImage.width, (pageHeight * 0.5) / embeddedImage.height, 1);
+      const contentWidth = embeddedImage.width * scale;
+      const contentHeight = embeddedImage.height * scale;
+      const { x, y } = computeAnchor(pageWidth, pageHeight, contentWidth, contentHeight, position, 24);
+
+      page.drawImage(embeddedImage, {
+        x,
+        y,
+        width: contentWidth,
+        height: contentHeight,
+        opacity,
+        rotate: degrees(rotationDegrees),
+      });
+    }
+
+    if (layer === 'below') {
+      moveWatermarkBehindContent(page);
+    }
+
+    if (pages.length > 1) {
+      onProgress?.(35 + Math.round((i / pages.length) * 50), `Stamping page ${i + 1} of ${pages.length}...`);
+    }
+  }
+
+  onProgress?.(90, 'Saving watermarked document...');
+  const outBytes = await pdfDoc.save();
+  const resultBuffer = outBytes.buffer.slice(
+    outBytes.byteOffset,
+    outBytes.byteOffset + outBytes.byteLength
+  ) as ArrayBuffer;
+
+  onProgress?.(100, 'Watermark applied successfully.');
+
+  const cleanBaseName = fileName.replace(/\.[^/.]+$/, '');
+  return {
+    fileName: `${cleanBaseName}_watermarked.pdf`,
+    buffer: resultBuffer,
+    size: resultBuffer.byteLength,
+    pageCount: pages.length,
+  };
+}
+
+if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
+  (self as any).addEventListener(
+    'message',
+    async (event: MessageEvent<WorkerRequest<WatermarkPayload>>) => {
+      const { id, action, payload } = event.data;
+      if (action !== 'WATERMARK_PDF') return;
+
+      try {
+        const result = await applyWatermark(payload, (progress, stage) => {
+          const msg: WorkerIncomingMessage = {
+            type: 'PROGRESS',
+            payload: { id, progress, stage },
+          };
+          (self as any).postMessage(msg);
+        });
+
+        const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = {
+          type: 'RESPONSE',
+          payload: { id, success: true, data: result },
+        };
+        (self as any).postMessage(responseMsg, [result.buffer]);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : 'Failed to watermark PDF document';
+        const responseMsg: WorkerIncomingMessage = {
+          type: 'RESPONSE',
+          payload: { id, success: false, error: errorMsg },
+        };
+        (self as any).postMessage(responseMsg);
+      }
+    }
+  );
+}

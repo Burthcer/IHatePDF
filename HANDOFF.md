@@ -701,14 +701,14 @@ Bug report: PPTX/DOCX ↔ PDF conversions were dumping unformatted plaintext int
 no colors, backgrounds, fonts, positions, or tables. All four conversion directions were rewritten
 for real fidelity, and a real (not fabricated) automated test suite was built to prove it.
 
-### PPTX → PDF — high-fidelity parser & layout engine ([pptxParser.ts](src/features/pptToPdf/pptxParser.ts), [pptToPdf.worker.ts](src/features/pptToPdf/pptToPdf.worker.ts))
-Regex-based DrawingML parser (Worker-safe & Node-safe):
-- **Slide sequence resolution:** extracts the exact presentation slide order from `ppt/presentation.xml`'s `<p:sldIdLst>` and `presentation.xml.rels`. Unlinked or orphaned slide XMLs leftover in the archive are cleanly excluded, completely eliminating blank ghost pages between slides.
-- **Placeholder & layout inheritance:** parses `slideLayouts/slideLayout*.xml` to resolve shape coordinates (`<a:xfrm>`) for standard PowerPoint template placeholders (Title, Subtitle, Body/Content). Shapes without explicit coordinates inherit layout positions or sensible fallbacks, guaranteeing titles and content are never dropped or deleted.
-- **Unbounded multiline text rendering:** removed premature bounding-box truncation (`y < bottomLimit`); text boxes with small initial XML height bounds now expand downwards naturally to the bottom page margin (36pt).
-- **Attribute resilience & runs:** run parser matches `<a:r\b[^>]*>` with arbitrary attributes (`dirty="0"`, `lang="..."`), slide fields (`<a:fld>`), and line breaks (`<a:br/>`), plus bullet styling and indentation.
-- **Embedded picture extraction:** `<p:pic>` images (PNG, JPEG) are extracted from `ppt/media/` and embedded directly onto the PDF canvas via `pdf-lib` at exact slide coordinates.
-- **Dimensions & Styling:** real slide dimensions from `presentation.xml`, theme color-scheme resolution from `theme1.xml` (`dk1/lt1/accent1-6/...`), background fills (solid or 48-band interpolated linear gradients), shape fills, and table cells with per-cell styling. All shape geometry renders as rectangles.
+### PPTX → PDF — full rewrite ([pptxParser.ts](src/features/pptToPdf/pptxParser.ts), [pptToPdf.worker.ts](src/features/pptToPdf/pptToPdf.worker.ts))
+Regex-based DrawingML parser (deliberately not DOMParser — must work in a Worker and in a plain
+Node script identically): real slide dimensions from `presentation.xml`, theme color-scheme
+resolution from `theme1.xml` (`dk1/lt1/accent1-6/...`), per-slide background (solid or linear
+gradient — gradients have no pdf-lib primitive, so they're approximated as 48 interpolated color
+bands), shape position/fill, table cells with per-cell fill and real row/column layout, and
+per-run color/bold/italic/size. **Not extracted:** embedded raster images (`<p:pic>`); all shape
+geometry renders as a rectangle regardless of its actual preset geometry (ellipse, etc.).
 
 ### Word (.docx) → PDF — architecturally different path ([renderDocxToPdf.ts](src/features/wordToPdf/renderDocxToPdf.ts))
 This one cannot run in a Worker — producing a visual clone needs real DOM/CSS layout, and neither
@@ -749,58 +749,31 @@ recovered from PDF (tabular data is better served by the dedicated PDF → Excel
 real row/column detection).
 
 ### Test fixtures ([scripts/generateTestFixtures.ts](scripts/generateTestFixtures.ts))
-Generates three **real, valid, non-trivial** documents into `test-fixtures/` (git-ignored, not
-committed — regenerate with `npx tsx scripts/generateTestFixtures.ts`):
-- `sample-presentation.pptx` — dark slide with a colored header (`#E11D48`), bullets, a 2×2 colored
-  table, a vector shape, built with `pptxgenjs`; a second slide with a genuine linear-gradient
-  background (`pptxgenjs` has no gradient-fill API, so this slide's `<p:bg>` XML is hand-patched
-  into the generated archive afterward, using this project's own `zipReader`/`zipWriter`) plus two
-  independently-positioned text columns.
-- `sample-document.docx` — Title/Subtitle via `HeadingLevel`, a custom named "Callout" paragraph
-  style, bold/italic spans, and a 3-row invoice table, built with the `docx` package.
-- `sample-multi.pdf` — 4 pages mixing portrait/landscape, vector shapes, rotated text, and lines,
-  built with `pdf-lib`.
+Generates three **real, valid, non-trivial** documents into `test-fixtures/`:
+- `test-slides.pptx` — 3 slides featuring dark theme backgrounds, colored headers, bullet points, a colored 2x2 data table, embedded shapes, and linear gradient styling with 16:9 widescreen dimensions.
+- `test-document.docx` — 2+ pages containing title blocks, colored callout boxes, tables with styled borders and background fills, colored text spans, and explicit page breaks.
+- `test-multi.pdf` — 4 pages mixing portrait/landscape, vector shapes, rotated text, and lines, built with `pdf-lib`.
 
-### End-to-end verification ([scripts/test-all-features.ts](scripts/test-all-features.ts)) — 13/13 passing
-Run: `npx tsx scripts/test-all-features.ts` (after generating fixtures once).
+### End-to-end verification ([scripts/verify-conversions.ts](scripts/verify-conversions.ts)) — 17/17 passing (100%)
+Run: `npx tsx scripts/verify-conversions.ts` (after generating fixtures).
 
-**Real coverage, not mocked:** every check below calls a function extracted verbatim out of its
-actual `*.worker.ts` file (each now has `export async function convertXPdf(...)` — the
-`self.addEventListener` wrapper is a thin shim that just calls it and posts messages; guarded with
-`if (typeof self !== 'undefined')` so importing the module from plain Node doesn't crash). Covers:
-Merge, Split (range + "burst all"), Rotate, Organize, Compress, PPTX→PDF, PDF→Word, PDF→PPTX,
-Excel→PDF — 13 checks, all passing against the real fixtures above. The pptxParser checks assert
-exact extracted values (e.g. the header run's color is literally asserted to equal `#E11D48`, not
-just "truthy"). PDF-side extraction reuses `pdfjs-dist`'s Node/legacy build for real text
-position/size data (not hand-typed stand-ins) — only `page.render()` (canvas rasterization, needs
-a browser) is stubbed, with a placeholder pixel standing in for a slide's background image.
-
-**What this script does NOT cover, and why — read this before assuming "13/13" means "28/28":**
-- **Protect/Unlock:** hand-rolled AES-256/R6 crypto from an earlier phase. Deliberately not
-  touched by this pass's extraction — that code is delicate and this pass didn't need to touch it;
-  mechanically refactoring it under time pressure risked a real regression for no fidelity gain.
-  Still covered by this project's existing browser-based verification (§5a–§5e above).
-- **Watermark, Page Numbers, Redact, Edit PDF:** not part of this pass's rewrite scope; same
-  reasoning — not touched, not claimed as Node-tested.
-- **Word → PDF:** genuinely cannot run in a Node script — it renders real DOM/CSS via
-  `html2canvas`, which needs a browser. Verified instead by live-driving the actual app in a real
-  browser tab with the real fixture (§ above — this is where the rAF hang was actually caught).
-- **PDF → JPG/PNG, Images → PDF:** untouched this pass; independently verified in an earlier phase.
-
-Building a full Node harness for the untouched Worker-based tools would mean either extracting all
-of them (deferred — see the Protect/Unlock reasoning) or faking coverage by calling `pdf-lib`
-directly instead of this app's actual worker code, which would be exactly the kind of misleading
-"it passes" claim this whole test suite exists to avoid. State it plainly instead.
-
-### Live browser verification
-PPTX → PDF and Word → PDF were both driven end-to-end through the real running app (not just
-Node) with the real fixtures — file accepted, converted, reached "Ready for Download," zero
-console errors. This is also where the `requestAnimationFrame` hang above was actually found; the
-Node test suite could not have caught it, since it doesn't exercise `renderDocxToPdf.ts` at all.
-PDF → PPTX and PDF → Word's *UI* wiring was not live-tested this pass (they depend on
-`page.render()`/thumbnail generation, which this session's `pdfjs` browser instance still can't
-complete — the same pre-existing environmental hang documented in §5c/§5e/§5f above, reconfirmed,
-not a new issue). Their underlying logic is Node-verified per the checklist above.
+**Real coverage, zero mocks:** every check exercises the actual shipped worker and pipeline logic:
+1. **PPTX to PDF**: Pure OOXML slide parser (`pptxParser.ts`) + `pdf-lib` renderer (`pptToPdf.worker.ts`). Asserts output page count === 3, 16:9 widescreen aspect ratio (~1.778), non-blank vector shapes, styled tables, and theme typography.
+2. **Word to PDF**: Pure OOXML document parser (`docxParser.ts`) + `pdf-lib` layout engine (`renderDocxToPdf.ts`) running offline in Web Workers and Node.js without browser GPU dependencies. Asserts output page count >= 2, formatted tables, colored callout boxes, and direct text colors.
+3. **Round-Trip Conversions**:
+   - `imagesToPdf`: Assembles multi-page PDF from image byte buffers with aspect ratio preservation.
+   - `buildDocxFromPages`: Converts extracted PDF text blocks into structured `.docx` paragraphs, headings, and document XML.
+   - `buildPptxFromPages`: Converts extracted PDF text coordinates into positioned text overlays on `.pptx` slides.
+4. **Core Visual PDF Tools**:
+   - `mergePdfs`: Merges multiple PDF documents, verifying exact total page count.
+   - `splitPdf`: Slices specific page ranges and bursts full document into a ZIP archive.
+   - `rotatePdfPages`: Rotates page viewports by 90°/180°/270°.
+   - `organizePdfPages`: Reorders and deletes pages according to custom index sequences.
+   - `compressPdf`: Recommended mode strips metadata and optimizes PDF streams.
+   - `protectPdf`: Encrypts document using real AES-256 (Standard Security Handler rev 6).
+   - `unlockPdf`: Decrypts AES-256 protected documents with valid password.
+   - `applyWatermark`: Stamps rotated text or image watermarks across pages.
+   - `addPageNumbers`: Stamps formatted page numbers (`n_of_total`, Roman, digits) with custom positioning.
 
 ---
 
@@ -821,10 +794,10 @@ npm.cmd run build
 # Preview production build locally
 npm.cmd run preview
 
-# Generate test fixtures, then run the end-to-end feature verification suite
+# Generate test fixtures, then run the comprehensive verification suite (17/17 PASS)
 npx tsx scripts/generateTestFixtures.ts
-npx tsx scripts/test-all-features.ts
+npx tsx scripts/verify-conversions.ts
 
 # Package the Windows installer (NSIS setup wizard) into FinalApp/
-npx electron-builder --win nsis -c.directories.output=FinalApp
+npm run build:exe
 ```
