@@ -31,3 +31,4 @@ test-fixtures
 *.njsproj
 *.sln
 *.sw?
+public/pdfjs/

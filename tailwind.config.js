@@ -1,46 +1,46 @@
 /** @type {import('tailwindcss').Config} */
+const token = (name) => `rgb(var(--${name}) / <alpha-value>)`;
+
 export default {
   darkMode: 'class',
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
       colors: {
-        canvas: {
-          // Barely-off-white / near-black page background, distinct from the
-          // pure-white / slate-900 cards sitting on top of it — the subtle
-          // gap between the two is what reads as depth instead of flatness.
-          light: '#FAFAF9',
-          dark: '#020617',
-        },
-        // Brand identity — a real red scale (not a flat hex), used for the
-        // primary CTA, selection color, and anything that should read as
-        // "this app", as opposed to `tool.*` in constants/tools.ts, which
-        // color-codes individual features and changes per card.
-        brand: {
-          50: '#FEF2F2',
-          100: '#FEE2E2',
-          400: '#F87171',
-          500: '#EF4444',
-          600: '#DC2626',
-          700: '#B91C1C',
-          900: '#7F1D1D',
-        },
+        // Semantic tokens — values live in src/index.css (light + dark).
+        paper: token('paper'),
+        panel: token('panel'),
+        sunken: token('sunken'),
+        ink: token('ink'),
+        muted: token('muted'),
+        faint: token('faint'),
+        line: token('line'),
+        'line-strong': token('line-strong'),
+        hover: token('hover'),
+        accent: token('accent'),
+        'accent-ink': token('accent-ink'),
+        'accent-soft': token('accent-soft'),
+        danger: token('danger'),
+        ok: token('ok'),
+        warn: token('warn'),
+      },
+      fontFamily: {
+        sans: ['"IBM Plex Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        mono: ['"IBM Plex Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+      },
+      fontSize: {
+        '2xs': ['0.6875rem', { lineHeight: '1rem' }],
+      },
+      borderRadius: {
+        DEFAULT: '4px',
+        md: '6px',
+        lg: '8px',
       },
       boxShadow: {
-        // Soft, diffused elevation in place of a harsh 1px border.
-        soft: '0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -8px rgba(15, 23, 42, 0.10)',
-        'soft-lg': '0 2px 8px rgba(15, 23, 42, 0.06), 0 24px 48px -16px rgba(15, 23, 42, 0.18)',
-        'soft-dark': '0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -8px rgba(0, 0, 0, 0.5)',
-        'soft-dark-lg': '0 2px 8px rgba(0, 0, 0, 0.4), 0 24px 48px -16px rgba(0, 0, 0, 0.65)',
-      },
-      transitionTimingFunction: {
-        'out-expo': 'cubic-bezier(0.16, 1, 0.3, 1)',
-        spring: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+        float: '0 1px 0 rgb(0 0 0 / 0.04), 0 8px 24px -6px rgb(0 0 0 / 0.18)',
+        page: '0 0 0 1px rgb(0 0 0 / 0.06), 0 2px 6px rgb(0 0 0 / 0.08)',
       },
     },
   },
   plugins: [],
-}
+};

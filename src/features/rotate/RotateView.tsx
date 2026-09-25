@@ -1,23 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { RotateCcw, RotateCw } from 'lucide-react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
-import { PagePreviewModal } from '../../components/common/PagePreviewModal';
-import { useWorkerBridge } from '../../hooks/useWorkerBridge';
-import { usePdfRenderer } from '../../hooks/usePdfRenderer';
-import { memoryManager } from '../../services/memoryManager';
-import { RotateCw, RotateCcw, RefreshCw, Maximize2 } from 'lucide-react';
-import type { PDFFile, PDFPagePreview, ToolMetadata } from '../../types/pdf';
-import type { RotatePayload, ProcessedPdfResult } from '../../types/worker';
-
-const ROTATE_TOOL_METADATA: ToolMetadata = {
-  id: 'rotate',
-  title: 'Rotate PDF',
-  description: 'Rotate your PDF pages individual or globally (90°, 180°, 270°).',
-  icon: 'RotateCw',
-  color: '#E53E3E',
-  category: 'organize',
-  acceptedFiles: 'single',
-};
+import { PageThumb } from '../../components/common/PageThumb';
+import { Button, IconButton, Section, Spinner } from '../../components/ui';
+import { useToolRunner } from '../../hooks/useToolRunner';
+import { usePageThumbnails } from '../../hooks/usePageThumbnails';
+import { getTool } from '../../constants/tools';
+import type { PDFFile } from '../../types/pdf';
+import type { ProcessedPdfResult, RotatePayload } from '../../types/worker';
 
 interface RotateViewProps {
   initialFiles?: PDFFile[];
@@ -25,229 +16,112 @@ interface RotateViewProps {
 }
 
 export const RotateView: React.FC<RotateViewProps> = ({ initialFiles = [], onBack }) => {
-  const [files, setFiles] = useState<PDFFile[]>(initialFiles);
-  const [pagePreviews, setPagePreviews] = useState<PDFPagePreview[]>([]);
-  const [pageRotations, setPageRotations] = useState<Record<number, number>>({});
-  const [globalRotation, setGlobalRotation] = useState<number>(0);
-  const [result, setResult] = useState<ProcessedPdfResult | null>(null);
-  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const [files, setFiles] = useState<PDFFile[]>(initialFiles.slice(0, 1));
+  const [turns, setTurns] = useState<Record<number, number>>({});
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const file = files[0];
+  const { pages } = usePageThumbnails(file?.rawBuffer);
+  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./rotate.worker.ts', import.meta.url), { type: 'module' }));
 
-  const { renderThumbnails, isRendering } = usePdfRenderer();
-
-  const { runTask, isProcessing, progress, stage, error, resetState } =
-    useWorkerBridge<ProcessedPdfResult>(
-      () => new Worker(new URL('./rotate.worker.ts', import.meta.url), { type: 'module' })
-    );
-
-  useEffect(() => {
-    if (files.length > 0) {
-      renderThumbnails(files[0].rawBuffer, 30)
-        .then(({ previews }) => {
-          setPagePreviews(previews);
-          const initialMap: Record<number, number> = {};
-          previews.forEach((p, idx) => {
-            initialMap[idx] = 0;
-          });
-          setPageRotations(initialMap);
-        })
-        .catch((err) => {
-          console.warn('Error generating thumbnails:', err);
-        });
-    }
-  }, [files, renderThumbnails]);
-
-  const handleFilesAccepted = (acceptedFiles: PDFFile[]) => {
-    const single = acceptedFiles.slice(0, 1);
-    setFiles(single);
-    setResult(null);
-    setPagePreviews([]);
-    setGlobalRotation(0);
-    resetState();
+  const rotate = (indices: number[], delta: number) => {
+    setTurns((prev) => {
+      const next = { ...prev };
+      indices.forEach((i) => (next[i] = (next[i] ?? 0) + delta));
+      return next;
+    });
+    runner.reset();
   };
+  const targets = () => (selected.size ? [...selected] : pages.map((_, i) => i));
+  const changed = Object.entries(turns).filter(([, d]) => ((d % 360) + 360) % 360 !== 0);
 
-  const handleClearFiles = () => {
-    setFiles([]);
-    setPagePreviews([]);
-    setResult(null);
-    setGlobalRotation(0);
-    resetState();
-  };
-
-  const rotateSinglePage = (pageIndex: number, deltaDegrees: number) => {
-    setPageRotations((prev) => ({
-      ...prev,
-      [pageIndex]: ((prev[pageIndex] || 0) + deltaDegrees + 360) % 360,
-    }));
-    setResult(null);
-  };
-
-  const rotateAllPages = (deltaDegrees: number) => {
-    setGlobalRotation((prev) => (prev + deltaDegrees + 360) % 360);
-    setResult(null);
-  };
-
-  const executeRotate = async () => {
-    if (files.length === 0) return;
-    const file = files[0];
-
-    try {
-      const bufferCopy = file.rawBuffer.slice(0);
-
-      const rotationsList = Object.entries(pageRotations).map(([idxStr, deg]) => ({
-        pageIndex: parseInt(idxStr, 10),
-        degrees: deg,
-      }));
-
-      const payload: RotatePayload = {
-        fileBuffer: bufferCopy,
-        fileName: file.name,
-        rotations: rotationsList,
-        globalDegrees: globalRotation,
-      };
-
-      const res = await runTask<RotatePayload>('ROTATE_PAGES', payload, [bufferCopy]);
-      setResult(res);
-    } catch (err) {
-      console.error('Rotate error:', err);
-    }
-  };
-
-  const handleDownload = () => {
-    if (result) {
-      memoryManager.downloadBuffer(result.buffer, result.fileName);
-    }
+  const execute = () => {
+    const buffer = file.rawBuffer.slice(0);
+    const payload: RotatePayload = {
+      fileBuffer: buffer,
+      fileName: file.name,
+      rotations: changed.map(([i, d]) => ({ pageIndex: Number(i), degrees: ((d % 360) + 360) % 360 })),
+    };
+    void runner.run('ROTATE_PAGES', payload, [buffer]);
   };
 
   return (
     <ToolLayout
-      tool={ROTATE_TOOL_METADATA}
-      accentColor="#E53E3E"
+      tool={getTool('rotate')}
       files={files}
       onBack={onBack}
-      onClearFiles={handleClearFiles}
-      onRemoveFile={handleClearFiles}
-      isProcessing={isProcessing}
-      progress={progress}
-      stage={stage}
-      error={error}
-      resultBuffer={result?.buffer || null}
-      resultFileName={result?.fileName || 'rotated_document.pdf'}
-      onDownloadResult={handleDownload}
-      actionButtonLabel="Apply Rotation"
-      onExecuteAction={executeRotate}
-      canExecute={files.length > 0}
-    >
-      {files.length === 0 ? (
-        <Dropzone
-          multiple={false}
-          onFilesAccepted={handleFilesAccepted}
-          title="Select a PDF file to Rotate"
-          subtitle="Rotate pages clockwise or counter-clockwise"
-        />
-      ) : (
-        <div className="space-y-6">
-          {/* Global Controls */}
-          <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs">
-            <span className="text-sm font-bold text-slate-800 dark:text-slate-200">
-              Bulk Orientation:
-            </span>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => rotateAllPages(270)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold rounded-lg transition-colors text-slate-700 dark:text-slate-200"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Rotate All Left 90°</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => rotateAllPages(90)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-xs font-semibold rounded-lg transition-colors text-white"
-              >
-                <RotateCw className="w-3.5 h-3.5" />
-                <span>Rotate All Right 90°</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => rotateAllPages(180)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold rounded-lg transition-colors text-slate-700 dark:text-slate-200"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Flip All 180°</span>
-              </button>
-            </div>
+      onClearFiles={() => setFiles([])}
+      onRemoveFile={() => setFiles([])}
+      {...runner.layout}
+      actionButtonLabel={changed.length ? `Rotate ${changed.length} page${changed.length === 1 ? '' : 's'}` : 'Rotate pages'}
+      onExecuteAction={execute}
+      canExecute={changed.length > 0}
+      options={
+        <Section title={selected.size ? `${selected.size} selected` : 'All pages'}>
+          <div className="flex gap-2">
+            <Button size="sm" icon={<RotateCcw className="w-3.5 h-3.5" />} onClick={() => rotate(targets(), -90)}>
+              Left
+            </Button>
+            <Button size="sm" icon={<RotateCw className="w-3.5 h-3.5" />} onClick={() => rotate(targets(), 90)}>
+              Right
+            </Button>
+            <Button size="sm" onClick={() => rotate(targets(), 180)}>
+              180°
+            </Button>
           </div>
-
-          {/* Page Preview Grid */}
-          {isRendering ? (
-            <div className="p-12 text-center text-slate-400 space-y-2">
-              <RefreshCw className="w-8 h-8 animate-spin mx-auto text-emerald-500" />
-              <p className="text-sm font-medium">Generating visual page thumbnails...</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              {pagePreviews.map((preview, idx) => {
-                const totalAngle = ((pageRotations[idx] || 0) + globalRotation) % 360;
-                return (
-                  <div
-                    key={preview.pageNumber}
-                    className="relative group bg-slate-50 dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-col items-center shadow-xs"
-                  >
-                    <div className="relative w-full aspect-[3/4] flex items-center justify-center overflow-hidden rounded bg-white dark:bg-slate-950 p-2 shadow-inner">
-                      <img
-                        src={preview.dataUrl}
-                        alt={`Page ${preview.pageNumber}`}
-                        className="max-w-full max-h-full object-contain transition-transform duration-300"
-                        style={{ transform: `rotate(${totalAngle}deg)` }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setPreviewIndex(idx)}
-                        className="absolute bottom-1.5 right-1.5 p-1.5 rounded-lg bg-slate-900/70 text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="View full quality"
-                      >
-                        <Maximize2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    <div className="w-full flex items-center justify-between mt-3 pt-2 border-t border-slate-200 dark:border-slate-800 text-xs">
-                      <span className="font-semibold text-slate-600 dark:text-slate-400">
-                        Page {preview.pageNumber}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => rotateSinglePage(idx, 90)}
-                          aria-label={`Rotate Page ${preview.pageNumber} 90 degrees`}
-                          className="p-1 text-slate-500 hover:text-emerald-600 hover:bg-slate-200 dark:hover:bg-slate-800 rounded transition-colors"
-                          title="Rotate +90°"
-                        >
-                          <RotateCw className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          <p className="text-xs text-muted">Click pages to select some; with nothing selected the buttons apply to every page.</p>
+          <div className="flex gap-3 text-xs">
+            <button className="text-muted hover:text-ink" onClick={() => setSelected(new Set(pages.map((_, i) => i)))}>
+              Select all
+            </button>
+            {selected.size > 0 && (
+              <button className="text-muted hover:text-ink" onClick={() => setSelected(new Set())}>
+                Clear selection
+              </button>
+            )}
+            {changed.length > 0 && (
+              <button className="text-muted hover:text-ink" onClick={() => setTurns({})}>
+                Reset rotations
+              </button>
+            )}
+          </div>
+        </Section>
+      }
+      emptyState={<Dropzone multiple={false} onFilesAccepted={(f) => setFiles(f.slice(0, 1))} title="Choose a PDF to rotate" />}
+    >
+      {pages.length === 0 ? (
+        <div className="flex items-center gap-2 text-sm text-muted py-10 justify-center">
+          <Spinner /> Loading pages…
         </div>
-      )}
-
-      {previewIndex !== null && files.length > 0 && pagePreviews[previewIndex] && (
-        <PagePreviewModal
-          pdfBuffer={files[0].rawBuffer}
-          pageNumber={previewIndex + 1}
-          totalPages={pagePreviews.length}
-          rotationDegrees={((pageRotations[previewIndex] || 0) + globalRotation) % 360}
-          accentColor="#E53E3E"
-          onClose={() => setPreviewIndex(null)}
-          onNavigate={(n) => setPreviewIndex(n - 1)}
-        />
+      ) : (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-x-4 gap-y-6">
+          {pages.map((p, i) => (
+            <PageThumb
+              key={i}
+              src={p.url}
+              aspect={p.width / p.height}
+              rotate={turns[i] ?? 0}
+              selected={selected.has(i)}
+              onClick={() =>
+                setSelected((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(i)) next.delete(i);
+                  else next.add(i);
+                  return next;
+                })
+              }
+              label={i + 1}
+            >
+              <div className="absolute bottom-1 right-1 flex gap-0.5 opacity-0 hover:opacity-100 focus-within:opacity-100 [div:hover>&]:opacity-100">
+                <IconButton label="Rotate left" size="sm" className="bg-panel border-line" onClick={(e) => { e.stopPropagation(); rotate([i], -90); }}>
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </IconButton>
+                <IconButton label="Rotate right" size="sm" className="bg-panel border-line" onClick={(e) => { e.stopPropagation(); rotate([i], 90); }}>
+                  <RotateCw className="w-3.5 h-3.5" />
+                </IconButton>
+              </div>
+            </PageThumb>
+          ))}
+        </div>
       )}
     </ToolLayout>
   );

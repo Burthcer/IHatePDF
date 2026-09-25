@@ -7,13 +7,10 @@
  * using the browser's native Web Crypto (SubtleCrypto) for every actual
  * cryptographic primitive (SHA-256/384/512, AES-256-CBC) so no hand-rolled
  * cipher/hash code exists here — only the PDF-spec-defined sequencing of
- * those calls. RC4/MD5 (used by older, weaker revisions 2-4) are
- * deliberately not implemented.
+ * those calls.
  *
- * ponytail: revision 6 only. Older RC4-based PDFs (V1-V4, e.g. from Acrobat
- * or other tools) are not decryptable by this module — Unlock reports a
- * clear "unsupported encryption" error for those rather than pretending to
- * handle them. Add RC4/R2-R4 support if real-world files need it.
+ * Reading older RC4 / AES-128 files (revisions 2-4) lives in pdfSecurity.ts,
+ * on top of the MD5/RC4 primitives in legacyCrypto.ts.
  */
 
 function concatBytes(...parts: Uint8Array[]): Uint8Array {
@@ -76,7 +73,7 @@ async function sha(algorithm: 'SHA-256' | 'SHA-384' | 'SHA-512', data: Uint8Arra
  * the ciphertext of the real blocks is unaffected by what follows them.
  * With a zero IV and single-block input this is also equivalent to AES-ECB.
  */
-async function aesCbcNoPadding(
+export async function aesCbcNoPadding(
   key: Uint8Array,
   iv: Uint8Array,
   data: Uint8Array,
@@ -114,7 +111,7 @@ async function aesCbcEncryptPadded(key: Uint8Array, iv: Uint8Array, data: Uint8A
   return new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv: bs(iv) }, cryptoKey, bs(data)));
 }
 
-async function aesCbcDecryptPadded(key: Uint8Array, iv: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+export async function aesCbcDecryptPadded(key: Uint8Array, iv: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
   const cryptoKey = await crypto.subtle.importKey('raw', bs(key), { name: 'AES-CBC' }, false, ['decrypt']);
   return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-CBC', iv: bs(iv) }, cryptoKey, bs(data)));
 }
@@ -127,9 +124,12 @@ async function aesCbcDecryptPadded(key: Uint8Array, iv: Uint8Array, data: Uint8A
 async function hardenedHash2B(
   password: Uint8Array,
   salt: Uint8Array,
-  userKey: Uint8Array = new Uint8Array(0)
+  userKey: Uint8Array = new Uint8Array(0),
+  revision = 6
 ): Promise<Uint8Array> {
   let k = await sha('SHA-256', concatBytes(password, salt, userKey));
+  // Revision 5 (Acrobat 9's deprecated AES-256 variant) stops at one SHA-256.
+  if (revision === 5) return k;
 
   let round = 0;
   // eslint-disable-next-line no-constant-condition
@@ -220,24 +220,27 @@ export interface StandardSecurityDictValues {
  */
 export async function recoverFileKey(
   password: string,
-  values: StandardSecurityDictValues
+  values: StandardSecurityDictValues,
+  revision = 6
 ): Promise<{ fileKey: Uint8Array; isOwner: boolean } | null> {
   const pwBytes = new TextEncoder().encode(password).slice(0, 127);
+  const hardenedHash = (pw: Uint8Array, salt: Uint8Array, userKey?: Uint8Array) =>
+    hardenedHash2B(pw, salt, userKey, revision);
 
   const uValidationSalt = values.U.slice(32, 40);
   const uKeySalt = values.U.slice(40, 48);
-  const uHashCandidate = await hardenedHash2B(pwBytes, uValidationSalt);
+  const uHashCandidate = await hardenedHash(pwBytes, uValidationSalt);
   if (bytesEqual(uHashCandidate, values.U.slice(0, 32))) {
-    const intermediateKey = await hardenedHash2B(pwBytes, uKeySalt);
+    const intermediateKey = await hardenedHash(pwBytes, uKeySalt);
     const fileKey = await aesCbcNoPadding(intermediateKey, new Uint8Array(16), values.UE, 'decrypt');
     return { fileKey, isOwner: false };
   }
 
   const oValidationSalt = values.O.slice(32, 40);
   const oKeySalt = values.O.slice(40, 48);
-  const oHashCandidate = await hardenedHash2B(pwBytes, oValidationSalt, values.U);
+  const oHashCandidate = await hardenedHash(pwBytes, oValidationSalt, values.U);
   if (bytesEqual(oHashCandidate, values.O.slice(0, 32))) {
-    const intermediateKey = await hardenedHash2B(pwBytes, oKeySalt, values.U);
+    const intermediateKey = await hardenedHash(pwBytes, oKeySalt, values.U);
     const fileKey = await aesCbcNoPadding(intermediateKey, new Uint8Array(16), values.OE, 'decrypt');
     return { fileKey, isOwner: true };
   }
@@ -255,12 +258,4 @@ export async function encryptBytesAESV3(fileKey: Uint8Array, plaintext: Uint8Arr
   const iv = randomBytes(16);
   const ciphertext = await aesCbcEncryptPadded(fileKey, iv, plaintext);
   return concatBytes(iv, ciphertext);
-}
-
-export async function decryptBytesAESV3(fileKey: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
-  if (data.length < 16) return new Uint8Array(0);
-  const iv = data.slice(0, 16);
-  const ciphertext = data.slice(16);
-  if (ciphertext.length === 0) return new Uint8Array(0);
-  return aesCbcDecryptPadded(fileKey, iv, ciphertext);
 }

@@ -18,13 +18,20 @@ There are deliberately no "AI" features — no summarizer, no AI translate, no c
 
 | Category | Tools |
 |---|---|
-| **Organize** | Merge PDF · Split PDF · Organize PDF (reorder/delete/duplicate pages) · Rotate PDF · Crop PDF · Compare PDF |
-| **Optimize** | Compress PDF · Repair PDF |
-| **Convert** | PDF ↔ Word (real fonts, tables, headings) · PDF ↔ PowerPoint (real backgrounds, colors, positioned text) · PDF ↔ JPG/PNG · PDF ↔ Excel · PDF → Markdown · HTML → PDF · Scan to PDF (camera capture) |
-| **Edit** | Watermark · Page Numbers · PDF Forms (fill AcroForm fields) · Edit PDF (freeform text/images) · Redact PDF (irrecoverable) |
-| **Security** | Protect PDF (AES-256 encryption) · Unlock PDF · PDF → PDF/A (archival metadata) · Sign PDF |
+| **Edit** | **Edit PDF** — retype existing text like in a word processor (reflowed, in the document's own font where possible), move/resize/delete text and images, add text, images, shapes, highlights, whiteout · Sign · Fill forms · Watermark · Page numbers · Redact (draw or search) |
+| **Organize** | Merge · Split (ranges, every N pages, one file per page) · Organize pages (reorder, rotate, duplicate, blank pages) · Rotate · Crop (drag edges, auto-detect margins) · Compare (word-level text diff + visual overlay) |
+| **Convert from PDF** | Word (headings, lists, tables, bold/italic) · Excel (table detection, numeric cells) · PowerPoint (text removed from the background and rebuilt as editable text boxes) · JPG/PNG (up to 600 dpi) · Markdown |
+| **Convert to PDF** | Images (any format the browser reads, EXIF-rotation aware) · Word · Excel · PowerPoint · HTML (laid out by the browser, drawn as real text) · Scan (camera with perspective correction and document clean-up) |
+| **Optimize** | Compress (image recompression, duplicate/unused object removal) · Repair · PDF/A-2b |
+| **Security** | Protect (AES-256) · Unlock (RC4 40/128, AES-128, AES-256) |
 
-28 tools total. Full technical details, Web Worker contracts, and per-tool verification status are in [`HANDOFF.md`](./HANDOFF.md).
+Every tool accepts password-protected and permission-restricted PDFs: owner-restricted files open transparently, and files with an open password prompt for it once when they're added.
+
+### How the text editor works
+
+`src/features/editPdf/engine/` is a small PDF text engine: it parses each page's content streams (and form XObjects), tracks the graphics/text state like a renderer, maps every glyph to its Unicode text, font, color and exact position, and groups glyphs into lines and paragraphs. Editing a paragraph removes its glyphs from the content stream — each one becomes an equal `TJ` displacement, so nothing else moves — and typesets the new text in the original font when every character exists in it (subset fonts fall back per character), otherwise in the closest standard or bundled Unicode font. The preview you see while editing is pdf.js rendering the actual edited PDF.
+
+Full technical details are in [`HANDOFF.md`](./HANDOFF.md).
 
 ---
 

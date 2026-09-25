@@ -2,123 +2,83 @@
  * HTML to PDF Web Worker
  * IHatePDF - 100% Client-Side Architecture
  *
- * Lays out pre-parsed HTML blocks (headings, paragraphs, list items — parsed
- * from the source HTML on the main thread via DOMParser, since that API
- * isn't available inside a Worker) into a new PDF with manual word-wrap and
- * pagination. This preserves document structure and basic emphasis, not
- * CSS layout, images, or styling.
+ * Draws the display list captured from the browser's layout (see
+ * captureLayout.ts): backgrounds, borders, images and every word at its
+ * laid-out position, as real PDF text in the matching font family, weight,
+ * style and color.
  */
 
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, rgb, LineCapStyle, type PDFFont } from 'pdf-lib';
+import { fontForText, type FontFamily } from '../../services/fonts';
 import type { WorkerRequest, HtmlToPdfPayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
 
-const PAGE_WIDTH = 612; // US Letter, points
-const PAGE_HEIGHT = 792;
-const MARGIN = 54;
-
-const BLOCK_STYLE: Record<string, { size: number; gapAfter: number }> = {
-  h1: { size: 24, gapAfter: 14 },
-  h2: { size: 19, gapAfter: 11 },
-  h3: { size: 15, gapAfter: 9 },
-  p: { size: 11, gapAfter: 8 },
-  li: { size: 11, gapAfter: 4 },
-};
-
-function wrapLine(text: string, maxWidth: number, measure: (s: string) => number): string[] {
-  const words = text.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return [''];
-  const lines: string[] = [];
-  let current = words[0];
-  for (let i = 1; i < words.length; i++) {
-    const candidate = current + ' ' + words[i];
-    if (measure(candidate) <= maxWidth) {
-      current = candidate;
-    } else {
-      lines.push(current);
-      current = words[i];
-    }
-  }
-  lines.push(current);
-  return lines;
+function color(hex: string) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
 }
 
-self.addEventListener('message', async (event: MessageEvent<WorkerRequest<HtmlToPdfPayload>>) => {
-  const { id, action, payload } = event.data;
+export async function htmlToPdf(payload: HtmlToPdfPayload, onProgress?: (p: number, s: string) => void): Promise<ProcessedPdfResult> {
+  const { pages, images, pageWidthPt: W, pageHeightPt: H, fileName, title } = payload;
+  const doc = await PDFDocument.create();
+  if (title) doc.setTitle(title);
 
-  if (action !== 'HTML_TO_PDF') return;
-
-  const emitProgress = (progress: number, stage: string) => {
-    const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-    self.postMessage(msg);
-  };
-
-  try {
-    const { blocks, fileName } = payload;
-    if (!blocks || blocks.length === 0) throw new Error('No HTML content to convert.');
-
-    emitProgress(15, 'Preparing layout...');
-    const pdfDoc = await PDFDocument.create();
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-    const italicFont = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
-    const maxWidth = PAGE_WIDTH - MARGIN * 2;
-
-    let page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-    let y = PAGE_HEIGHT - MARGIN;
-
-    const ensureSpace = (lineHeight: number) => {
-      if (y < MARGIN + lineHeight) {
-        page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-        y = PAGE_HEIGHT - MARGIN;
-      }
-    };
-
-    emitProgress(30, 'Laying out blocks...');
-    blocks.forEach((block, idx) => {
-      const style = BLOCK_STYLE[block.type] || BLOCK_STYLE.p;
-      const activeFont = block.bold ? boldFont : block.italic ? italicFont : font;
-      const lineHeight = style.size * 1.35;
-      const indent = block.type === 'li' ? 16 : 0;
-      const bullet = block.type === 'li' ? '• ' : '';
-      const measure = (s: string) => activeFont.widthOfTextAtSize(s, style.size);
-      const lines = wrapLine(bullet + block.text, maxWidth - indent, measure);
-
-      lines.forEach((line) => {
-        ensureSpace(lineHeight);
-        page.drawText(line, { x: MARGIN + indent, y, size: style.size, font: activeFont, color: rgb(0.08, 0.08, 0.08) });
-        y -= lineHeight;
-      });
-      y -= style.gapAfter;
-
-      emitProgress(30 + Math.round(((idx + 1) / blocks.length) * 60), `Laying out block ${idx + 1}/${blocks.length}...`);
-    });
-
-    emitProgress(95, 'Saving PDF...');
-    const pdfBytes = await pdfDoc.save();
-    const resultBuffer = pdfBytes.buffer.slice(
-      pdfBytes.byteOffset,
-      pdfBytes.byteOffset + pdfBytes.byteLength
-    ) as ArrayBuffer;
-
-    emitProgress(100, 'PDF ready.');
-    const cleanBaseName = fileName.replace(/\.[^/.]+$/, '') || 'document';
-    const result: ProcessedPdfResult = {
-      fileName: `${cleanBaseName}.pdf`,
-      buffer: resultBuffer,
-      size: resultBuffer.byteLength,
-      pageCount: pdfDoc.getPageCount(),
-    };
-    const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = {
-      type: 'RESPONSE',
-      payload: { id, success: true, data: result },
-    };
-    (self as any).postMessage(responseMsg, [resultBuffer]);
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : 'Failed to convert HTML to PDF';
-    const responseMsg: WorkerIncomingMessage = {
-      type: 'RESPONSE',
-      payload: { id, success: false, error: errorMsg },
-    };
-    self.postMessage(responseMsg);
+  onProgress?.(10, 'Preparing fonts...');
+  const textByStyle = new Map<string, string>();
+  for (const p of pages) for (const it of p.items) if (it.t === 'text') {
+    const key = `${it.family}|${it.bold}|${it.italic}`;
+    textByStyle.set(key, (textByStyle.get(key) ?? '') + it.text);
   }
-});
+  const fonts = new Map<string, PDFFont>();
+  for (const [key, text] of textByStyle) {
+    const [family, bold, italic] = key.split('|');
+    fonts.set(key, await fontForText(doc, { family: family as FontFamily, bold: bold === 'true', italic: italic === 'true' }, [...new Set(text)].join('')));
+  }
+  const embedded = await Promise.all(images.map((b) => doc.embedPng(new Uint8Array(b)).catch(() => null)));
+
+  pages.forEach((pageData, pi) => {
+    onProgress?.(20 + Math.round((pi / pages.length) * 70), `Drawing page ${pi + 1} of ${pages.length}...`);
+    const page = doc.addPage([W, H]);
+    for (const it of pageData.items) {
+      switch (it.t) {
+        case 'rect':
+          if (it.w > 0 && it.h > 0) page.drawRectangle({ x: it.x, y: H - it.y - it.h, width: it.w, height: it.h, color: color(it.fill), opacity: it.opacity });
+          break;
+        case 'line':
+          page.drawLine({ start: { x: it.x1, y: H - it.y1 }, end: { x: it.x2, y: H - it.y2 }, thickness: it.width, color: color(it.color), dashArray: it.dashed ? [it.width * 3, it.width * 2] : undefined, lineCap: LineCapStyle.Butt });
+          break;
+        case 'image': {
+          const img = embedded[it.index];
+          if (img) page.drawImage(img, { x: it.x, y: H - it.y - it.h, width: it.w, height: it.h });
+          break;
+        }
+        case 'text': {
+          const font = fonts.get(`${it.family}|${it.bold}|${it.italic}`)!;
+          page.drawText(it.text, { x: it.x, y: H - it.y, size: it.size, font, color: color(it.color) });
+          break;
+        }
+      }
+    }
+  });
+
+  onProgress?.(95, 'Saving PDF...');
+  const bytes = await doc.save({ useObjectStreams: true });
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  onProgress?.(100, 'Done.');
+  return { fileName: `${fileName.replace(/\.[^/.]+$/, '') || 'document'}.pdf`, buffer, size: buffer.byteLength, pageCount: pages.length };
+}
+
+if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
+  self.addEventListener('message', async (event: MessageEvent<WorkerRequest<HtmlToPdfPayload>>) => {
+    const { id, action, payload } = event.data;
+    if (action !== 'HTML_TO_PDF') return;
+    try {
+      const result = await htmlToPdf(payload, (progress, stage) => {
+        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
+        self.postMessage(msg);
+      });
+      (self as any).postMessage({ type: 'RESPONSE', payload: { id, success: true, data: result } }, [result.buffer]);
+    } catch (err) {
+      self.postMessage({ type: 'RESPONSE', payload: { id, success: false, error: err instanceof Error ? err.message : 'Failed to convert HTML to PDF' } });
+    }
+  });
+}

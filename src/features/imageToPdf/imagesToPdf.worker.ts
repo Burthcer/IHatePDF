@@ -36,7 +36,10 @@ export async function imagesToPdf(
 
     let baseSize: { width: number; height: number };
     if (pageSize === 'fit') {
-      baseSize = { width: embedded.width + marginPt * 2, height: embedded.height + marginPt * 2 };
+      // Page shaped like the image; big photos are scaled so the long edge is
+      // A4's long edge instead of producing a multi-metre page.
+      const k = Math.min(1, A4.height / Math.max(embedded.width, embedded.height));
+      baseSize = { width: embedded.width * k + marginPt * 2, height: embedded.height * k + marginPt * 2 };
     } else {
       baseSize = pageSize === 'letter' ? { ...LETTER } : { ...A4 };
       const wantLandscape = orientation === 'landscape' || (orientation === 'auto' && imgIsLandscape);
@@ -46,7 +49,7 @@ export async function imagesToPdf(
     const page = pdfDoc.addPage([baseSize.width, baseSize.height]);
     const availW = baseSize.width - marginPt * 2;
     const availH = baseSize.height - marginPt * 2;
-    const scale = Math.min(availW / embedded.width, availH / embedded.height, 1);
+    const scale = pageSize === 'fit' ? Math.min(availW / embedded.width, availH / embedded.height) : Math.min(availW / embedded.width, availH / embedded.height, 1);
     const drawW = embedded.width * scale;
     const drawH = embedded.height * scale;
     const x = (baseSize.width - drawW) / 2;

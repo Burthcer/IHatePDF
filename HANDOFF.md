@@ -1,4 +1,31 @@
-# MASTER ARCHITECTURAL BLUEPRINT & DEVELOPER HANDOFF
+# DEVELOPER HANDOFF — IHatePDF
+
+## 2026-09 rework (read this first)
+
+The sections after this one describe the original architecture; most of it still applies (workers, zero-copy transfers, no network). What changed:
+
+**Loading PDFs** — never call `PDFDocument.load` directly. Use `openPdf()` from `src/services/pdfLoader.ts`: it handles every Standard-security revision (RC4 40/128, AES-128, AES-256; `pdfSecurity.ts` + `legacyCrypto.ts` for MD5/RC4), decrypts encrypted object streams during parsing (by temporarily wrapping two pdf-lib parser methods), and loads with `updateMetadata: false`. Password-protected files are decrypted once at ingestion (`src/hooks/useFileIngestion.tsx` prompts, `unlock.worker.ts` decrypts), so tools receive plain PDFs.
+
+**pdf.js assets** — CMaps, standard font data, WASM decoders (JPEG2000/JBIG2) and ICC profiles are copied to `public/pdfjs/` by `scripts/copy-pdfjs-assets.mjs` (runs on install/dev/build). Always open documents with `openPdfJsDocument()` from `src/services/pdfWorkerSetup.ts` so those URLs are passed.
+
+**Edit engine** (`src/features/editPdf/engine/`):
+- `lexer.ts` content-stream tokenizer with byte ranges (inline images included) and serializer
+- `fontModel.ts` + `cmap.ts` + `encodingData.ts` — code splitting, widths (incl. standard-14 AFM metrics), Unicode (ToUnicode, encodings + Differences + glyph names), reverse encoding for reuse
+- `interpreter.ts` — graphics/text state machine over page + form XObjects → glyphs (with op/element/byte provenance), text ops, images
+- `layout.ts` — lines → paragraphs, hard vs soft line breaks, alignment, style
+- `rewrite.ts` — glyph removal via TJ displacements, per-context rewriting (forms are cloned per use and renamed in the parent), mixed-font typesetting, new text/images/shapes, image move/delete
+- `geometry.ts` — matrices and the viewer-space transform identical to pdf.js's `PageViewport` (all editor/overlay coordinates are "as displayed": rotation and CropBox applied)
+- The editor UI (`EditPdfView.tsx`, `editor/*`) keeps a `DocEdits` document with undo/redo; the worker session renders a one-page preview PDF of every change.
+
+**Shared services** — `fonts.ts` (standard fonts or bundled Liberation Sans via fontkit for non-WinAnsi text), `pageOverlay.ts` (draw in "as displayed" coordinates on rotated/cropped pages), `textLayout.ts` (structure recovery for PDF→Word/Markdown/Excel), `pageRanges.ts`, `imagePrep.ts`.
+
+**UI** — design tokens in `src/index.css` / `tailwind.config.js`, primitives in `src/components/ui/`, every tool uses `ToolLayout` (workspace + options panel + run/result). Tool catalog metadata lives only in `src/constants/tools.ts`. Routing is hash-based (`#/merge`), tool views are lazy-loaded.
+
+**Tests** — `npm test` runs the original conversion suite and `scripts/test-editor-and-tools.ts`, which generates a deliberately complicated PDF (`scripts/complexFixtures.ts`: kerned TJ, `'`/`"` operators, Tz/Ts/Tc/Tw, shared form XObject, inline image, rotated + cropped page, subset Type0 font, AcroForm, and RC4/AES-128 encrypted copies from an independent encryptor) and exercises the engine and tools against it.
+
+---
+
+# ORIGINAL ARCHITECTURAL BLUEPRINT
 ## Project: IHatePDF (100% Client-Side, Zero-Server PDF Suite)
 
 ---
