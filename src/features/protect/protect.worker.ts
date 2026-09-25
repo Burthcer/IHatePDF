@@ -8,7 +8,7 @@
  * hand-rolled encryption layer directly.
  */
 
-import { PDFDocument } from 'pdf-lib';
+import { openPdf } from '../../services/pdfLoader';
 import { encryptPdfDocument, serializeWithoutObjectStreams } from '../../services/pdfEncryptDocument';
 import type {
   WorkerRequest,
@@ -30,7 +30,8 @@ export async function protectPdf(
   }
 
   onProgress?.(10, 'Loading and parsing PDF syntax tree...');
-  const pdfDoc = await PDFDocument.load(fileBuffer);
+  // Already-protected files are decrypted first, then re-encrypted with the new password.
+  const pdfDoc = await openPdf(fileBuffer);
   const pageCount = pdfDoc.getPageCount();
 
   onProgress?.(25, 'Flushing embedded document assets...');

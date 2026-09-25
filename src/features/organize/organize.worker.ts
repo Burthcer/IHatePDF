@@ -9,7 +9,8 @@
  * scripts/test-all-features.ts.
  */
 
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, degrees } from 'pdf-lib';
+import { openPdf } from '../../services/pdfLoader';
 import type { WorkerRequest, OrganizePayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
 
 export async function organizePdfPages(
@@ -17,30 +18,50 @@ export async function organizePdfPages(
   fileName: string,
   pageOrder: number[],
   deletedPages: number[] = [],
-  onProgress?: (progress: number, stage: string) => void
+  onProgress?: (progress: number, stage: string) => void,
+  rotations: number[] = []
 ): Promise<ProcessedPdfResult> {
   if (!fileBuffer) throw new Error('No PDF buffer provided for organization.');
 
   onProgress?.(15, 'Loading source PDF document...');
-  const sourceDoc = await PDFDocument.load(fileBuffer);
+  const sourceDoc = await openPdf(fileBuffer);
   const totalSourcePages = sourceDoc.getPageCount();
 
+  // -1 in pageOrder inserts a blank page (sized like its neighbour);
+  // rotations[i] adds that many degrees to output page i.
   const deletedSet = new Set(deletedPages);
-  const finalOrder = pageOrder.filter((idx) => !deletedSet.has(idx) && idx >= 0 && idx < totalSourcePages);
+  const entries = pageOrder
+    .map((idx, i) => ({ idx, rotate: rotations[i] ?? 0 }))
+    .filter(({ idx }) => idx === -1 || (!deletedSet.has(idx) && idx >= 0 && idx < totalSourcePages));
 
-  if (finalOrder.length === 0) {
+  if (entries.length === 0 || entries.every((e) => e.idx === -1)) {
     throw new Error('Cannot create an empty PDF. At least one page must remain.');
   }
 
   onProgress?.(35, 'Allocating new organized document...');
   const organizedDoc = await PDFDocument.create();
+  const sourceIndices = entries.filter((e) => e.idx >= 0).map((e) => e.idx);
 
-  onProgress?.(55, `Copying ${finalOrder.length} pages in new order...`);
-  const copiedPages = await organizedDoc.copyPages(sourceDoc, finalOrder);
-  for (const page of copiedPages) organizedDoc.addPage(page);
+  onProgress?.(55, `Copying ${entries.length} pages in new order...`);
+  const copiedPages = await organizedDoc.copyPages(sourceDoc, sourceIndices);
+  let k = 0;
+  let lastSize: [number, number] = [595.28, 841.89];
+  entries.forEach((e, i) => {
+    if (e.idx === -1) {
+      const next = entries.slice(i + 1).find((x) => x.idx >= 0);
+      const size = next ? sourceDoc.getPage(next.idx).getSize() : { width: lastSize[0], height: lastSize[1] };
+      const blank = organizedDoc.addPage([size.width, size.height]);
+      if (e.rotate) blank.setRotation(degrees(((e.rotate % 360) + 360) % 360));
+      return;
+    }
+    const page = organizedDoc.addPage(copiedPages[k++]);
+    const { width, height } = page.getSize();
+    lastSize = [width, height];
+    if (e.rotate) page.setRotation(degrees((((page.getRotation().angle + e.rotate) % 360) + 360) % 360));
+  });
 
   onProgress?.(85, 'Serializing new document structure...');
-  const organizedBytes = await organizedDoc.save();
+  const organizedBytes = await organizedDoc.save({ useObjectStreams: true });
   const resultBuffer = organizedBytes.buffer.slice(
     organizedBytes.byteOffset,
     organizedBytes.byteOffset + organizedBytes.byteLength
@@ -52,7 +73,7 @@ export async function organizePdfPages(
     fileName: `${cleanBaseName}_organized.pdf`,
     buffer: resultBuffer,
     size: resultBuffer.byteLength,
-    pageCount: finalOrder.length,
+    pageCount: entries.length,
   };
 }
 
@@ -69,7 +90,8 @@ if (typeof self !== 'undefined') self.addEventListener('message', async (event: 
       (progress, stage) => {
         const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
         self.postMessage(msg);
-      }
+      },
+      payload.rotations
     );
     const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = {
       type: 'RESPONSE',

@@ -14,7 +14,8 @@
  * - Renders typography: font sizes, bold/italic, alignments, bullet points, and text colors.
  */
 
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
+import { PDFDocument, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
+import { collectText, fontCollection } from '../../services/fonts';
 import { readZip } from '../../services/zipReader';
 import {
   parseSlideSize,
@@ -354,12 +355,7 @@ export async function convertPptxToPdf(
 
   onProgress?.(50, 'Initializing PDF generation engine...');
   const pdfDoc = await PDFDocument.create();
-  const fonts = {
-    regular: await pdfDoc.embedFont(StandardFonts.Helvetica),
-    bold: await pdfDoc.embedFont(StandardFonts.HelveticaBold),
-    italic: await pdfDoc.embedFont(StandardFonts.HelveticaOblique),
-    boldItalic: await pdfDoc.embedFont(StandardFonts.HelveticaBoldOblique),
-  };
+  const fonts = await fontCollection(pdfDoc, collectText(slides));
 
   // Image cache to avoid duplicate embedding
   const imageCache = new Map<string, any>();

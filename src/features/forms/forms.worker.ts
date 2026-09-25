@@ -2,19 +2,16 @@
  * PDF Forms Web Worker
  * IHatePDF - 100% Client-Side Architecture
  *
- * Detects and fills AcroForm fields using pdf-lib's native form API — no
- * custom PDF parsing needed for this one, pdf-lib already understands the
- * field dictionary structure.
+ * Reads and fills AcroForm fields with pdf-lib's form API. Hardened for
+ * real-world forms: XFA wrappers (which make most viewers ignore the
+ * AcroForm) are removed on fill, each field is set independently so one
+ * odd field can't sink the rest, and appearances are regenerated with a
+ * Unicode-capable font when the values need one.
  */
 
-import {
-  PDFDocument,
-  PDFTextField,
-  PDFCheckBox,
-  PDFRadioGroup,
-  PDFDropdown,
-  PDFOptionList,
-} from 'pdf-lib';
+import { PDFCheckBox, PDFDocument, PDFDropdown, PDFOptionList, PDFRadioGroup, PDFTextField, PDFName, PDFRef } from 'pdf-lib';
+import { openPdf } from '../../services/pdfLoader';
+import { fontForText } from '../../services/fonts';
 import type {
   WorkerRequest,
   GetFormFieldsPayload,
@@ -25,102 +22,126 @@ import type {
   WorkerIncomingMessage,
 } from '../../types/worker';
 
-function describeFields(pdfDoc: PDFDocument): FormFieldInfo[] {
-  const form = pdfDoc.getForm();
-  return form.getFields().map((field) => {
-    const name = field.getName();
-    if (field instanceof PDFTextField) {
-      return { name, type: 'text', value: field.getText() || '' };
-    }
-    if (field instanceof PDFCheckBox) {
-      return { name, type: 'checkbox', value: field.isChecked() };
-    }
-    if (field instanceof PDFRadioGroup) {
-      return { name, type: 'radio', options: field.getOptions(), value: field.getSelected() || '' };
-    }
-    if (field instanceof PDFDropdown || field instanceof PDFOptionList) {
-      return { name, type: 'dropdown', options: field.getOptions(), value: field.getSelected()[0] || '' };
-    }
-    return { name, type: 'unsupported' };
-  });
+function hasXfa(doc: PDFDocument): boolean {
+  const acro = doc.catalog.lookup(PDFName.of('AcroForm'));
+  return !!(acro && 'lookup' in acro && (acro as { lookup: (n: PDFName) => unknown }).lookup(PDFName.of('XFA')));
 }
 
-self.addEventListener('message', async (event: MessageEvent<WorkerRequest<unknown>>) => {
-  const { id, action, payload } = event.data;
-
-  const emitProgress = (progress: number, stage: string) => {
-    const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-    self.postMessage(msg);
-  };
-  const respond = (data: unknown) => {
-    const responseMsg: WorkerIncomingMessage = { type: 'RESPONSE', payload: { id, success: true, data } };
-    self.postMessage(responseMsg);
-  };
-  const respondFail = (err: unknown) => {
-    const errorMsg = err instanceof Error ? err.message : 'Form operation failed';
-    const responseMsg: WorkerIncomingMessage = { type: 'RESPONSE', payload: { id, success: false, error: errorMsg } };
-    self.postMessage(responseMsg);
-  };
-
-  try {
-    if (action === 'GET_FORM_FIELDS') {
-      const { fileBuffer } = payload as GetFormFieldsPayload;
-      emitProgress(30, 'Detecting form fields...');
-      const pdfDoc = await PDFDocument.load(fileBuffer);
-      const fields = describeFields(pdfDoc);
-      emitProgress(100, 'Done.');
-      const result: GetFormFieldsResult = { fields };
-      respond(result);
-      return;
-    }
-
-    if (action === 'FILL_FORM') {
-      const { fileBuffer, fileName, values, flatten } = payload as FillFormPayload;
-      emitProgress(20, 'Loading document...');
-      const pdfDoc = await PDFDocument.load(fileBuffer);
-      const form = pdfDoc.getForm();
-
-      emitProgress(50, 'Filling fields...');
-      for (const field of form.getFields()) {
-        const name = field.getName();
-        if (!(name in values)) continue;
-        const value = values[name];
-        if (field instanceof PDFTextField && typeof value === 'string') {
-          field.setText(value);
-        } else if (field instanceof PDFCheckBox && typeof value === 'boolean') {
-          if (value) field.check();
-          else field.uncheck();
-        } else if (field instanceof PDFRadioGroup && typeof value === 'string') {
-          field.select(value);
-        } else if ((field instanceof PDFDropdown || field instanceof PDFOptionList) && typeof value === 'string') {
-          field.select(value);
-        }
+export function describeFields(pdfDoc: PDFDocument): FormFieldInfo[] {
+  const form = pdfDoc.getForm();
+  const pageOf = new Map<string, number>();
+  pdfDoc.getPages().forEach((page, i) => {
+    page.node.Annots()?.asArray().forEach((ref) => {
+      if (ref instanceof PDFRef) pageOf.set(ref.toString(), i + 1);
+    });
+  });
+  const out: FormFieldInfo[] = [];
+  for (const field of form.getFields()) {
+    try {
+      const name = field.getName();
+      const widgetRef = field.acroField.getWidgets().map((w) => pdfDoc.context.getObjectRef(w.dict)).find(Boolean);
+      const page = widgetRef ? pageOf.get(widgetRef.toString()) : undefined;
+      const readOnly = field.isReadOnly();
+      if (field instanceof PDFTextField) {
+        out.push({ name, type: 'text', value: field.getText() ?? '', readOnly, multiline: field.isMultiline(), maxLength: field.getMaxLength(), page });
+      } else if (field instanceof PDFCheckBox) {
+        out.push({ name, type: 'checkbox', value: field.isChecked(), readOnly, page });
+      } else if (field instanceof PDFRadioGroup) {
+        out.push({ name, type: 'radio', options: field.getOptions(), value: field.getSelected() ?? '', readOnly, page });
+      } else if (field instanceof PDFDropdown || field instanceof PDFOptionList) {
+        out.push({ name, type: 'dropdown', options: field.getOptions(), value: field.getSelected()[0] ?? '', readOnly, page });
+      } else {
+        out.push({ name, type: 'unsupported', readOnly, page });
       }
-
-      if (flatten) {
-        emitProgress(75, 'Flattening form...');
-        form.flatten();
-      }
-
-      emitProgress(90, 'Saving PDF...');
-      const bytes = await pdfDoc.save();
-      const resultBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-      const cleanBaseName = fileName.replace(/\.[^/.]+$/, '');
-      const result: ProcessedPdfResult = {
-        fileName: `${cleanBaseName}_filled.pdf`,
-        buffer: resultBuffer,
-        size: resultBuffer.byteLength,
-        pageCount: pdfDoc.getPageCount(),
-      };
-      emitProgress(100, 'Done.');
-      const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = {
-        type: 'RESPONSE',
-        payload: { id, success: true, data: result },
-      };
-      (self as any).postMessage(responseMsg, [resultBuffer]);
-      return;
+    } catch {
+      // unreadable field — skip it
     }
-  } catch (err) {
-    respondFail(err);
   }
-});
+  return out.sort((a, b) => (a.page ?? 0) - (b.page ?? 0));
+}
+
+export async function fillForm(payload: FillFormPayload, onProgress?: (p: number, s: string) => void): Promise<ProcessedPdfResult> {
+  const { fileBuffer, fileName, values, flatten } = payload;
+  onProgress?.(20, 'Loading document...');
+  const pdfDoc = await openPdf(fileBuffer);
+  const form = pdfDoc.getForm();
+  if (hasXfa(pdfDoc)) form.deleteXFA();
+
+  onProgress?.(50, 'Filling fields...');
+  const failed: string[] = [];
+  for (const field of form.getFields()) {
+    const name = field.getName();
+    if (!(name in values)) continue;
+    const value = values[name];
+    try {
+      if (field instanceof PDFTextField && typeof value === 'string') {
+        const max = field.getMaxLength();
+        field.setText(max !== undefined ? value.slice(0, max) : value);
+      } else if (field instanceof PDFCheckBox && typeof value === 'boolean') {
+        if (value) field.check();
+        else field.uncheck();
+      } else if (field instanceof PDFRadioGroup && typeof value === 'string') {
+        if (value && field.getOptions().includes(value)) field.select(value);
+        else if (!value) field.clear();
+      } else if ((field instanceof PDFDropdown || field instanceof PDFOptionList) && typeof value === 'string') {
+        if (value) field.select(value);
+        else field.clear();
+      }
+    } catch {
+      failed.push(name);
+    }
+  }
+
+  const allText = Object.values(values).filter((v): v is string => typeof v === 'string').join(' ');
+  const font = await fontForText(pdfDoc, { family: 'sans', bold: false, italic: false }, allText || 'a');
+  try {
+    form.updateFieldAppearances(font);
+  } catch {
+    // leave existing appearances; viewers regenerate them from values
+  }
+
+  if (flatten) {
+    onProgress?.(75, 'Flattening form...');
+    try {
+      form.flatten({ updateFieldAppearances: false });
+    } catch (err) {
+      throw new Error(`The form couldn't be flattened (${err instanceof Error ? err.message : String(err)}). Try again with flattening turned off.`);
+    }
+  }
+
+  onProgress?.(90, 'Saving PDF...');
+  const bytes = await pdfDoc.save({ useObjectStreams: true });
+  const resultBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  onProgress?.(100, 'Done.');
+  return {
+    fileName: `${fileName.replace(/\.[^/.]+$/, '')}_filled.pdf`,
+    buffer: resultBuffer,
+    size: resultBuffer.byteLength,
+    pageCount: pdfDoc.getPageCount(),
+    note: failed.length ? `Couldn't set: ${failed.join(', ')}` : undefined,
+  };
+}
+
+if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
+  self.addEventListener('message', async (event: MessageEvent<WorkerRequest<unknown>>) => {
+    const { id, action, payload } = event.data;
+    const progress = (p: number, stage: string) => {
+      const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress: p, stage } };
+      self.postMessage(msg);
+    };
+    try {
+      if (action === 'GET_FORM_FIELDS') {
+        const { fileBuffer } = payload as GetFormFieldsPayload;
+        progress(30, 'Detecting form fields...');
+        const doc = await openPdf(fileBuffer);
+        const result: GetFormFieldsResult = { fields: describeFields(doc), hadXfa: hasXfa(doc) };
+        self.postMessage({ type: 'RESPONSE', payload: { id, success: true, data: result } });
+      } else if (action === 'FILL_FORM') {
+        const result = await fillForm(payload as FillFormPayload, progress);
+        (self as any).postMessage({ type: 'RESPONSE', payload: { id, success: true, data: result } }, [result.buffer]);
+      }
+    } catch (err) {
+      self.postMessage({ type: 'RESPONSE', payload: { id, success: false, error: err instanceof Error ? err.message : 'Form operation failed' } });
+    }
+  });
+}

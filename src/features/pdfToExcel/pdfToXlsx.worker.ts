@@ -35,11 +35,36 @@ self.addEventListener('message', async (event: MessageEvent<WorkerRequest<PdfToX
 
     emitProgress(40, 'Building workbook...');
     const workbook = XLSX.utils.book_new();
-    pages.forEach((page) => {
-      const rows = page.rows.length > 0 ? page.rows : [['(No table data detected on this page)']];
-      const sheet = XLSX.utils.aoa_to_sheet(rows);
-      XLSX.utils.book_append_sheet(workbook, sheet, `Page ${page.pageNumber}`.slice(0, 31));
-    });
+    const toCell = (v: string): string | number => {
+      const t = v.trim();
+      // "1,234.50", "-12", "(300)", "45%" → numbers; leave codes like "007" alone
+      if (/^\(?-?[$€£]?\d{1,3}(,\d{3})*(\.\d+)?\)?%?$|^\(?-?[$€£]?\d+(\.\d+)?\)?%?$/.test(t) && !/^0\d/.test(t)) {
+        const neg = t.startsWith('(') || t.startsWith('-');
+        const n = parseFloat(t.replace(/[^\d.]/g, ''));
+        if (Number.isFinite(n)) return (neg ? -n : n) / (t.endsWith('%') ? 100 : 1);
+      }
+      return v;
+    };
+    const sheetFrom = (rows: string[][]) => {
+      const sheet = XLSX.utils.aoa_to_sheet(rows.map((r) => r.map(toCell)));
+      const cols = Math.max(0, ...rows.map((r) => r.length));
+      sheet['!cols'] = Array.from({ length: cols }, (_, c) => ({ wch: Math.min(60, Math.max(8, ...rows.map((r) => (r[c] ?? '').length + 2))) }));
+      return sheet;
+    };
+    if (payload.singleSheet) {
+      const all: string[][] = [];
+      pages.forEach((page) => {
+        if (!page.rows.length) return;
+        if (all.length) all.push([]);
+        all.push(...page.rows);
+      });
+      XLSX.utils.book_append_sheet(workbook, sheetFrom(all.length ? all : [['(No text found)']]), 'Data');
+    } else {
+      pages.forEach((page) => {
+        const rows = page.rows.length > 0 ? page.rows : [['(No text on this page)']];
+        XLSX.utils.book_append_sheet(workbook, sheetFrom(rows), `Page ${page.pageNumber}`.slice(0, 31));
+      });
+    }
 
     emitProgress(80, 'Encoding .xlsx...');
     const out = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;

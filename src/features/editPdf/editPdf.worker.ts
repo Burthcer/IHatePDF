@@ -1,99 +1,152 @@
 /**
- * Edit PDF Web Worker
- * IHatePDF - 100% Client-Side Architecture
+ * Edit PDF worker — holds one editing session.
  *
- * Bakes freeform text and image elements (placed in the main-thread editor)
- * directly onto the PDF pages at their given point coordinates.
+ *  OPEN     load the document (decrypting if needed), report page sizes
+ *  ANALYZE  paragraphs, fonts and images of one page (viewer coordinates)
+ *  PREVIEW  a one-page PDF with that page's edits applied, for pdf.js to
+ *           render — the editor shows the real output, not an imitation
+ *  EXPORT   apply every page's edits to a fresh copy and save
  */
 
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-import type { WorkerRequest, EditPdfPayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
+import { PDFDocument } from 'pdf-lib';
+import { openPdf, PdfPasswordError } from '../../services/pdfLoader';
+import { analyzePage, applyPageEdits, pageHasEdits, type PageEdits } from './engine/rewrite';
+import { userToViewer } from './engine/geometry';
+import type { TextBlock } from './engine/layout';
 
-function hexToRgb01(hex: string): [number, number, number] {
-  const clean = hex.replace('#', '');
-  const r = parseInt(clean.substring(0, 2), 16) / 255;
-  const g = parseInt(clean.substring(2, 4), 16) / 255;
-  const b = parseInt(clean.substring(4, 6), 16) / 255;
-  return [r, g, b];
+export interface EditorPageInfo {
+  width: number;
+  height: number;
 }
 
-self.addEventListener('message', async (event: MessageEvent<WorkerRequest<EditPdfPayload>>) => {
-  const { id, action, payload } = event.data;
+export interface EditorBlockDTO {
+  id: string;
+  text: string;
+  lines: TextBlock['lines'];
+  dir: [number, number];
+  angle: number;
+  box: TextBlock['box'];
+  frame: TextBlock['frame'];
+  style: TextBlock['style'];
+  fontName: string;
+  fontEmbedded: boolean;
+  fontSubset: boolean;
+  editable: boolean;
+  reason?: string;
+}
 
-  if (action !== 'EDIT_PDF') return;
+export interface EditorImageDTO {
+  id: number;
+  box: { x: number; y: number; width: number; height: number };
+}
 
-  const emitProgress = (progress: number, stage: string) => {
-    const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-    self.postMessage(msg);
-  };
+export interface EditorPageAnalysis {
+  pageIndex: number;
+  width: number;
+  height: number;
+  blocks: EditorBlockDTO[];
+  images: EditorImageDTO[];
+}
 
-  try {
-    const { fileBuffer, fileName, elements } = payload;
-    if (!fileBuffer) throw new Error('No PDF file provided.');
+interface Session {
+  bytes: Uint8Array;
+  doc: PDFDocument;
+  password?: string;
+}
 
-    emitProgress(15, 'Loading document...');
-    const pdfDoc = await PDFDocument.load(fileBuffer);
-    const pages = pdfDoc.getPages();
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+let session: Session | null = null;
 
-    emitProgress(35, 'Applying edits...');
-    for (let i = 0; i < elements.length; i++) {
-      const el = elements[i];
-      const page = pages[el.pageIndex];
-      if (!page) continue;
+function toTransferable(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
 
-      if (el.type === 'text') {
-        const [r, g, b] = hexToRgb01(el.color);
-        page.drawText(el.text, {
-          x: el.xPt,
-          y: el.yPt,
-          size: el.fontSize,
-          font: el.bold ? boldFont : font,
-          color: rgb(r, g, b),
-        });
-      } else {
-        const image =
-          el.imageType === 'png'
-            ? await pdfDoc.embedPng(el.imageBytes)
-            : await pdfDoc.embedJpg(el.imageBytes);
-        page.drawImage(image, {
-          x: el.xPt,
-          y: el.yPt,
-          width: el.widthPt,
-          height: el.heightPt,
-        });
-      }
-
-      emitProgress(35 + Math.round(((i + 1) / elements.length) * 55), `Applying edit ${i + 1} of ${elements.length}...`);
+async function handle(action: string, payload: any, progress: (p: number, s: string) => void): Promise<{ data: unknown; transfer?: Transferable[] }> {
+  switch (action) {
+    case 'OPEN': {
+      const bytes = new Uint8Array(payload.buffer as ArrayBuffer);
+      const doc = await openPdf(bytes, { password: payload.password });
+      session = { bytes, doc, password: payload.password };
+      const pages: EditorPageInfo[] = doc.getPages().map((p) => {
+        const { width, height } = userToViewer(p);
+        return { width, height };
+      });
+      return { data: { pages } };
     }
+    case 'ANALYZE': {
+      if (!session) throw new Error('No document open.');
+      const pageIndex = payload.pageIndex as number;
+      const page = session.doc.getPage(pageIndex);
+      const { model, blocks } = analyzePage(page, pageIndex);
+      const analysis: EditorPageAnalysis = {
+        pageIndex,
+        width: model.viewerWidth,
+        height: model.viewerHeight,
+        blocks: blocks.map((b) => ({
+          id: b.id,
+          text: b.text,
+          lines: b.lines,
+          dir: b.dir,
+          angle: b.angle,
+          box: b.box,
+          frame: b.frame,
+          style: b.style,
+          fontName: b.fontName,
+          fontEmbedded: b.font.embedded,
+          fontSubset: b.font.subset,
+          editable: b.editable,
+          reason: b.reason,
+        })),
+        images: model.images
+          .filter((im) => im.box.width > 1 && im.box.height > 1)
+          .map((im) => ({ id: im.id, box: im.box })),
+      };
+      return { data: analysis };
+    }
+    case 'PREVIEW': {
+      if (!session) throw new Error('No document open.');
+      const edits = payload.edits as PageEdits;
+      const out = await PDFDocument.create();
+      const [copy] = await out.copyPages(session.doc, [edits.pageIndex]);
+      out.addPage(copy);
+      await applyPageEdits(out, copy, { ...edits, pageIndex: edits.pageIndex });
+      const saved = await out.save({ useObjectStreams: false });
+      const buffer = toTransferable(saved);
+      return { data: { buffer }, transfer: [buffer] };
+    }
+    case 'EXPORT': {
+      if (!session) throw new Error('No document open.');
+      const all = (payload.edits as PageEdits[]).filter(pageHasEdits);
+      progress(5, 'Loading a clean copy of the document...');
+      const doc = await openPdf(session.bytes, { password: session.password });
+      for (let i = 0; i < all.length; i++) {
+        progress(10 + Math.round((i / Math.max(1, all.length)) * 75), `Applying edits to page ${all[i].pageIndex + 1}...`);
+        await applyPageEdits(doc, doc.getPage(all[i].pageIndex), all[i]);
+      }
+      progress(90, 'Saving PDF...');
+      const saved = await doc.save({ useObjectStreams: true });
+      const buffer = toTransferable(saved);
+      const base = String(payload.fileName || 'document').replace(/\.[^/.]+$/, '');
+      progress(100, 'Done.');
+      return {
+        data: { fileName: `${base}_edited.pdf`, buffer, size: buffer.byteLength, pageCount: doc.getPageCount() },
+        transfer: [buffer],
+      };
+    }
+    default:
+      throw new Error(`Unknown action ${action}`);
+  }
+}
 
-    emitProgress(95, 'Saving PDF...');
-    const pdfBytes = await pdfDoc.save();
-    const resultBuffer = pdfBytes.buffer.slice(
-      pdfBytes.byteOffset,
-      pdfBytes.byteOffset + pdfBytes.byteLength
-    ) as ArrayBuffer;
-
-    emitProgress(100, 'PDF ready.');
-    const cleanBaseName = fileName.replace(/\.[^/.]+$/, '');
-    const result: ProcessedPdfResult = {
-      fileName: `${cleanBaseName}_edited.pdf`,
-      buffer: resultBuffer,
-      size: resultBuffer.byteLength,
-      pageCount: pages.length,
-    };
-    const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = {
-      type: 'RESPONSE',
-      payload: { id, success: true, data: result },
-    };
-    (self as any).postMessage(responseMsg, [resultBuffer]);
+self.addEventListener('message', async (event: MessageEvent<{ id: string; action: string; payload: unknown }>) => {
+  const { id, action, payload } = event.data;
+  const progress = (p: number, stage: string) =>
+    self.postMessage({ type: 'PROGRESS', payload: { id, progress: p, stage } });
+  try {
+    const { data, transfer } = await handle(action, payload, progress);
+    (self as unknown as Worker).postMessage({ type: 'RESPONSE', payload: { id, success: true, data } }, transfer ?? []);
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : 'Failed to edit PDF';
-    const responseMsg: WorkerIncomingMessage = {
-      type: 'RESPONSE',
-      payload: { id, success: false, error: errorMsg },
-    };
-    self.postMessage(responseMsg);
+    const code = err instanceof PdfPasswordError ? err.code : undefined;
+    const message = err instanceof Error ? err.message : String(err);
+    self.postMessage({ type: 'RESPONSE', payload: { id, success: false, error: message, code } });
   }
 });
