@@ -126,7 +126,9 @@ async function pageRuns(page: PDFPageProxy): Promise<{ runs: Run[]; width: numbe
   const t = vp.transform;
   for (const raw of content.items) {
     const item = raw as TextItem;
-    if (typeof item.str !== 'string' || item.str === '') continue;
+    // Whitespace-only items (spaces drawn to pad table cells) would bridge the
+    // gaps that separate cells and columns; word gaps are re-derived later.
+    if (typeof item.str !== 'string' || !item.str.trim()) continue;
     const m = item.transform;
     // viewer-space matrix = item.transform × viewport.transform
     const a = m[0] * t[0] + m[1] * t[2];
@@ -160,7 +162,9 @@ function buildLines(runs: Run[]): Line[] {
   const bands: Run[][] = [];
   for (const r of sorted) {
     const band = bands[bands.length - 1];
-    if (band && Math.abs(band[0].y - r.y) < Math.max(band[0].size, r.size) * 0.4) band.push(r);
+    // Superscripts/subscripts (noticeably smaller, slightly offset) stay on their line.
+    const tol = band && Math.min(band[0].size, r.size) < Math.max(band[0].size, r.size) * 0.8 ? 0.6 : 0.4;
+    if (band && Math.abs(band[0].y - r.y) < Math.max(band[0].size, r.size) * tol) band.push(r);
     else bands.push([r]);
   }
   return bands.map((band) => {
@@ -236,7 +240,11 @@ function detectTables(lines: Line[]): { tables: TableCandidate[]; used: Set<Line
     // table cells are short, so reject groups of wordy "cells".
     const cellWords = group.flatMap((l) => l.segments.map((s) => runsText(segmentRuns(s)).split(' ').length));
     const avgWords = cellWords.reduce((a, b) => a + b, 0) / Math.max(1, cellWords.length);
-    if (group.length >= 2 && avgWords <= 6) {
+    // Two side-by-side columns of short phrases look like a 2-column table;
+    // without numbers or single-word labels, treat them as text columns.
+    const hasNumbers = group.some((l) => l.segments.some((s) => /^[\s$€£¥%()+\-.,\d]+$/.test(runsText(segmentRuns(s)))));
+    const proseColumns = cols.length === 2 && avgWords > 3 && !hasNumbers;
+    if (group.length >= 2 && avgWords <= 6 && !proseColumns) {
       tables.push({ lines: group, columns: cols });
       group.forEach((l) => used.add(l));
       i = j;

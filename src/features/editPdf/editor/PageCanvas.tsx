@@ -159,10 +159,8 @@ function InlineEditor({
       onPointerDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
         e.stopPropagation();
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          finish(null);
-        } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        // Esc leaves editing and keeps the text, like a word processor (undo reverts).
+        if (e.key === 'Escape' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) {
           e.preventDefault();
           finish(value);
         }
@@ -518,6 +516,14 @@ export const PageCanvas: React.FC<PageCanvasProps> = (props) => {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={() => setDrag(null)}
+        // Pressing on an object captures the pointer on this layer (for
+        // dragging), so the browser delivers the double-click here rather than
+        // to the object. The first click already selected it: edit that.
+        onDoubleClick={() => {
+          if (tool !== 'select' || !selection || editing) return;
+          if (selection.kind === 'text') onStartEdit(selection);
+          else if (selection.kind === 'block' && analysis?.blocks.find((b) => b.id === selection.id)?.editable) onStartEdit(selection);
+        }}
       >
         {analysis?.images.map((img) => {
           const sel = { kind: 'image' as const, id: img.id };
