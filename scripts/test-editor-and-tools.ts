@@ -162,7 +162,7 @@ async function main() {
     const out = await d.save();
     await writeFile(resolve(OUT, 'edit_page2.pdf'), out);
     const text = (await pdfText(out))[1];
-    assert(text.includes('Köln') && text.includes('Page two edited.'), `page 2 edits missing: ${text}`);
+    assert(squash(text).includes('Köln') && text.includes('Page two edited.'), `page 2 edits missing: ${text}`);
     assert(!text.includes('rotated ninety'), 'old rotated-page text remains');
   });
 

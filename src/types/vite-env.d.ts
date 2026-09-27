@@ -12,7 +12,7 @@ declare module '*?url' {
   export default url;
 }
 
-declare module 'pdfjs-dist/image_decoders/pdf.image_decoders.mjs' {
+declare module 'pdfjs-dist/legacy/image_decoders/pdf.image_decoders.mjs' {
   export class JpegImage {
     constructor(options?: { colorTransform?: number; decodeTransform?: Int32Array | null });
     width: number;

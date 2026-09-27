@@ -48,6 +48,7 @@ export const HtmlToPdfView: React.FC<HtmlToPdfViewProps> = ({ onBack }) => {
   const [debounced, setDebounced] = useState(html);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
+  const onFrameLoad = useRef<(() => void) | null>(null);
   const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./htmlToPdf.worker.ts', import.meta.url), { type: 'module' }));
 
   useEffect(() => {
@@ -60,10 +61,21 @@ export const HtmlToPdfView: React.FC<HtmlToPdfViewProps> = ({ onBack }) => {
   const previewScale = Math.min(1, 520 / contentWidthPx);
 
   const execute = async () => {
-    const frame = frameRef.current;
-    if (!frame?.contentDocument) return;
     setCapturing(true);
     try {
+      // The preview lags edits by a debounce; capture exactly what's in the editor.
+      if (debounced !== html) {
+        await new Promise<void>((resolve) => {
+          const timer = window.setTimeout(resolve, 5000);
+          onFrameLoad.current = () => {
+            window.clearTimeout(timer);
+            resolve();
+          };
+          setDebounced(html);
+        });
+      }
+      const frame = frameRef.current;
+      if (!frame?.contentDocument) return;
       const { pages, images } = await captureLayout(frame, { pageWidthPt: pw, pageHeightPt: ph, marginPt: MARGINS[margin] });
       const filtered = backgrounds ? pages : pages.map((p) => ({ items: p.items.filter((i) => i.t !== 'rect') }));
       const title = frame.contentDocument.title || frame.contentDocument.querySelector('h1')?.textContent?.trim() || undefined;
@@ -154,6 +166,8 @@ export const HtmlToPdfView: React.FC<HtmlToPdfViewProps> = ({ onBack }) => {
                   style={{ width: contentWidthPx, height: 1400, border: 0, display: 'block' }}
                   onLoad={(e) => {
                     const f = e.currentTarget;
+                    onFrameLoad.current?.();
+                    onFrameLoad.current = null;
                     const h = f.contentDocument?.documentElement.scrollHeight ?? 1400;
                     f.style.height = `${Math.max(200, h)}px`;
                     const wrapper = f.parentElement!.parentElement!;

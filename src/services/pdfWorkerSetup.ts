@@ -9,7 +9,7 @@
  */
 
 import './polyfills';
-import * as pdfjsLib from 'pdfjs-dist';
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from './pdfjs.worker.ts?worker&url';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;

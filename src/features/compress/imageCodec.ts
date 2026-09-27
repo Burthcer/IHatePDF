@@ -9,7 +9,7 @@
 
 import { PDFArray, PDFDict, PDFHexString, PDFName, PDFNumber, PDFRawStream, PDFStream, PDFString, decodePDFRawStream, type PDFObject } from 'pdf-lib';
 import '../../services/polyfills';
-import { JpegImage, JpxImage } from 'pdfjs-dist/image_decoders/pdf.image_decoders.mjs';
+import { JpegImage, JpxImage } from 'pdfjs-dist/legacy/image_decoders/pdf.image_decoders.mjs';
 import { applyPredictor, streamBytes } from '../editPdf/engine/pdfObjects';
 
 export interface DecodedImage {
