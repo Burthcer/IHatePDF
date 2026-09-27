@@ -76,7 +76,7 @@ function groupIntoLines(items: PositionedTextItem[], pageHeightPt: number): Text
 /**
  * Builds a .pptx from rendered page images + positioned text. Plain
  * exported function (no Worker/`self` dependency) so it's directly
- * testable from a Node script — see scripts/test-all-features.ts.
+ * testable from a Node script — see scripts/verify-conversions.ts.
  */
 export async function buildPptxFromPages(
   slides: BuildPptxPayload['slides'],
