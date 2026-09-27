@@ -26,3 +26,13 @@ declare module 'pdfjs-dist/legacy/image_decoders/pdf.image_decoders.mjs' {
     static get instance(): { decode(bytes: Uint8Array, opts?: Record<string, unknown>): Promise<Uint8ClampedArray> };
   }
 }
+
+/** Bridge exposed by electron/preload.cjs in the desktop app (undefined in browsers). */
+interface IhpDesktopBridge {
+  /** Called whenever a download finishes; returns an unsubscribe function. */
+  onSaved(cb: (info: { name: string; path: string }) => void): () => void;
+  showInFolder(path: string): void;
+}
+interface Window {
+  ihpDesktop?: IhpDesktopBridge;
+}

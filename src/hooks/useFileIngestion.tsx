@@ -10,7 +10,6 @@ import React, { useCallback, useRef, useState } from 'react';
 import { Lock } from 'lucide-react';
 import { Button, Field, Modal, Notice } from '../components/ui';
 import { readFileAsArrayBuffer, validatePdfHeader } from '../services/fileValidator';
-import { openPdfJsDocument } from '../services/pdfWorkerSetup';
 import { memoryManager } from '../services/memoryManager';
 import { WorkerClient, WorkerCallError } from '../services/workerClient';
 import type { PDFFile } from '../types/pdf';
@@ -27,6 +26,8 @@ interface PasswordRequest {
 }
 
 async function countPages(buffer: ArrayBuffer, password?: string): Promise<number> {
+  // pdf.js is loaded on first use so the home screen starts without it.
+  const { openPdfJsDocument } = await import('../services/pdfWorkerSetup');
   const task = openPdfJsDocument(buffer, password);
   const doc = await task.promise;
   const n = doc.numPages;

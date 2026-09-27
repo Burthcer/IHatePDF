@@ -38,9 +38,12 @@ export function useToolRunner<R extends RunnableResult>(workerFactory: () => Wor
     resetState();
   }, [resetState]);
 
-  const download = useCallback(() => {
-    if (result) memoryManager.downloadBuffer(result.buffer, result.fileName, result.mimeType ?? guessMime(result.fileName));
-  }, [result]);
+  const download = useCallback(
+    (fileName?: string) => {
+      if (result) memoryManager.downloadBuffer(result.buffer, fileName || result.fileName, result.mimeType ?? guessMime(result.fileName));
+    },
+    [result]
+  );
 
   return {
     run,

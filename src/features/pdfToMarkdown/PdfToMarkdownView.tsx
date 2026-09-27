@@ -38,7 +38,7 @@ export const PdfToMarkdownView: React.FC<PdfToMarkdownViewProps> = ({ initialFil
       error={analysis.error}
       resultBuffer={analysis.pages && analysis.hasText ? buffer : null}
       resultFileName={outName}
-      onDownloadResult={() => buffer && memoryManager.downloadBuffer(buffer, outName, 'text/markdown')}
+      onDownloadResult={(name) => buffer && memoryManager.downloadBuffer(buffer, name || outName, 'text/markdown')}
       resultNote={
         <div className="space-y-3 mt-2">
           <Toggle checked={emphasis} onChange={setEmphasis} label="Keep bold and italic" />

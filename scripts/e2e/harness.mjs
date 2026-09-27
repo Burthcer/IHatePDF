@@ -28,13 +28,13 @@ export async function upload(page, files, nth = 0) {
   await input.setInputFiles(files);
 }
 
-/** Clicks the primary action, waits for Download, saves the file and returns its path + size. */
+/** Clicks the primary action, waits for the result, saves it ("Save now" skips the auto-save countdown). */
 export async function runAndDownload(page, actionName, outName, timeout = 180_000) {
   if (actionName) await page.getByRole('button', { name: actionName }).first().click();
-  const dl = page.getByRole('button', { name: /^Download$/ }).first();
+  const save = page.getByRole('button', { name: /^Save now$/ }).first();
   const err = page.getByText('That didn’t work');
-  await Promise.race([dl.waitFor({ timeout }), err.waitFor({ timeout }).then(async () => { throw new Error('Tool error: ' + (await page.locator('aside').innerText())); })]);
-  const [download] = await Promise.all([page.waitForEvent('download'), dl.click()]);
+  await Promise.race([save.waitFor({ timeout }), err.waitFor({ timeout }).then(async () => { throw new Error('Tool error: ' + (await page.locator('aside').innerText())); })]);
+  const [download] = await Promise.all([page.waitForEvent('download'), save.click()]);
   const path = resolve(OUT, outName ?? download.suggestedFilename());
   await download.saveAs(path);
   return { path, size: statSync(path).size, suggested: download.suggestedFilename() };

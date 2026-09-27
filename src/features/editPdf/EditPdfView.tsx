@@ -22,9 +22,12 @@ import {
   Square,
   Type,
   Undo2,
+  X,
 } from 'lucide-react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { Dropzone } from '../../components/common/Dropzone';
+import { AutoSave } from '../../components/common/AutoSave';
+import { resultKey } from '../../services/fileNames';
 import { Button, IconButton, Kbd, Notice, ProgressLine, Spinner, cn } from '../../components/ui';
 import { openPdfJsDocument } from '../../services/pdfWorkerSetup';
 import { memoryManager } from '../../services/memoryManager';
@@ -132,6 +135,8 @@ export const EditPdfView: React.FC<EditPdfViewProps> = ({ initialFiles = [], onB
   const [renderedSig, setRenderedSig] = useState<string | null>(null);
   const [rendering, setRendering] = useState(false);
   const [exporting, setExporting] = useState<{ progress: number; stage: string } | null>(null);
+  // The last export, tied to the edits it was made from (hidden once they change).
+  const [exported, setExported] = useState<{ buffer: ArrayBuffer; fileName: string; edits: typeof edits } | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [lastTextStyle, setLastTextStyle] = useState<EditStyle>(DEFAULT_TEXT_STYLE);
 
@@ -462,7 +467,7 @@ export const EditPdfView: React.FC<EditPdfViewProps> = ({ initialFiles = [], onB
       const result = await client.call<{ fileName: string; buffer: ArrayBuffer }>('EXPORT', { edits: all, fileName: file.name }, [], (progress, stage) =>
         setExporting({ progress, stage })
       );
-      memoryManager.downloadBuffer(result.buffer, result.fileName);
+      setExported({ buffer: result.buffer, fileName: result.fileName, edits });
     } catch (err) {
       setExportError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -695,6 +700,22 @@ export const EditPdfView: React.FC<EditPdfViewProps> = ({ initialFiles = [], onB
             </div>
           )}
         </main>
+
+        {exported && exported.edits === edits && (
+          <div className="fixed z-40 bottom-4 right-4 w-[320px] max-w-[calc(100vw-2rem)] bg-panel border border-line rounded-md shadow-lg p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium">Your edited PDF is ready</p>
+              <IconButton label="Close" size="sm" onClick={() => setExported(null)}>
+                <X className="w-3.5 h-3.5" />
+              </IconButton>
+            </div>
+            <AutoSave
+              key={resultKey(exported.buffer)}
+              fileName={exported.fileName}
+              onSave={(name) => memoryManager.downloadBuffer(exported.buffer, name)}
+            />
+          </div>
+        )}
 
         {/* inspector */}
         <aside className="hidden lg:block w-[280px] shrink-0 border-l border-line bg-panel overflow-y-auto scroll-thin">

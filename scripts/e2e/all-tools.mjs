@@ -72,7 +72,7 @@ const TOOLS = {
     await page.keyboard.type('Edited in the browser test.');
     await page.keyboard.press('Escape');
     await page.mouse.click(1300, 800);
-    const r = await runAndDownload(page, null, 'edited.pdf');
+    const r = await runAndDownload(page, /^Download$/, 'edited.pdf');
     const { execFileSync } = await import('node:child_process');
     const text = execFileSync('node', ['scripts/e2e/items.mjs', r.path, '1'], { encoding: 'utf8' });
     if (!text.includes('Edited in the browser test.') || text.includes('Quarterly Operations')) throw new Error('edit not applied: ' + text.slice(0, 300));
@@ -197,6 +197,22 @@ const TOOLS = {
     const r = await runAndDownload(page, 'Encrypt PDF', 'protected.pdf');
     return readFileSync(r.path).includes('/Encrypt') ? 'encrypted' : 'NOT ENCRYPTED';
   },
+  async autoSave(page) {
+    // No clicks after the run: the result must save itself within ~5 s.
+    await openTool(page, 'pageNumbers');
+    await upload(page, COMPLEX);
+    await page.getByRole('button', { name: 'Add page numbers' }).click();
+    const t0 = Date.now();
+    const auto = await page.waitForEvent('download', { timeout: 10_000 });
+    const secs = ((Date.now() - t0) / 1000).toFixed(1);
+    if (auto.suggestedFilename() !== 'complex_numbered.pdf' && !auto.suggestedFilename().endsWith('.pdf')) throw new Error('bad name ' + auto.suggestedFilename());
+    await page.getByText(/^Saved as/).waitFor();
+    // Then save a renamed copy.
+    await page.getByRole('button', { name: 'Save a copy under another name' }).click();
+    await page.getByLabel('File name').fill('My: renamed/file');
+    const [named] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: /^Save$/ }).click()]);
+    return `auto-saved "${auto.suggestedFilename()}" after ${secs}s; renamed copy "${named.suggestedFilename()}"`;
+  },
   async unlock(page) {
     const src = resolve(OUT, 'protected.pdf');
     if (!existsSync(src)) throw new Error('run protect first');
@@ -217,7 +233,7 @@ for (const [id, fn] of Object.entries(TOOLS)) {
   logs.length = 0;
   const t0 = Date.now();
   try {
-    await openTool(page, id);
+    if (id !== 'autoSave') await openTool(page, id);
     const info = await fn(page);
     rows.push({ tool: id, ok: '✓', info, secs: ((Date.now() - t0) / 1000).toFixed(1) });
   } catch (e) {

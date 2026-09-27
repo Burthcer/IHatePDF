@@ -117,3 +117,18 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Auto-save countdown */
+@keyframes autosave-fill {
+  from { width: 0%; }
+  to { width: 100%; }
+}
+.autosave-bar {
+  width: 0%;
+  animation-name: autosave-fill;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .autosave-bar { animation: none; width: 100%; opacity: 0.4; }
+}

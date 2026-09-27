@@ -1,0 +1,29 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsx scripts/generateTestFixtures.ts
+      - run: npm test
+      - run: npm run build:exe
+        env:
+          # Not code-signed: Windows SmartScreen shows "More info → Run anyway" on first install.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IHatePDF-Setup
+          path: FinalApp/IHatePDF-Setup.exe
+          if-no-files-found: error
