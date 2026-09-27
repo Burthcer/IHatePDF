@@ -143,4 +143,4 @@ npm run build:exe           # FinalApp/IHatePDF-Setup.exe (Linux needs wine64 + 
 4. `npm run build:exe`;
 5. upload the installer as a workflow artifact.
 
-On a `v*` tag it also publishes a GitHub Release with `IHatePDF-Setup.exe` attached, using `docs/RELEASE_NOTES.md` as the body. The README's download button points to `releases/latest/download/IHatePDF-Setup.exe`.
+On `main` (or a `v*` tag) it also publishes the GitHub Release `v<package.json version>` with `IHatePDF-Setup.exe` attached, using `docs/RELEASE_NOTES.md` as the body. Bump the version to cut a new release. The README's download button points to `releases/latest/download/IHatePDF-Setup.exe`.
