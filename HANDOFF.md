@@ -2,7 +2,7 @@
 
 ## 2026-09 rework (read this first)
 
-The sections after this one describe the original architecture; most of it still applies (workers, zero-copy transfers, no network). What changed:
+The sections after this one describe the original architecture; most of it still applies (workers, zero-copy transfers, no network). Where an older section contradicts this one, this one is current. What changed:
 
 **Loading PDFs** — never call `PDFDocument.load` directly. Use `openPdf()` from `src/services/pdfLoader.ts`: it handles every Standard-security revision (RC4 40/128, AES-128, AES-256; `pdfSecurity.ts` + `legacyCrypto.ts` for MD5/RC4), decrypts encrypted object streams during parsing (by temporarily wrapping two pdf-lib parser methods), and loads with `updateMetadata: false`. Password-protected files are decrypted once at ingestion (`src/hooks/useFileIngestion.tsx` prompts, `unlock.worker.ts` decrypts), so tools receive plain PDFs.
 
@@ -20,6 +20,50 @@ The sections after this one describe the original architecture; most of it still
 **Shared services** — `fonts.ts` (standard fonts or bundled Liberation Sans via fontkit for non-WinAnsi text), `pageOverlay.ts` (draw in "as displayed" coordinates on rotated/cropped pages), `textLayout.ts` (structure recovery for PDF→Word/Markdown/Excel), `pageRanges.ts`, `imagePrep.ts`.
 
 **UI** — design tokens in `src/index.css` / `tailwind.config.js`, primitives in `src/components/ui/`, every tool uses `ToolLayout` (workspace + options panel + run/result). Tool catalog metadata lives only in `src/constants/tools.ts`. Routing is hash-based (`#/merge`), tool views are lazy-loaded.
+
+**pdf.js build** — the app imports `pdfjs-dist/legacy/build/pdf.mjs` and runs the legacy worker through `src/services/pdfjs.worker.ts`; the compressor uses `pdfjs-dist/legacy/image_decoders`. The legacy build bundles polyfills for recent JS APIs that pdf.js 6 uses: `Math.sumPrecise`, `Uint8Array.fromBase64`, and others. On engines without them, the modern build failed mid-render, and a failing `getDocument` could even make an encrypted file look unencrypted. `src/services/polyfills.ts` also installs `Map`/`WeakMap#getOrInsert(Computed)`. It is imported first by `main.tsx`, the pdf.js worker entry and `imageCodec.ts`. pdf.js is loaded on first use (dynamic `import()` in `useFileIngestion` / `usePdfRenderer`), which keeps the startup bundle at about 225 KB.
+
+**Compression** (`src/features/compress/`):
+- `imageCodec.ts` decodes any image XObject to RGBA:
+  - DCT via pdf.js `JpegImage`, with `/Decode` and CMYK→RGB;
+  - JPX via `JpxImage` (the WASM is at `pdfjs/wasm/`, configured with `configureJpx`);
+  - Flate/LZW/RunLength/ASCII with PNG/TIFF predictors;
+  - gray, RGB, CMYK, ICC, Cal, Lab-ish, Indexed and Separation color at 1/2/4/8/16 bpc.
+- `compress.worker.ts` works out each image's displayed size from the page interpreter (`ImageInfo.ref` + `ctm`, so an image drawn small is downsampled more). It downsamples to the level's DPI and re-encodes photos as JPEG and flat art/masks as Flate. It keeps a result only if it is under 97% of the original, then removes duplicate streams and unreachable objects.
+- Custom size runs a binary search over a 29-step dpi/quality ladder using a size estimate. It then steps down while the real saved file is still over target, and reports the setting it used.
+- If nothing gets smaller, the original bytes are returned with an explanatory note.
+
+**Repair** — `openPdf` failures are retried through `repair/salvage.ts`:
+- an object pdf-lib can't parse is blanked out, keeping every other offset valid;
+- a truncated trailing object is cut off, and a truncated Flate object stream is partially inflated and rewritten with only its complete objects;
+- if the catalog/page tree was lost, surviving `/Page` objects are gathered under a new one.
+
+**Saving results** — `ToolLayout` renders `components/common/AutoSave.tsx`, keyed per result buffer (`resultKey` in `services/fileNames.ts`):
+- a 5 s countdown, then `onDownloadResult(fileName)`;
+- the user can Save now, Rename, or turn off auto-save for that result, and afterwards save a copy under another name;
+- `useToolRunner.download(name?)` honors the edited name;
+- the editor shows the same component in a floating card after Export.
+
+**Desktop** (`electron/main.cjs`, `electron/preload.cjs`):
+- `dist/` is served from a privileged `app://ihatepdf/` scheme with explicit MIME types, so `fetch`, module workers and WASM work as on a web server; `file://` is no longer used.
+- `show:false` + `ready-to-show`, a theme-matched `backgroundColor`, `v8CacheOptions: 'bypassHeatCheck'`, and no application menu.
+- Single-instance lock.
+- `will-prevent-unload` is ignored and `closed` → `app.quit()` on every platform, so the X button always ends the process.
+- `will-download` saves to `Downloads/IHatePDF/` with ` (n)` de-duplication and sends `ihp:saved {name, path}`. The preload exposes `window.ihpDesktop.onSaved` / `showInFolder`, which the AutoSave component uses.
+- The icon is at `build/icon.ico` (generated from `public/favicon.svg`). The packaged `app.asar` holds only `dist/` + `electron/`: `node_modules` is excluded, since everything is bundled by Vite.
+- CI: `.github/workflows/windows-installer.yml` builds `IHatePDF-Setup.exe` on `windows-latest` and uploads it as an artifact.
+
+**Editor input** — pressing on an object captures the pointer on the page layer (for dragging), so the browser delivers `dblclick` to the layer, not the object. `PageCanvas` therefore also handles double-click on the layer and edits the current selection. Esc and Ctrl+Enter both finish an edit and keep the text.
+
+**End-to-end tests** (`scripts/e2e/`, need `vite preview --port 4173`; render helpers also need `vite --port 5173`):
+- `all-tools.mjs` drives all 28 tools plus auto-save in Chromium and validates every output;
+- `compress.mjs` covers all levels plus custom sizes;
+- `renderCompare.mjs` does a per-page pixel diff of two PDFs;
+- `snapshot.mjs` renders page 1 of several PDFs side by side;
+- `items.mjs` dumps text items;
+- `electron.mjs` tests the desktop app (run under `xvfb-run` on Linux).
+
+Large fixtures are generated into `test-fixtures/big/` (gitignored).
 
 **Tests** — `npm test` runs the original conversion suite and `scripts/test-editor-and-tools.ts`, which generates a deliberately complicated PDF (`scripts/complexFixtures.ts`: kerned TJ, `'`/`"` operators, Tz/Ts/Tc/Tw, shared form XObject, inline image, rotated + cropped page, subset Type0 font, AcroForm, and RC4/AES-128 encrypted copies from an independent encryptor) and exercises the engine and tools against it.
 
@@ -259,8 +303,7 @@ Working with large multi-megabyte PDF documents entirely in client RAM requires 
   pdf-lib pipelines with correct progress emission and zero-copy transfer from initial scaffolding.
 
 ### Phase 3: Stream & Security Tools (Compress, Protect, Unlock) — Protect/Unlock ✅ Complete, Compress unchanged
-- **Compress**: already implemented (metadata stripping + `useObjectStreams` re-serialization).
-  Real image re-compression / XObject dedup is a further enhancement, not currently scheduled.
+- **Compress**: superseded — full image recompression, custom target size and dedup; see the 2026-09 rework section at the top.
 - **Protect / Unlock — real AES-256 encryption implemented.** `pdf-lib` has no encryption support at
   all, so this required hand-rolling the PDF Standard Security Handler **revision 6** (AES-256 /
   AESV3, PDF 2.0) directly:
@@ -306,6 +349,8 @@ Working with large multi-megabyte PDF documents entirely in client RAM requires 
 ---
 
 ## 5a. Desktop Executable (Electron) — ✅ Complete, verified working
+
+> **Superseded in part (2026-09):** the app now loads from an `app://` protocol, not `file://`; it builds an NSIS installer with an icon; and closing the window quits the app. See the top section. The notes below are kept for history.
 
 The app is packaged as a native Windows desktop app via Electron + electron-builder.
 
@@ -447,7 +492,7 @@ site. Current status:
 | Tool | Status |
 |---|---|
 | Merge, Split, Rotate, Organize | ✅ Done (Phase 2) |
-| Compress | ✅ Done (metadata strip + object-stream re-serialization; real image re-compression not implemented) |
+| Compress | ✅ Done — image recompression for every image type, presets + custom target size (see top section) |
 | Protect, Unlock | ✅ Done — real AES-256/R6 encryption (Phase 3), see section 3 above |
 | Crop, Watermark, Page Numbers | ✅ Done |
 | PDF ↔ Word, PDF ↔ PowerPoint | ✅ Done, see section 5c |
@@ -821,9 +866,16 @@ npm.cmd run build
 # Preview production build locally
 npm.cmd run preview
 
-# Generate test fixtures, then run the comprehensive verification suite (17/17 PASS)
+# Generate test fixtures, then run both automated suites (17 + 28 checks)
 npx tsx scripts/generateTestFixtures.ts
-npx tsx scripts/verify-conversions.ts
+npm test
+
+# Lint (oxlint) — warnings only, no errors expected
+npm run lint
+
+# Browser e2e of every tool (after `npm run build`; see scripts/e2e/)
+npx vite preview --port 4173 &
+node scripts/e2e/all-tools.mjs
 
 # Package the Windows installer (NSIS setup wizard) into FinalApp/
 npm run build:exe
