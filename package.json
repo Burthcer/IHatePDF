@@ -13,7 +13,7 @@
     "test": "tsx scripts/verify-conversions.ts && tsx scripts/test-editor-and-tools.ts",
     "preview": "vite preview",
     "electron:dev": "electron .",
-    "build:exe": "npm run build && electron-builder --win nsis",
+    "build:exe": "npm run build && electron-builder --win nsis --publish never",
     "predev": "node scripts/copy-pdfjs-assets.mjs",
     "prebuild": "node scripts/copy-pdfjs-assets.mjs",
     "postinstall": "node scripts/copy-pdfjs-assets.mjs",
