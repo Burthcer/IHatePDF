@@ -72,12 +72,15 @@ export interface MergePayload {
     name: string;
     buffer: ArrayBuffer;
   }>;
+  outputName?: string;
 }
 
 export interface SplitPayload {
   fileBuffer: ArrayBuffer;
   fileName: string;
   ranges: Array<{ from: number; to: number }> | 'all';
+  /** One output file per group of 0-based page indices (ZIP when more than one). */
+  groups?: number[][];
 }
 
 export interface RotatePayload {
@@ -90,14 +93,17 @@ export interface RotatePayload {
 export interface OrganizePayload {
   fileBuffer: ArrayBuffer;
   fileName: string;
-  pageOrder: number[]; // 0-based page indices in new desired order
+  pageOrder: number[]; // 0-based page indices in new desired order; -1 = blank page
   deletedPages?: number[];
+  rotations?: number[]; // degrees to add, per output page
 }
 
 export interface CompressPayload {
   fileBuffer: ArrayBuffer;
   fileName: string;
-  level: 'low' | 'recommended' | 'extreme';
+  level: 'low' | 'recommended' | 'extreme' | 'custom';
+  /** For level 'custom': the size the output should fit in, in bytes. */
+  targetBytes?: number;
 }
 
 export interface ProtectPayload {
@@ -151,6 +157,14 @@ export interface WatermarkPayload {
   rotationDegrees: number;
   position: WatermarkPosition;
   layer: 'above' | 'below';
+  /** Repeat across the whole page instead of one stamp. */
+  tile?: boolean;
+  /** Page range string ("1-3, 5"); omit for all pages. */
+  pages?: string;
+  fontFamily?: 'sans' | 'serif' | 'mono';
+  bold?: boolean;
+  /** Image width as a fraction of the page width. */
+  imageScale?: number;
 }
 
 export type PageNumberFormat = 'n' | 'n_of_total' | 'roman';
@@ -166,6 +180,10 @@ export interface PageNumbersPayload {
   startPage: number; // 1-based, inclusive
   endPage?: number; // 1-based, inclusive; omit = last page
   startingNumber: number;
+  /** Free-form template: {n} = number, {total} = page count. Overrides `format` when set. */
+  template?: string;
+  /** Mirror left/right positions on even pages (for double-sided printing). */
+  mirror?: boolean;
 }
 
 /** One page's extracted text, grouped into paragraphs by vertical gaps. */
@@ -187,6 +205,8 @@ export interface StyledPageText {
 export interface PdfToWordPayload {
   pages: StyledPageText[];
   fileName: string;
+  layout?: import('../services/textLayout').PageLayout[];
+  pageBreaks?: boolean;
 }
 
 export interface WordToPdfPayload {
@@ -215,9 +235,27 @@ export interface PositionedPageText {
   items: PositionedTextItem[];
 }
 
+export interface PptTextBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  lines: string[];
+  fontSize: number;
+  color: string;
+  bold: boolean;
+  italic: boolean;
+  fontFace: string;
+  align: 'left' | 'center' | 'right';
+  lineHeight?: number;
+  rotate?: number;
+}
+
 export interface BuildPptxPayload {
   slides: PptxSlideImage[];
   pageText?: PositionedPageText[];
+  /** Styled paragraphs per slide (preferred over pageText). */
+  textBoxes?: PptTextBox[][];
   fileName: string;
 }
 
@@ -241,8 +279,10 @@ export interface RenderedPageImage {
 }
 
 export interface BuildJpgZipPayload {
-  images: RenderedPageImage[];
+  images: Array<RenderedPageImage | { pageNumber: number; bytes: ArrayBuffer; dataUrl?: undefined }>;
   fileName: string;
+  /** File extension for the images (default jpg). */
+  ext?: 'jpg' | 'png';
 }
 
 export type ImagePageOrientation = 'portrait' | 'landscape' | 'auto';
@@ -257,20 +297,18 @@ export interface ImagesToPdfPayload {
   fileName: string;
 }
 
-export interface PdfToMarkdownPayload {
-  pages: ExtractedPageText[];
-  fileName: string;
-}
-
 export interface RepairPayload {
   fileBuffer: ArrayBuffer;
   fileName: string;
+  /** Fallback: rebuild from pages pdf.js could still render. */
+  renderedPages?: Array<{ jpeg: ArrayBuffer; widthPt: number; heightPt: number }>;
 }
 
 /** One extracted table row (cells) for PDF -> Excel. */
 export interface PdfToXlsxPayload {
   pages: Array<{ pageNumber: number; rows: string[][] }>;
   fileName: string;
+  singleSheet?: boolean;
 }
 
 export interface XlsxToPdfPayload {
@@ -290,6 +328,11 @@ export interface FormFieldInfo {
   type: FormFieldType;
   options?: string[];
   value?: string | boolean;
+  readOnly?: boolean;
+  multiline?: boolean;
+  maxLength?: number;
+  /** 1-based page the field's first widget sits on, when known. */
+  page?: number;
 }
 
 export interface GetFormFieldsPayload {
@@ -298,6 +341,7 @@ export interface GetFormFieldsPayload {
 
 export interface GetFormFieldsResult {
   fields: FormFieldInfo[];
+  hadXfa?: boolean;
 }
 
 export interface FillFormPayload {
@@ -307,72 +351,57 @@ export interface FillFormPayload {
   flatten: boolean;
 }
 
+export interface SignaturePlacement {
+  pageIndex: number; // 0-based
+  /** Viewer-space box (points, origin top-left of the page as displayed). */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface StampSignaturePayload {
   fileBuffer: ArrayBuffer;
   fileName: string;
   signatureImageBytes: ArrayBuffer;
-  pageIndex: number; // 0-based
-  xPt: number;
-  yPt: number;
-  widthPt: number;
-  heightPt: number;
+  placements: SignaturePlacement[];
 }
 
-export interface HtmlBlock {
-  type: 'h1' | 'h2' | 'h3' | 'p' | 'li';
-  text: string;
-  bold?: boolean;
-  italic?: boolean;
+export type HtmlDisplayItem =
+  | { t: 'text'; x: number; y: number; text: string; size: number; family: 'sans' | 'serif' | 'mono'; bold: boolean; italic: boolean; color: string }
+  | { t: 'rect'; x: number; y: number; w: number; h: number; fill: string; opacity: number }
+  | { t: 'line'; x1: number; y1: number; x2: number; y2: number; width: number; color: string; dashed: boolean }
+  | { t: 'image'; x: number; y: number; w: number; h: number; index: number };
+
+/** One output page: items in points, origin top-left of the page. */
+export interface HtmlPage {
+  items: HtmlDisplayItem[];
 }
 
 export interface HtmlToPdfPayload {
-  blocks: HtmlBlock[];
+  pages: HtmlPage[];
+  images: ArrayBuffer[];
+  pageWidthPt: number;
+  pageHeightPt: number;
   fileName: string;
+  title?: string;
 }
 
 export interface RedactionBox {
   pageIndex: number; // 0-based
-  xPt: number;
-  yPt: number;
-  widthPt: number;
-  heightPt: number;
+  /** Viewer-space box in points (origin top-left of the page as displayed). */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface RedactPdfPayload {
-  pageImages: RenderedPageImage[]; // full-resolution render of every page
-  pageSizesPt: Array<{ width: number; height: number }>;
-  boxes: RedactionBox[];
-  fileName: string;
-}
-
-export interface EditTextElement {
-  type: 'text';
-  pageIndex: number; // 0-based
-  xPt: number; // baseline x
-  yPt: number; // baseline y
-  text: string;
-  fontSize: number;
-  color: string; // hex
-  bold: boolean;
-}
-
-export interface EditImageElement {
-  type: 'image';
-  pageIndex: number; // 0-based
-  xPt: number; // bottom-left x
-  yPt: number; // bottom-left y
-  widthPt: number;
-  heightPt: number;
-  imageBytes: ArrayBuffer;
-  imageType: 'png' | 'jpg';
-}
-
-export type EditElement = EditTextElement | EditImageElement;
-
-export interface EditPdfPayload {
   fileBuffer: ArrayBuffer;
   fileName: string;
-  elements: EditElement[];
+  /** Pages rebuilt from redacted renders; every other page is copied untouched. */
+  pages: Array<{ pageIndex: number; jpeg: ArrayBuffer; widthPt: number; heightPt: number }>;
+  stripMetadata: boolean;
 }
 
 export interface ProcessedPdfResult {
@@ -380,6 +409,8 @@ export interface ProcessedPdfResult {
   buffer: ArrayBuffer;
   size: number;
   pageCount?: number;
+  /** Human-readable summary of what the tool did (shown with the result). */
+  note?: string;
 }
 
 export interface SplitPdfResult {

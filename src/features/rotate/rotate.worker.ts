@@ -6,10 +6,11 @@
  *
  * `rotatePdfPages` is a plain exported function (no Worker/`self`
  * dependency) so it's directly testable from a Node script — see
- * scripts/test-all-features.ts.
+ * scripts/verify-conversions.ts.
  */
 
-import { PDFDocument, degrees } from 'pdf-lib';
+import { degrees } from 'pdf-lib';
+import { openPdf } from '../../services/pdfLoader';
 import type { WorkerRequest, RotatePayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
 
 export async function rotatePdfPages(
@@ -22,7 +23,7 @@ export async function rotatePdfPages(
   if (!fileBuffer) throw new Error('No PDF buffer provided for rotation.');
 
   onProgress?.(15, 'Loading PDF document...');
-  const pdfDoc = await PDFDocument.load(fileBuffer);
+  const pdfDoc = await openPdf(fileBuffer);
   const pages = pdfDoc.getPages();
   const totalPages = pages.length;
 

@@ -59,3 +59,29 @@ export function toRoman(n: number): string {
   }
   return out;
 }
+
+/**
+ * Origin for drawing a w×h box rotated by `degrees` (counter-clockwise,
+ * pdf-lib convention, rotating about the origin) so that its rotated
+ * bounding box sits at `position` with `margin` — i.e. the box turns about
+ * its own center instead of swinging off its bottom-left corner.
+ */
+export function rotatedPlacement(
+  pageWidth: number,
+  pageHeight: number,
+  w: number,
+  h: number,
+  degrees: number,
+  position: WatermarkPosition,
+  margin: number
+): { x: number; y: number } {
+  const t = (degrees * Math.PI) / 180;
+  const cos = Math.cos(t);
+  const sin = Math.sin(t);
+  const bw = Math.abs(w * cos) + Math.abs(h * sin);
+  const bh = Math.abs(w * sin) + Math.abs(h * cos);
+  const anchor = computeAnchor(pageWidth, pageHeight, bw, bh, position, margin);
+  const cx = anchor.x + bw / 2;
+  const cy = anchor.y + bh / 2;
+  return { x: cx - ((w / 2) * cos - (h / 2) * sin), y: cy - ((w / 2) * sin + (h / 2) * cos) };
+}

@@ -1,179 +1,188 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
-import { useWorkerBridge } from '../../hooks/useWorkerBridge';
-import { memoryManager } from '../../services/memoryManager';
+import { EmptyState, Field, Notice, Panel, Spinner, Toggle } from '../../components/ui';
+import { useToolRunner } from '../../hooks/useToolRunner';
+import { getTool } from '../../constants/tools';
 import { ListChecks } from 'lucide-react';
-import type { PDFFile, ToolMetadata } from '../../types/pdf';
-import type {
-  GetFormFieldsPayload,
-  GetFormFieldsResult,
-  FillFormPayload,
-  FormFieldInfo,
-  ProcessedPdfResult,
-} from '../../types/worker';
-
-const TOOL_METADATA: ToolMetadata = {
-  id: 'forms',
-  title: 'PDF Forms',
-  description: 'Fill in a PDF form’s fields and export a completed copy.',
-  icon: 'ListChecks',
-  color: '#6366F1',
-  category: 'edit',
-  acceptedFiles: 'single',
-};
+import type { PDFFile } from '../../types/pdf';
+import type { FillFormPayload, FormFieldInfo, GetFormFieldsResult, ProcessedPdfResult } from '../../types/worker';
 
 interface FormsViewProps {
   initialFiles?: PDFFile[];
   onBack: () => void;
 }
 
+function prettyName(name: string): string {
+  const last = name.split('.').pop() ?? name;
+  return last
+    .replace(/\[\d+\]$/, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .trim();
+}
+
 export const FormsView: React.FC<FormsViewProps> = ({ initialFiles = [], onBack }) => {
-  const [files, setFiles] = useState<PDFFile[]>(initialFiles);
+  const [files, setFiles] = useState<PDFFile[]>(initialFiles.slice(0, 1));
   const [fields, setFields] = useState<FormFieldInfo[] | null>(null);
+  const [hadXfa, setHadXfa] = useState(false);
   const [values, setValues] = useState<Record<string, string | boolean>>({});
-  const [flatten, setFlatten] = useState(true);
-  const [result, setResult] = useState<ProcessedPdfResult | null>(null);
-  const [inspecting, setInspecting] = useState(false);
+  const [flatten, setFlatten] = useState(false);
+  const [inspectError, setInspectError] = useState<string | null>(null);
+  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./forms.worker.ts', import.meta.url), { type: 'module' }));
+  const inspector = useToolRunner<GetFormFieldsResult & { buffer: ArrayBuffer; fileName: string }>(
+    () => new Worker(new URL('./forms.worker.ts', import.meta.url), { type: 'module' })
+  );
+  const file = files[0];
 
-  const { runTask, isProcessing, progress, stage, error, resetState } = useWorkerBridge<
-    GetFormFieldsResult | ProcessedPdfResult
-  >(() => new Worker(new URL('./forms.worker.ts', import.meta.url), { type: 'module' }));
-
-  const handleFilesAccepted = async (accepted: PDFFile[]) => {
-    const file = accepted.slice(0, 1)[0];
-    setFiles([file]);
-    setResult(null);
+  useEffect(() => {
+    if (!file) return;
+    let cancelled = false;
     setFields(null);
-    resetState();
-
-    setInspecting(true);
-    try {
-      const payload: GetFormFieldsPayload = { fileBuffer: file.rawBuffer.slice(0) };
-      const res = (await runTask<GetFormFieldsPayload>('GET_FORM_FIELDS', payload)) as GetFormFieldsResult;
-      setFields(res.fields);
-      const initial: Record<string, string | boolean> = {};
-      res.fields.forEach((f) => {
-        if (f.value !== undefined) initial[f.name] = f.value;
+    setInspectError(null);
+    inspector
+      .run('GET_FORM_FIELDS', { fileBuffer: file.rawBuffer.slice(0) })
+      .then((res) => {
+        if (cancelled) return;
+        if (!res) {
+          setInspectError('This PDF couldn’t be read.');
+          return;
+        }
+        setFields(res.fields);
+        setHadXfa(!!res.hadXfa);
+        const init: Record<string, string | boolean> = {};
+        res.fields.forEach((f) => f.value !== undefined && (init[f.name] = f.value));
+        setValues(init);
       });
-      setValues(initial);
-    } catch (err) {
-      console.error('Form inspection error:', err);
-    } finally {
-      setInspecting(false);
-    }
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file]);
+
+  const byPage = useMemo(() => {
+    const groups = new Map<number, FormFieldInfo[]>();
+    (fields ?? []).forEach((f) => {
+      const k = f.page ?? 0;
+      groups.set(k, [...(groups.get(k) ?? []), f]);
+    });
+    return [...groups.entries()].sort((a, b) => a[0] - b[0]);
+  }, [fields]);
+
+  const set = (name: string, v: string | boolean) => {
+    setValues((prev) => ({ ...prev, [name]: v }));
+    runner.reset();
   };
 
-  const handleClearFiles = () => {
-    setFiles([]);
-    setFields(null);
-    setValues({});
-    setResult(null);
-    resetState();
+  const execute = () => {
+    const buffer = file.rawBuffer.slice(0);
+    const payload: FillFormPayload = { fileBuffer: buffer, fileName: file.name, values, flatten };
+    void runner.run('FILL_FORM', payload, [buffer]);
   };
 
-  const executeFill = async () => {
-    if (files.length === 0) return;
-    const file = files[0];
-    try {
-      const bufferCopy = file.rawBuffer.slice(0);
-      const payload: FillFormPayload = { fileBuffer: bufferCopy, fileName: file.name, values, flatten };
-      const res = (await runTask<FillFormPayload>('FILL_FORM', payload, [bufferCopy])) as ProcessedPdfResult;
-      setResult(res);
-    } catch (err) {
-      console.error('Form fill error:', err);
-    }
-  };
-
-  const handleDownload = () => {
-    if (result) memoryManager.downloadBuffer(result.buffer, result.fileName);
-  };
+  const editable = (fields ?? []).filter((f) => f.type !== 'unsupported');
 
   return (
     <ToolLayout
-      tool={TOOL_METADATA}
-      accentColor="#6366F1"
+      tool={getTool('forms')}
       files={files}
       onBack={onBack}
-      onClearFiles={handleClearFiles}
-      onRemoveFile={handleClearFiles}
-      isProcessing={isProcessing || inspecting}
-      progress={progress}
-      stage={inspecting ? 'Detecting form fields...' : stage}
-      error={error}
-      resultBuffer={result?.buffer || null}
-      resultFileName={result?.fileName || 'filled_form.pdf'}
-      onDownloadResult={handleDownload}
-      actionButtonLabel="Save Filled PDF"
-      onExecuteAction={executeFill}
-      canExecute={files.length > 0 && !!fields}
+      onClearFiles={() => setFiles([])}
+      onRemoveFile={() => setFiles([])}
+      {...runner.layout}
+      resultNote={runner.result?.note}
+      actionButtonLabel="Save filled PDF"
+      onExecuteAction={execute}
+      canExecute={editable.length > 0}
+      options={
+        <>
+          <Toggle checked={flatten} onChange={setFlatten} label="Flatten form" hint="Bakes the answers into the page so they can’t be changed. Leave off to keep the form fillable." />
+          {fields && <p className="font-mono text-2xs text-muted">{editable.length} fillable fields</p>}
+        </>
+      }
+      emptyState={<Dropzone multiple={false} onFilesAccepted={(f) => setFiles(f.slice(0, 1))} title="Choose a PDF form" subtitle="Its fields are detected automatically" />}
     >
-      {files.length === 0 ? (
-        <Dropzone multiple={false} onFilesAccepted={handleFilesAccepted} title="Select a PDF form" subtitle="Its fillable fields will be detected automatically" />
-      ) : fields && fields.length === 0 ? (
-        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-xl p-6 text-sm text-amber-800 dark:text-amber-300">
-          No fillable form fields were detected in this PDF.
+      {inspectError && <Notice tone="error">{inspectError}</Notice>}
+      {hadXfa && (
+        <Notice tone="warn" title="This is an XFA (LiveCycle) form">
+          Its dynamic layer is removed when saving, and the standard form fields below are filled instead — that’s what
+          most PDF readers display anyway.
+        </Notice>
+      )}
+      {!fields && !inspectError ? (
+        <div className="flex items-center gap-2 text-sm text-muted py-10 justify-center">
+          <Spinner /> Looking for form fields…
         </div>
-      ) : fields ? (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm space-y-4">
-          <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-            <ListChecks className="w-5 h-5 text-[#6366F1]" />
-            <span>{fields.length} Field{fields.length === 1 ? '' : 's'} Detected</span>
-          </h3>
-
-          <div className="space-y-3">
-            {fields.map((field) => (
-              <div key={field.name}>
-                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">{field.name}</label>
-                {field.type === 'text' && (
-                  <input
-                    type="text"
-                    value={(values[field.name] as string) || ''}
-                    onChange={(e) => setValues((prev) => ({ ...prev, [field.name]: e.target.value }))}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                )}
-                {field.type === 'checkbox' && (
-                  <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-                    <input
-                      type="checkbox"
-                      checked={!!values[field.name]}
-                      onChange={(e) => setValues((prev) => ({ ...prev, [field.name]: e.target.checked }))}
-                      className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <span>Checked</span>
-                  </label>
-                )}
-                {(field.type === 'radio' || field.type === 'dropdown') && (
-                  <select
-                    value={(values[field.name] as string) || ''}
-                    onChange={(e) => setValues((prev) => ({ ...prev, [field.name]: e.target.value }))}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="">—</option>
-                    {(field.options || []).map((opt) => (
-                      <option key={opt} value={opt}>{opt}</option>
-                    ))}
-                  </select>
-                )}
-                {field.type === 'unsupported' && (
-                  <p className="text-xs text-slate-400">Unsupported field type — left unchanged.</p>
-                )}
-              </div>
-            ))}
-          </div>
-
-          <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <input
-              type="checkbox"
-              checked={flatten}
-              onChange={(e) => setFlatten(e.target.checked)}
-              className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-            />
-            <span>Flatten form (make fields permanent, non-editable)</span>
-          </label>
-        </div>
-      ) : null}
+      ) : fields && editable.length === 0 ? (
+        <Panel>
+          <EmptyState icon={<ListChecks className="w-8 h-8" />} title="No fillable fields in this PDF">
+            If it’s a scanned or “flat” form, use Edit PDF to type onto it instead.
+          </EmptyState>
+        </Panel>
+      ) : (
+        byPage.map(([page, list]) => (
+          <Panel key={page} className="p-5">
+            <h3 className="label-mono mb-4">{page ? `Page ${page}` : 'Fields'}</h3>
+            <div className="grid sm:grid-cols-2 gap-x-6 gap-y-4">
+              {list.map((f) => {
+                const label = prettyName(f.name) || f.name;
+                const v = values[f.name];
+                if (f.type === 'checkbox') {
+                  return (
+                    <div key={f.name} className="sm:col-span-2">
+                      <Toggle checked={!!v} disabled={f.readOnly} onChange={(c) => set(f.name, c)} label={label} />
+                    </div>
+                  );
+                }
+                if (f.type === 'radio') {
+                  return (
+                    <Field key={f.name} label={label}>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                        {f.options?.map((o) => (
+                          <label key={o} className="inline-flex items-center gap-1.5 text-sm">
+                            <input type="radio" name={f.name} disabled={f.readOnly} checked={v === o} onChange={() => set(f.name, o)} />
+                            {o}
+                          </label>
+                        ))}
+                      </div>
+                    </Field>
+                  );
+                }
+                if (f.type === 'dropdown') {
+                  return (
+                    <Field key={f.name} label={label}>
+                      <select className="input" disabled={f.readOnly} value={String(v ?? '')} onChange={(e) => set(f.name, e.target.value)}>
+                        <option value="">—</option>
+                        {f.options?.map((o) => (
+                          <option key={o} value={o}>
+                            {o}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  );
+                }
+                if (f.type === 'text') {
+                  return (
+                    <Field key={f.name} label={label} aside={f.maxLength ? `max ${f.maxLength}` : undefined} className={f.multiline ? 'sm:col-span-2' : undefined}>
+                      {f.multiline ? (
+                        <textarea className="input min-h-[72px]" disabled={f.readOnly} maxLength={f.maxLength} value={String(v ?? '')} onChange={(e) => set(f.name, e.target.value)} />
+                      ) : (
+                        <input className="input" disabled={f.readOnly} maxLength={f.maxLength} value={String(v ?? '')} onChange={(e) => set(f.name, e.target.value)} />
+                      )}
+                    </Field>
+                  );
+                }
+                return (
+                  <Field key={f.name} label={label} hint="This field type (signature/button) can’t be filled here.">
+                    <input className="input" disabled value="" />
+                  </Field>
+                );
+              })}
+            </div>
+          </Panel>
+        ))
+      )}
     </ToolLayout>
   );
 };

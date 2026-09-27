@@ -1,22 +1,13 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { Check, Copy } from 'lucide-react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
-import { useWorkerBridge } from '../../hooks/useWorkerBridge';
-import { usePdfRenderer } from '../../hooks/usePdfRenderer';
+import { Button, Notice, ProgressLine, Toggle } from '../../components/ui';
+import { useLayoutAnalysis } from '../../hooks/useLayoutAnalysis';
+import { layoutToMarkdown } from '../../services/layoutToMarkdown';
 import { memoryManager } from '../../services/memoryManager';
-import { FileCode } from 'lucide-react';
-import type { PDFFile, ToolMetadata } from '../../types/pdf';
-import type { PdfToMarkdownPayload, OfficeConversionResult } from '../../types/worker';
-
-const TOOL_METADATA: ToolMetadata = {
-  id: 'pdfToMarkdown',
-  title: 'PDF to Markdown',
-  description: 'Turn a PDF into a Markdown file — perfect for notes and LLMs.',
-  icon: 'FileCode',
-  color: '#0284C7',
-  category: 'convert',
-  acceptedFiles: 'single',
-};
+import { getTool } from '../../constants/tools';
+import type { PDFFile } from '../../types/pdf';
 
 interface PdfToMarkdownViewProps {
   initialFiles?: PDFFile[];
@@ -24,82 +15,66 @@ interface PdfToMarkdownViewProps {
 }
 
 export const PdfToMarkdownView: React.FC<PdfToMarkdownViewProps> = ({ initialFiles = [], onBack }) => {
-  const [files, setFiles] = useState<PDFFile[]>(initialFiles);
-  const [result, setResult] = useState<OfficeConversionResult | null>(null);
-  const [extractProgress, setExtractProgress] = useState<{ current: number; total: number } | null>(null);
-
-  const { extractAllText } = usePdfRenderer();
-  const { runTask, isProcessing, progress, stage, error, resetState } =
-    useWorkerBridge<OfficeConversionResult>(
-      () => new Worker(new URL('./pdfToMarkdown.worker.ts', import.meta.url), { type: 'module' })
-    );
-
-  const handleFilesAccepted = (accepted: PDFFile[]) => {
-    setFiles(accepted.slice(0, 1));
-    setResult(null);
-    resetState();
-  };
-
-  const handleClearFiles = () => {
-    setFiles([]);
-    setResult(null);
-    setExtractProgress(null);
-    resetState();
-  };
-
-  const executeConvert = async () => {
-    if (files.length === 0) return;
-    const file = files[0];
-    try {
-      const pages = await extractAllText(file.rawBuffer, (current, total) => setExtractProgress({ current, total }));
-      setExtractProgress(null);
-      const payload: PdfToMarkdownPayload = { pages, fileName: file.name };
-      const res = await runTask<PdfToMarkdownPayload>('PDF_TO_MARKDOWN', payload);
-      setResult(res);
-    } catch (err) {
-      setExtractProgress(null);
-      console.error('PDF to Markdown error:', err);
-    }
-  };
-
-  const handleDownload = () => {
-    if (result) memoryManager.downloadBuffer(result.buffer, result.fileName, result.mimeType);
-  };
-
-  const busy = isProcessing || extractProgress !== null;
-  const stageLabel = extractProgress ? `Extracting text (page ${extractProgress.current}/${extractProgress.total})...` : stage;
-  const progressValue = extractProgress ? Math.round((extractProgress.current / extractProgress.total) * 60) : 60 + progress * 0.4;
+  const [files, setFiles] = useState<PDFFile[]>(initialFiles.slice(0, 1));
+  const [pageMarkers, setPageMarkers] = useState(false);
+  const [emphasis, setEmphasis] = useState(true);
+  const [copied, setCopied] = useState(false);
+  const file = files[0];
+  const analysis = useLayoutAnalysis(file?.rawBuffer);
+  const markdown = useMemo(() => (analysis.pages ? layoutToMarkdown(analysis.pages, { pageHeadings: pageMarkers, emphasis }) : ''), [analysis.pages, pageMarkers, emphasis]);
+  const buffer = useMemo(() => (markdown ? (new TextEncoder().encode(markdown).buffer as ArrayBuffer) : null), [markdown]);
+  const outName = `${(file?.name ?? 'document').replace(/\.[^/.]+$/, '')}.md`;
 
   return (
     <ToolLayout
-      tool={TOOL_METADATA}
-      accentColor="#0284C7"
+      tool={getTool('pdfToMarkdown')}
       files={files}
       onBack={onBack}
-      onClearFiles={handleClearFiles}
-      onRemoveFile={handleClearFiles}
-      isProcessing={busy}
-      progress={progressValue}
-      stage={stageLabel}
-      error={error}
-      resultBuffer={result?.buffer || null}
-      resultFileName={result?.fileName || 'document.md'}
-      onDownloadResult={handleDownload}
-      actionButtonLabel="Convert to Markdown"
-      onExecuteAction={executeConvert}
-      canExecute={files.length > 0}
+      onClearFiles={() => setFiles([])}
+      onRemoveFile={() => setFiles([])}
+      isProcessing={!analysis.pages && !analysis.error && !!file}
+      progress={analysis.progress ? (analysis.progress.done / analysis.progress.total) * 100 : 0}
+      stage={analysis.progress ? `Reading page ${analysis.progress.done} of ${analysis.progress.total}…` : 'Reading document…'}
+      error={analysis.error}
+      resultBuffer={analysis.pages && analysis.hasText ? buffer : null}
+      resultFileName={outName}
+      onDownloadResult={(name) => buffer && memoryManager.downloadBuffer(buffer, name || outName, 'text/markdown')}
+      resultNote={
+        <div className="space-y-3 mt-2">
+          <Toggle checked={emphasis} onChange={setEmphasis} label="Keep bold and italic" />
+          <Toggle checked={pageMarkers} onChange={setPageMarkers} label="Mark page boundaries" />
+        </div>
+      }
+      actionButtonLabel="Convert"
+      onExecuteAction={() => undefined}
+      emptyState={<Dropzone multiple={false} onFilesAccepted={(f) => setFiles(f.slice(0, 1))} title="Choose a PDF to convert" />}
     >
-      {files.length === 0 ? (
-        <Dropzone multiple={false} onFilesAccepted={handleFilesAccepted} title="Select a PDF file" subtitle="Extract its text as Markdown" />
-      ) : (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm space-y-3">
-          <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-            <FileCode className="w-5 h-5 text-[#0284C7]" />
-            <span>Ready to Convert</span>
-          </h3>
-          <p className="text-sm text-slate-600 dark:text-slate-400">
-            Extracts the PDF's text as a clean Markdown file, one section per source page.
-          </p>
+      {analysis.pages && !analysis.hasText && (
+        <Notice tone="warn" title="No text found">
+          This PDF looks like a scan, so there’s no text to extract.
+        </Notice>
+      )}
+      {!analysis.pages && !analysis.error && (
+        <div className="max-w-sm">
+          <ProgressLine progress={analysis.progress ? (analysis.progress.done / analysis.progress.total) * 100 : 0} stage="Analyzing layout…" />
+        </div>
+      )}
+      {markdown && analysis.hasText && (
+        <div className="relative">
+          <Button
+            size="sm"
+            className="absolute right-3 top-3"
+            icon={copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+            onClick={() => {
+              void navigator.clipboard.writeText(markdown).then(() => {
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1500);
+              });
+            }}
+          >
+            {copied ? 'Copied' : 'Copy'}
+          </Button>
+          <pre className="bg-panel border border-line rounded-md p-4 pr-24 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words max-h-[70vh] overflow-auto scroll-thin">{markdown}</pre>
         </div>
       )}
     </ToolLayout>

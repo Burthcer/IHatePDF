@@ -1,124 +1,122 @@
 import React, { useState } from 'react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
-import { useWorkerBridge } from '../../hooks/useWorkerBridge';
-import { usePdfRenderer } from '../../hooks/usePdfRenderer';
+import { Field, Panel, Segmented } from '../../components/ui';
+import { useToolRunner } from '../../hooks/useToolRunner';
+import { openPdfJsDocument } from '../../services/pdfWorkerSetup';
 import { memoryManager } from '../../services/memoryManager';
-import { Presentation } from 'lucide-react';
-import type { PDFFile, ToolMetadata } from '../../types/pdf';
-import type { BuildPptxPayload, OfficeConversionResult } from '../../types/worker';
-
-const TOOL_METADATA: ToolMetadata = {
-  id: 'pdfToPpt',
-  title: 'PDF to PowerPoint',
-  description: 'Turn every PDF page into a slide, with real editable text frames on top.',
-  icon: 'Presentation',
-  color: '#F59E0B',
-  category: 'convert',
-  acceptedFiles: 'single',
-};
+import { WorkerClient } from '../../services/workerClient';
+import { getTool } from '../../constants/tools';
+import type { PDFFile } from '../../types/pdf';
+import type { BuildPptxPayload, OfficeConversionResult, PptTextBox, PptxSlideImage } from '../../types/worker';
 
 interface PdfToPptViewProps {
   initialFiles?: PDFFile[];
   onBack: () => void;
 }
 
+async function renderSlides(buffer: ArrayBuffer, width: number, onPage: (i: number, n: number) => void): Promise<PptxSlideImage[]> {
+  const doc = await openPdfJsDocument(buffer).promise;
+  const slides: PptxSlideImage[] = [];
+  try {
+    for (let i = 1; i <= doc.numPages; i++) {
+      onPage(i, doc.numPages);
+      const page = await doc.getPage(i);
+      const base = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: width / base.width });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.ceil(vp.width);
+      canvas.height = Math.ceil(vp.height);
+      const ctx = canvas.getContext('2d', { alpha: false })!;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport: vp, canvas }).promise;
+      slides.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.88), widthPt: base.width, heightPt: base.height });
+      canvas.width = 0;
+      page.cleanup();
+    }
+  } finally {
+    await memoryManager.destroyPdfDocument(doc);
+  }
+  return slides;
+}
+
 export const PdfToPptView: React.FC<PdfToPptViewProps> = ({ initialFiles = [], onBack }) => {
-  const [files, setFiles] = useState<PDFFile[]>(initialFiles);
-  const [result, setResult] = useState<OfficeConversionResult | null>(null);
-  const [renderProgress, setRenderProgress] = useState<{ current: number; total: number } | null>(null);
+  const [files, setFiles] = useState<PDFFile[]>(initialFiles.slice(0, 1));
+  const [mode, setMode] = useState<'editable' | 'image'>('editable');
+  const [prep, setPrep] = useState<{ progress: number; stage: string } | null>(null);
+  const [prepError, setPrepError] = useState<string | null>(null);
+  const runner = useToolRunner<OfficeConversionResult>(() => new Worker(new URL('./buildPptx.worker.ts', import.meta.url), { type: 'module' }));
+  const file = files[0];
 
-  const { renderAllPageImages, extractPositionedText } = usePdfRenderer();
-  const { runTask, isProcessing, progress, stage, error, resetState } =
-    useWorkerBridge<OfficeConversionResult>(
-      () => new Worker(new URL('./buildPptx.worker.ts', import.meta.url), { type: 'module' })
-    );
-
-  const handleFilesAccepted = (acceptedFiles: PDFFile[]) => {
-    setFiles(acceptedFiles.slice(0, 1));
-    setResult(null);
-    resetState();
-  };
-
-  const handleClearFiles = () => {
-    setFiles([]);
-    setResult(null);
-    setRenderProgress(null);
-    resetState();
-  };
-
-  const executeConvert = async () => {
-    if (files.length === 0) return;
-    const file = files[0];
-
+  const execute = async () => {
+    setPrepError(null);
+    let client: WorkerClient | null = null;
     try {
-      const slides = await renderAllPageImages(file.rawBuffer, 1280, (current, total) =>
-        setRenderProgress({ current, total })
-      );
-      const pageText = await extractPositionedText(file.rawBuffer);
-      setRenderProgress(null);
-
-      const payload: BuildPptxPayload = { slides, pageText, fileName: file.name };
-      const res = await runTask<BuildPptxPayload>('BUILD_PPTX', payload);
-      setResult(res);
+      let source = file.rawBuffer;
+      let textBoxes: PptTextBox[][] | undefined;
+      if (mode === 'editable') {
+        client = new WorkerClient(() => new Worker(new URL('./extract.worker.ts', import.meta.url), { type: 'module' }));
+        const copy = file.rawBuffer.slice(0);
+        const res = await client.call<{ background: ArrayBuffer; pages: Array<{ boxes: PptTextBox[] }> }>('EXTRACT_FOR_PPT', { buffer: copy }, [copy], (p, stage) =>
+          setPrep({ progress: p * 0.4, stage })
+        );
+        source = res.background;
+        textBoxes = res.pages.map((p) => p.boxes);
+      }
+      const slides = await renderSlides(source, 1600, (i, n) => setPrep({ progress: 40 + (i / n) * 55, stage: `Rendering slide ${i} of ${n}…` }));
+      setPrep(null);
+      const payload: BuildPptxPayload = { slides, textBoxes, fileName: file.name };
+      await runner.run('BUILD_PPTX', payload);
     } catch (err) {
-      setRenderProgress(null);
-      console.error('PDF to PPT error:', err);
+      setPrepError(err instanceof Error ? err.message : String(err));
+    } finally {
+      client?.terminate();
+      setPrep(null);
     }
   };
 
-  const handleDownload = () => {
-    if (result) memoryManager.downloadBuffer(result.buffer, result.fileName, result.mimeType);
-  };
-
-  const busy = isProcessing || renderProgress !== null;
-  const stageLabel = renderProgress
-    ? `Rendering page ${renderProgress.current}/${renderProgress.total}...`
-    : stage;
-  const progressValue = renderProgress
-    ? Math.round((renderProgress.current / renderProgress.total) * 50)
-    : 50 + progress / 2;
-
   return (
     <ToolLayout
-      tool={TOOL_METADATA}
-      accentColor="#F59E0B"
+      tool={getTool('pdfToPpt')}
       files={files}
       onBack={onBack}
-      onClearFiles={handleClearFiles}
-      onRemoveFile={handleClearFiles}
-      isProcessing={busy}
-      progress={progressValue}
-      stage={stageLabel}
-      error={error}
-      resultBuffer={result?.buffer || null}
-      resultFileName={result?.fileName || 'presentation.pptx'}
-      onDownloadResult={handleDownload}
+      onClearFiles={() => setFiles([])}
+      onRemoveFile={() => setFiles([])}
+      {...runner.layout}
+      isProcessing={runner.layout.isProcessing || !!prep}
+      progress={prep ? prep.progress : runner.layout.progress}
+      stage={prep ? prep.stage : runner.layout.stage}
+      error={prepError ?? runner.layout.error}
       actionButtonLabel="Convert to PowerPoint"
-      onExecuteAction={executeConvert}
-      canExecute={files.length > 0}
+      onExecuteAction={() => void execute()}
+      options={
+        <Field label="Slides">
+          <Segmented
+            value={mode}
+            onChange={(m) => {
+              setMode(m);
+              runner.reset();
+            }}
+            options={[
+              { value: 'editable', label: 'Editable text' },
+              { value: 'image', label: 'Images only' },
+            ]}
+          />
+        </Field>
+      }
+      emptyState={<Dropzone multiple={false} onFilesAccepted={(f) => setFiles(f.slice(0, 1))} title="Choose a PDF to convert" />}
     >
-      {files.length === 0 ? (
-        <Dropzone
-          multiple={false}
-          onFilesAccepted={handleFilesAccepted}
-          title="Select a PDF file"
-          subtitle="Each page becomes one slide"
-        />
-      ) : (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm space-y-3">
-          <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-            <Presentation className="w-5 h-5 text-[#F59E0B]" />
-            <span>Ready to Convert</span>
-          </h3>
-          <p className="text-sm text-slate-600 dark:text-slate-400">
-            Each page is rendered as a full-slide image for exact visual appearance, with each line
-            of real text also placed on top as an editable, selectable text box at its true position
-            and size. Text color/bold aren't detected from the source PDF, so overlaid text renders
-            in plain dark grey.
-          </p>
-        </div>
-      )}
+      <Panel className="p-6 space-y-2 text-sm">
+        {mode === 'editable' ? (
+          <>
+            <p>Each page becomes a slide. The text is taken out of the page and put back as real PowerPoint text boxes — same position, size, color and weight — over a background with everything else.</p>
+            <p className="text-xs text-muted">If a font isn’t installed on the computer opening the deck, PowerPoint substitutes a similar one.</p>
+          </>
+        ) : (
+          <p>Each page becomes a picture on its own slide. Looks exactly like the PDF, but the text can’t be edited.</p>
+        )}
+      </Panel>
     </ToolLayout>
   );
 };

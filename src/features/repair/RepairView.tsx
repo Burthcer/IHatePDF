@@ -1,99 +1,98 @@
 import React, { useState } from 'react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
-import { useWorkerBridge } from '../../hooks/useWorkerBridge';
+import { Panel } from '../../components/ui';
+import { useToolRunner } from '../../hooks/useToolRunner';
+import { openPdfJsDocument } from '../../services/pdfWorkerSetup';
 import { memoryManager } from '../../services/memoryManager';
-import { Wrench } from 'lucide-react';
-import type { PDFFile, ToolMetadata } from '../../types/pdf';
-import type { RepairPayload, ProcessedPdfResult } from '../../types/worker';
-
-const TOOL_METADATA: ToolMetadata = {
-  id: 'repair',
-  title: 'Repair PDF',
-  description: 'Repair a damaged PDF and recover what can be read from it.',
-  icon: 'Wrench',
-  color: '#10B981',
-  category: 'optimize',
-  acceptedFiles: 'single',
-};
+import { getTool } from '../../constants/tools';
+import type { PDFFile } from '../../types/pdf';
+import type { ProcessedPdfResult, RepairPayload } from '../../types/worker';
 
 interface RepairViewProps {
   initialFiles?: PDFFile[];
   onBack: () => void;
 }
 
-export const RepairView: React.FC<RepairViewProps> = ({ initialFiles = [], onBack }) => {
-  const [files, setFiles] = useState<PDFFile[]>(initialFiles);
-  const [result, setResult] = useState<ProcessedPdfResult | null>(null);
-
-  const { runTask, isProcessing, progress, stage, error, resetState } =
-    useWorkerBridge<ProcessedPdfResult>(
-      () => new Worker(new URL('./repair.worker.ts', import.meta.url), { type: 'module' })
-    );
-
-  const handleFilesAccepted = (accepted: PDFFile[]) => {
-    setFiles(accepted.slice(0, 1));
-    setResult(null);
-    resetState();
-  };
-
-  const handleClearFiles = () => {
-    setFiles([]);
-    setResult(null);
-    resetState();
-  };
-
-  const executeRepair = async () => {
-    if (files.length === 0) return;
-    const file = files[0];
-    try {
-      const bufferCopy = file.rawBuffer.slice(0);
-      const payload: RepairPayload = { fileBuffer: bufferCopy, fileName: file.name };
-      const res = await runTask<RepairPayload>('REPAIR_PDF', payload, [bufferCopy]);
-      setResult(res);
-    } catch (err) {
-      console.error('Repair error:', err);
+async function renderAll(buffer: ArrayBuffer, onPage: (i: number, n: number) => void): Promise<NonNullable<RepairPayload['renderedPages']>> {
+  const doc = await openPdfJsDocument(buffer).promise;
+  const out: NonNullable<RepairPayload['renderedPages']> = [];
+  try {
+    for (let i = 1; i <= doc.numPages; i++) {
+      onPage(i, doc.numPages);
+      try {
+        const page = await doc.getPage(i);
+        const vp = page.getViewport({ scale: 2 });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.ceil(vp.width);
+        canvas.height = Math.ceil(vp.height);
+        const ctx = canvas.getContext('2d', { alpha: false })!;
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        await page.render({ canvasContext: ctx, viewport: vp, canvas }).promise;
+        const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', 0.9));
+        canvas.width = 0;
+        if (blob) out.push({ jpeg: await blob.arrayBuffer(), widthPt: vp.width / 2, heightPt: vp.height / 2 });
+      } catch {
+        // skip pages even pdf.js can't draw
+      }
     }
-  };
+  } finally {
+    await memoryManager.destroyPdfDocument(doc);
+  }
+  return out;
+}
 
-  const handleDownload = () => {
-    if (result) memoryManager.downloadBuffer(result.buffer, result.fileName);
+export const RepairView: React.FC<RepairViewProps> = ({ initialFiles = [], onBack }) => {
+  const [files, setFiles] = useState<PDFFile[]>(initialFiles.slice(0, 1));
+  const [fallbackStage, setFallbackStage] = useState<string | null>(null);
+  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./repair.worker.ts', import.meta.url), { type: 'module' }));
+  const file = files[0];
+
+  const execute = async () => {
+    const buffer = file.rawBuffer.slice(0);
+    const res = await runner.run<RepairPayload>('REPAIR_PDF', { fileBuffer: buffer, fileName: file.name }, [buffer]);
+    const expected = file.pageCount;
+    if (res && (!expected || (res.pageCount ?? 0) >= expected)) return;
+    // Structural repair failed or lost pages — rebuild from what pdf.js can render.
+    try {
+      setFallbackStage('Rendering readable pages…');
+      const rendered = await renderAll(file.rawBuffer, (i, n) => setFallbackStage(`Rendering page ${i} of ${n}…`));
+      setFallbackStage(null);
+      if (!rendered.length) return;
+      if (res && (res.pageCount ?? 0) >= rendered.length) return;
+      await runner.run<RepairPayload>('REPAIR_PDF', { fileBuffer: new ArrayBuffer(0), fileName: file.name, renderedPages: rendered }, rendered.map((r) => r.jpeg));
+    } catch {
+      setFallbackStage(null);
+    }
   };
 
   return (
     <ToolLayout
-      tool={TOOL_METADATA}
-      accentColor="#10B981"
+      tool={getTool('repair')}
       files={files}
       onBack={onBack}
-      onClearFiles={handleClearFiles}
-      onRemoveFile={handleClearFiles}
-      isProcessing={isProcessing}
-      progress={progress}
-      stage={stage}
-      error={error}
-      resultBuffer={result?.buffer || null}
-      resultFileName={result?.fileName || 'repaired_document.pdf'}
-      onDownloadResult={handleDownload}
-      actionButtonLabel="Repair PDF"
-      onExecuteAction={executeRepair}
-      canExecute={files.length > 0}
+      onClearFiles={() => setFiles([])}
+      onRemoveFile={() => setFiles([])}
+      {...runner.layout}
+      isProcessing={runner.layout.isProcessing || !!fallbackStage}
+      stage={fallbackStage ?? runner.layout.stage}
+      resultNote={runner.result?.note}
+      actionButtonLabel="Repair"
+      onExecuteAction={() => void execute()}
+      emptyState={<Dropzone multiple={false} onFilesAccepted={(f) => setFiles(f.slice(0, 1))} title="Choose a damaged PDF" />}
     >
-      {files.length === 0 ? (
-        <Dropzone multiple={false} onFilesAccepted={handleFilesAccepted} title="Select a damaged PDF file" subtitle="Rebuild its structure and recover what's readable" />
-      ) : (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm space-y-3">
-          <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-            <Wrench className="w-5 h-5 text-[#10B981]" />
-            <span>Ready to Repair</span>
-          </h3>
-          <p className="text-sm text-slate-600 dark:text-slate-400">
-            Re-parses the document tolerantly (skipping malformed objects instead of failing outright)
-            and rebuilds a clean file. If the file is too damaged, you'll get a clear error rather than
-            a corrupted result.
-          </p>
-        </div>
-      )}
+      <Panel className="p-6 space-y-3 text-sm">
+        <p>
+          First the file’s objects are re-read one by one and written into a clean, consistent structure — that fixes broken
+          cross-reference tables, truncated downloads and most “file is damaged” errors while keeping text selectable.
+        </p>
+        <p className="text-muted text-xs">
+          If that loses pages, the pages that can still be displayed are captured as images and assembled into a new PDF, so
+          you at least get everything that’s visible back.
+        </p>
+        {file && !file.pageCount && <p className="text-xs text-warn">This file couldn’t be previewed, so it’s probably damaged — that’s what this tool is for.</p>}
+      </Panel>
     </ToolLayout>
   );
 };

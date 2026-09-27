@@ -1,297 +1,182 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
-import { PagePreviewModal } from '../../components/common/PagePreviewModal';
-import { useWorkerBridge } from '../../hooks/useWorkerBridge';
-import { usePdfRenderer } from '../../hooks/usePdfRenderer';
-import { memoryManager } from '../../services/memoryManager';
-import { Scissors, FileCheck, Layers, Maximize2, RefreshCw } from 'lucide-react';
-import type { PDFFile, PDFPagePreview, ToolMetadata } from '../../types/pdf';
-import type { SplitPayload, ProcessedPdfResult } from '../../types/worker';
+import { PageThumb } from '../../components/common/PageThumb';
+import { Field, Notice, Segmented, Spinner } from '../../components/ui';
+import { useToolRunner } from '../../hooks/useToolRunner';
+import { usePageThumbnails } from '../../hooks/usePageThumbnails';
+import { formatPageSet, parsePageRanges, rangesToPages } from '../../services/pageRanges';
+import { getTool } from '../../constants/tools';
+import type { PDFFile } from '../../types/pdf';
+import type { ProcessedPdfResult, SplitPayload } from '../../types/worker';
 
-const SPLIT_TOOL_METADATA: ToolMetadata = {
-  id: 'split',
-  title: 'Split PDF',
-  description: 'Extract selected page ranges or split a PDF into smaller files.',
-  icon: 'Scissors',
-  color: '#E53E3E',
-  category: 'organize',
-  acceptedFiles: 'single',
-};
+type Mode = 'extract' | 'ranges' | 'every' | 'all';
 
 interface SplitViewProps {
   initialFiles?: PDFFile[];
   onBack: () => void;
 }
 
-/**
- * Parses a range string like "1-3, 5, 8-12" into validated {from, to} pairs,
- * clamped to [1, maxPage]. Throws with a user-facing message on bad input.
- */
-function parseRangeString(input: string, maxPage: number): Array<{ from: number; to: number }> {
-  const tokens = input
-    .split(',')
-    .map((t) => t.trim())
-    .filter(Boolean);
-
-  if (tokens.length === 0) {
-    throw new Error('Enter at least one page or range, e.g. "1-3, 5, 8-12".');
-  }
-
-  const ranges: Array<{ from: number; to: number }> = [];
-  for (const token of tokens) {
-    const match = token.match(/^(\d+)(?:-(\d+))?$/);
-    if (!match) {
-      throw new Error(`"${token}" is not a valid page or range.`);
-    }
-    const from = parseInt(match[1], 10);
-    const to = match[2] ? parseInt(match[2], 10) : from;
-    if (from < 1 || to < 1 || from > maxPage || to > maxPage || from > to) {
-      throw new Error(`"${token}" is out of range for this ${maxPage}-page document.`);
-    }
-    ranges.push({ from, to });
-  }
-  return ranges;
-}
-
 export const SplitView: React.FC<SplitViewProps> = ({ initialFiles = [], onBack }) => {
-  const [files, setFiles] = useState<PDFFile[]>(initialFiles);
-  const [splitMode, setSplitMode] = useState<'range' | 'all'>('range');
-  const [rangeInput, setRangeInput] = useState<string>('1');
-  const [rangeError, setRangeError] = useState<string | null>(null);
-  const [detectedPages, setDetectedPages] = useState<number>(1);
-  const [result, setResult] = useState<ProcessedPdfResult | null>(null);
-  const [pagePreviews, setPagePreviews] = useState<PDFPagePreview[]>([]);
-  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const [files, setFiles] = useState<PDFFile[]>(initialFiles.slice(0, 1));
+  const [mode, setMode] = useState<Mode>('extract');
+  const [rangeText, setRangeText] = useState('1');
+  const [everyN, setEveryN] = useState(2);
+  const file = files[0];
+  const { pages } = usePageThumbnails(file?.rawBuffer);
+  const total = pages.length || file?.pageCount || 0;
+  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./split.worker.ts', import.meta.url), { type: 'module' }));
 
-  const { renderThumbnails, isRendering } = usePdfRenderer();
-
-  const { runTask, isProcessing, progress, stage, error, resetState } =
-    useWorkerBridge<ProcessedPdfResult>(
-      () => new Worker(new URL('./split.worker.ts', import.meta.url), { type: 'module' })
-    );
-
-  useEffect(() => {
-    if (files.length > 0) {
-      renderThumbnails(files[0].rawBuffer, 60).then(({ previews, totalPages }) => {
-        setDetectedPages(totalPages);
-        setRangeInput(`1-${totalPages}`);
-        setPagePreviews(previews);
-      }).catch(() => {
-        setDetectedPages(1);
-        setRangeInput('1');
-        setPagePreviews([]);
-      });
-    }
-  }, [files, renderThumbnails]);
-
-  const handleFilesAccepted = (acceptedFiles: PDFFile[]) => {
-    const single = acceptedFiles.slice(0, 1);
-    setFiles(single);
-    setResult(null);
-    setPagePreviews([]);
-    resetState();
-  };
-
-  const handleClearFiles = () => {
-    setFiles([]);
-    setResult(null);
-    setPagePreviews([]);
-    resetState();
-  };
-
-  const executeSplit = async () => {
-    if (files.length === 0) return;
-    const file = files[0];
-
-    let ranges: SplitPayload['ranges'];
-    if (splitMode === 'all') {
-      ranges = 'all';
-    } else {
-      try {
-        ranges = parseRangeString(rangeInput, detectedPages);
-        setRangeError(null);
-      } catch (err) {
-        setRangeError(err instanceof Error ? err.message : 'Invalid page range.');
-        return;
-      }
-    }
-
+  const parsed = useMemo(() => {
+    if (!total) return { ranges: [], error: null as string | null };
     try {
-      const bufferCopy = file.rawBuffer.slice(0);
-      const payload: SplitPayload = {
-        fileBuffer: bufferCopy,
-        fileName: file.name,
-        ranges,
-      };
-
-      const res = await runTask<SplitPayload>('SPLIT_PDF', payload, [bufferCopy]);
-      setResult(res);
-    } catch (err) {
-      console.error('Split error:', err);
+      return { ranges: parsePageRanges(rangeText, total), error: null };
+    } catch (e) {
+      return { ranges: [], error: (e as Error).message };
     }
+  }, [rangeText, total]);
+
+  const groups: number[][] = useMemo(() => {
+    if (!total) return [];
+    if (mode === 'all') return Array.from({ length: total }, (_, i) => [i]);
+    if (mode === 'every') {
+      const n = Math.max(1, everyN);
+      const out: number[][] = [];
+      for (let i = 0; i < total; i += n) out.push(Array.from({ length: Math.min(n, total - i) }, (_, k) => i + k));
+      return out;
+    }
+    if (mode === 'ranges') return parsed.ranges.map((r) => rangesToPages([r]).map((p) => p - 1));
+    return [rangesToPages(parsed.ranges).map((p) => p - 1)];
+  }, [mode, everyN, parsed, total]);
+
+  const selected = useMemo(() => new Set(mode === 'extract' || mode === 'ranges' ? rangesToPages(parsed.ranges) : []), [mode, parsed]);
+  const groupOf = useMemo(() => {
+    const m = new Map<number, number>();
+    groups.forEach((g, gi) => g.forEach((p) => m.set(p, gi)));
+    return m;
+  }, [groups]);
+
+  const togglePage = (page: number) => {
+    const next = new Set(selected);
+    if (next.has(page)) next.delete(page);
+    else next.add(page);
+    setRangeText(formatPageSet(next) || '');
+    runner.reset();
   };
 
-  const handleDownload = () => {
-    if (result) {
-      const mimeType = result.fileName.endsWith('.zip') ? 'application/zip' : 'application/pdf';
-      memoryManager.downloadBuffer(result.buffer, result.fileName, mimeType);
-    }
+  const execute = () => {
+    const buffer = file.rawBuffer.slice(0);
+    const payload: SplitPayload =
+      mode === 'extract'
+        ? { fileBuffer: buffer, fileName: file.name, ranges: parsed.ranges }
+        : { fileBuffer: buffer, fileName: file.name, ranges: [], groups };
+    void runner.run('SPLIT_PDF', payload, [buffer]);
   };
+
+  const outputs = mode === 'extract' ? 1 : groups.length;
+  const canRun = total > 0 && !parsed.error && groups.length > 0 && groups.every((g) => g.length > 0);
 
   return (
     <ToolLayout
-      tool={SPLIT_TOOL_METADATA}
-      accentColor="#E53E3E"
+      tool={getTool('split')}
       files={files}
       onBack={onBack}
-      onClearFiles={handleClearFiles}
-      onRemoveFile={handleClearFiles}
-      isProcessing={isProcessing}
-      progress={progress}
-      stage={stage}
-      error={error}
-      resultBuffer={result?.buffer || null}
-      resultFileName={result?.fileName || 'split_document.pdf'}
-      onDownloadResult={handleDownload}
-      actionButtonLabel="Split PDF"
-      onExecuteAction={executeSplit}
-      canExecute={files.length > 0}
-    >
-      {files.length === 0 ? (
-        <Dropzone
-          multiple={false}
-          onFilesAccepted={handleFilesAccepted}
-          title="Select a PDF file to Split"
-          subtitle="Extract single pages or ranges locally"
-        />
-      ) : (
-        <div className="space-y-6">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs space-y-6">
-            <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-              <Scissors className="w-5 h-5 text-amber-500" />
-              <span>Split Configuration</span>
-            </h3>
-
-            {/* Mode selection */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <button
-                type="button"
-                onClick={() => setSplitMode('range')}
-                className={`p-4 rounded-xl border text-left flex items-start gap-3 transition-all ${
-                  splitMode === 'range'
-                    ? 'border-amber-500 bg-amber-50/50 dark:bg-amber-950/20 text-amber-950 dark:text-amber-100 ring-2 ring-amber-500/20'
-                    : 'border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-                }`}
-              >
-                <Layers className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold text-sm">Extract Range</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                    Extract a specific continuous range of pages into a single PDF.
-                  </p>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setSplitMode('all')}
-                className={`p-4 rounded-xl border text-left flex items-start gap-3 transition-all ${
-                  splitMode === 'all'
-                    ? 'border-amber-500 bg-amber-50/50 dark:bg-amber-950/20 text-amber-950 dark:text-amber-100 ring-2 ring-amber-500/20'
-                    : 'border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-                }`}
-              >
-                <FileCheck className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold text-sm">Extract All Pages</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                    Burst all {detectedPages} pages into individual PDFs, packaged as one ZIP.
-                  </p>
-                </div>
-              </button>
+      onClearFiles={() => setFiles([])}
+      onRemoveFile={() => setFiles([])}
+      {...runner.layout}
+      actionButtonLabel={outputs > 1 ? `Split into ${outputs} files` : 'Extract pages'}
+      onExecuteAction={execute}
+      canExecute={canRun}
+      options={
+        <>
+          <Field label="Mode">
+            <div className="grid grid-cols-1 gap-1">
+              <Segmented
+                value={mode}
+                onChange={(m) => {
+                  setMode(m);
+                  runner.reset();
+                }}
+                options={[
+                  { value: 'extract', label: 'Extract' },
+                  { value: 'ranges', label: 'By range' },
+                  { value: 'every', label: 'Every N' },
+                  { value: 'all', label: 'All pages' },
+                ]}
+                size="sm"
+              />
             </div>
-
-            {/* Range Input */}
-            {splitMode === 'range' && (
-              <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
-                <label htmlFor="split-range-input" className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                  Pages to extract
-                </label>
-                <input
-                  id="split-range-input"
-                  type="text"
-                  value={rangeInput}
-                  onChange={(e) => {
-                    setRangeInput(e.target.value);
-                    setRangeError(null);
-                  }}
-                  placeholder="e.g. 1-3, 5, 8-12"
-                  className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg text-sm font-semibold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-amber-500"
-                />
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Comma-separated pages or ranges. Document contains {detectedPages} total pages.
-                </p>
-                {rangeError && (
-                  <p className="text-xs font-semibold text-rose-600 dark:text-rose-400">{rangeError}</p>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Page Preview Grid — verify exactly what you're extracting, in full quality */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs space-y-4">
-            <h3 className="font-bold text-sm text-slate-800 dark:text-slate-200">Document Pages</h3>
-            {isRendering ? (
-              <div className="p-12 text-center text-slate-400">
-                <RefreshCw className="w-8 h-8 animate-spin mx-auto text-amber-500 mb-2" />
-                <p className="text-sm font-medium">Rendering page previews...</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                {pagePreviews.map((preview, idx) => (
-                  <div
-                    key={preview.pageNumber}
-                    className="group bg-slate-50 dark:bg-slate-950 p-2 rounded-xl border border-slate-200 dark:border-slate-800"
-                  >
-                    <div className="relative w-full aspect-[3/4] flex items-center justify-center overflow-hidden rounded bg-white dark:bg-slate-900">
-                      <img
-                        src={preview.dataUrl}
-                        alt={`Page ${preview.pageNumber}`}
-                        className="max-w-full max-h-full object-contain"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setPreviewIndex(idx)}
-                        className="absolute bottom-1 right-1 p-1.5 rounded-lg bg-slate-900/70 text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="View full quality"
-                      >
-                        <Maximize2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    <p className="text-center text-xs font-semibold text-slate-500 mt-1.5">
-                      Page {preview.pageNumber}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          </Field>
+          <p className="text-xs text-muted -mt-2">
+            {mode === 'extract' && 'Put the chosen pages into one new PDF.'}
+            {mode === 'ranges' && 'Each comma-separated range becomes its own PDF.'}
+            {mode === 'every' && 'Cut the document into files of N pages each.'}
+            {mode === 'all' && 'One PDF per page.'}
+          </p>
+          {(mode === 'extract' || mode === 'ranges') && (
+            <Field label="Pages" hint={parsed.error ?? 'Example: 1-3, 5, 8- (click thumbnails to toggle)'}>
+              <input
+                className="input font-mono"
+                value={rangeText}
+                onChange={(e) => {
+                  setRangeText(e.target.value);
+                  runner.reset();
+                }}
+              />
+            </Field>
+          )}
+          {mode === 'every' && (
+            <Field label="Pages per file">
+              <input
+                type="number"
+                min={1}
+                max={total || 1}
+                className="input font-mono w-24"
+                value={everyN}
+                onChange={(e) => {
+                  setEveryN(Math.max(1, Number(e.target.value) || 1));
+                  runner.reset();
+                }}
+              />
+            </Field>
+          )}
+          <p className="font-mono text-2xs text-muted">
+            {outputs} output file{outputs === 1 ? '' : 's'}
+            {outputs > 1 ? ' · downloaded as a ZIP' : ''}
+          </p>
+        </>
+      }
+      emptyState={<Dropzone multiple={false} onFilesAccepted={(f) => setFiles(f.slice(0, 1))} title="Choose a PDF to split" />}
+    >
+      {parsed.error && (mode === 'extract' || mode === 'ranges') && <Notice tone="warn">{parsed.error}</Notice>}
+      {pages.length === 0 ? (
+        <div className="flex items-center gap-2 text-sm text-muted py-10 justify-center">
+          <Spinner /> Loading pages…
         </div>
-      )}
-
-      {previewIndex !== null && files.length > 0 && pagePreviews[previewIndex] && (
-        <PagePreviewModal
-          pdfBuffer={files[0].rawBuffer}
-          pageNumber={pagePreviews[previewIndex].pageNumber}
-          totalPages={detectedPages}
-          accentColor="#E53E3E"
-          onClose={() => setPreviewIndex(null)}
-          onNavigate={(n) => {
-            const targetIdx = pagePreviews.findIndex((p) => p.pageNumber === n);
-            setPreviewIndex(targetIdx !== -1 ? targetIdx : null);
-          }}
-        />
+      ) : (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(132px,1fr))] gap-x-4 gap-y-6">
+          {pages.map((p, i) => {
+            const page = i + 1;
+            const g = groupOf.get(i);
+            const inOutput = g !== undefined;
+            return (
+              <PageThumb
+                key={i}
+                src={p.url}
+                aspect={p.width / p.height}
+                selected={(mode === 'extract' || mode === 'ranges') && selected.has(page)}
+                dimmed={!inOutput}
+                onClick={mode === 'extract' || mode === 'ranges' ? () => togglePage(page) : undefined}
+                label={
+                  <span>
+                    {page}
+                    {mode !== 'extract' && g !== undefined && <span className="text-accent"> · file {g + 1}</span>}
+                  </span>
+                }
+              />
+            );
+          })}
+        </div>
       )}
     </ToolLayout>
   );

@@ -1,0 +1,41 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'claude/**']
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsx scripts/generateTestFixtures.ts
+      - run: npm test
+      - run: npm run build:exe
+        env:
+          # Not code-signed: Windows SmartScreen shows "More info → Run anyway" on first install.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IHatePDF-Setup
+          path: FinalApp/IHatePDF-Setup.exe
+          if-no-files-found: error
+      # Tags publish a GitHub Release; the README's download button links to its asset.
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: IHatePDF ${{ github.ref_name }}
+          body_path: docs/RELEASE_NOTES.md
+          files: FinalApp/IHatePDF-Setup.exe
+          make_latest: true

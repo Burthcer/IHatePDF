@@ -28,6 +28,7 @@ import type {
   BuildPptxPayload,
   PositionedPageText,
   PositionedTextItem,
+  PptTextBox,
   OfficeConversionResult,
   WorkerIncomingMessage,
 } from '../../types/worker';
@@ -75,13 +76,14 @@ function groupIntoLines(items: PositionedTextItem[], pageHeightPt: number): Text
 /**
  * Builds a .pptx from rendered page images + positioned text. Plain
  * exported function (no Worker/`self` dependency) so it's directly
- * testable from a Node script — see scripts/test-all-features.ts.
+ * testable from a Node script — see scripts/verify-conversions.ts.
  */
 export async function buildPptxFromPages(
   slides: BuildPptxPayload['slides'],
   pageText: PositionedPageText[] | undefined,
   fileName: string,
-  onProgress?: (progress: number, stage: string) => void
+  onProgress?: (progress: number, stage: string) => void,
+  textBoxes?: PptTextBox[][]
 ): Promise<OfficeConversionResult> {
   if (!slides || slides.length === 0) {
     throw new Error('No rendered pages provided to build a presentation from.');
@@ -99,6 +101,7 @@ export async function buildPptxFromPages(
 
   slides.forEach((slide, idx) => {
     const s = pres.addSlide();
+    const pageTextData = textByPage.get(idx + 1);
     s.addImage({
       data: slide.dataUrl,
       x: 0,
@@ -107,8 +110,33 @@ export async function buildPptxFromPages(
       h: slide.heightPt * PT_TO_IN,
     });
 
-    const pageTextData = textByPage.get(idx + 1);
-    if (pageTextData) {
+    const boxes = textBoxes?.[idx];
+    if (boxes) {
+      for (const b of boxes) {
+        s.addText(
+          b.lines.map((line, li) => ({ text: line, options: { breakLine: li < b.lines.length - 1 } })),
+          {
+            x: b.x * PT_TO_IN,
+            y: b.y * PT_TO_IN,
+            w: (b.width * 1.08 + 4) * PT_TO_IN,
+            h: Math.max(b.height, b.fontSize * 1.2) * PT_TO_IN,
+            fontSize: Math.max(1, Math.round(b.fontSize * 2) / 2),
+            fontFace: b.fontFace,
+            color: b.color.replace('#', '').toUpperCase(),
+            bold: b.bold,
+            italic: b.italic,
+            align: b.align,
+            valign: 'top',
+            margin: 0,
+            rotate: b.rotate || undefined,
+            lineSpacing: b.lineHeight ? Math.round(b.lineHeight * 10) / 10 : undefined,
+            paraSpaceAfter: 0,
+            paraSpaceBefore: 0,
+            fit: 'none',
+          }
+        );
+      }
+    } else if (pageTextData) {
       const lines = groupIntoLines(pageTextData.items, pageTextData.heightPt);
       for (const line of lines) {
         s.addText(line.text, {
@@ -146,10 +174,16 @@ if (typeof self !== 'undefined') self.addEventListener('message', async (event: 
   if (action !== 'BUILD_PPTX') return;
 
   try {
-    const result = await buildPptxFromPages(payload.slides, payload.pageText, payload.fileName, (progress, stage) => {
-      const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-      self.postMessage(msg);
-    });
+    const result = await buildPptxFromPages(
+      payload.slides,
+      payload.pageText,
+      payload.fileName,
+      (progress, stage) => {
+        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
+        self.postMessage(msg);
+      },
+      payload.textBoxes
+    );
     const responseMsg: WorkerIncomingMessage<OfficeConversionResult> = {
       type: 'RESPONSE',
       payload: { id, success: true, data: result },

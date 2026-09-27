@@ -19,7 +19,21 @@
  * comment for why per-run color/weight isn't extracted from PDF text.
  */
 
-import { Document, Paragraph, TextRun, HeadingLevel, Packer } from 'docx';
+import {
+  AlignmentType,
+  BorderStyle,
+  Document,
+  HeadingLevel,
+  Packer,
+  PageBreak,
+  Paragraph,
+  Table,
+  TableCell,
+  TableRow,
+  TextRun,
+  WidthType,
+} from 'docx';
+import type { LayoutBlock, PageLayout, StyledRun } from '../../services/textLayout';
 import type {
   WorkerRequest,
   PdfToWordPayload,
@@ -47,7 +61,7 @@ function pickHeadingLevel(sizePt: number, medianSize: number): (typeof HeadingLe
 /**
  * Builds a .docx from styled page text. Plain exported function (no
  * Worker/`self` dependency) so it's directly testable from a Node script —
- * see scripts/test-all-features.ts.
+ * see scripts/verify-conversions.ts.
  */
 export async function buildDocxFromPages(
   pages: PdfToWordPayload['pages'],
@@ -101,15 +115,118 @@ export async function buildDocxFromPages(
   };
 }
 
+function runsToDocx(runs: StyledRun[], sizeOverride?: number): TextRun[] {
+  return runs.map(
+    (r) =>
+      new TextRun({
+        text: r.text,
+        bold: r.bold,
+        italics: r.italic,
+        size: Math.round((sizeOverride ?? r.size) * 2),
+        font: r.mono ? 'Courier New' : r.serif ? 'Times New Roman' : 'Calibri',
+      })
+  );
+}
+
+const ALIGN = {
+  left: AlignmentType.LEFT,
+  center: AlignmentType.CENTER,
+  right: AlignmentType.RIGHT,
+  justify: AlignmentType.JUSTIFIED,
+} as const;
+
+function blockToDocx(block: LayoutBlock): Array<Paragraph | Table> {
+  switch (block.kind) {
+    case 'heading':
+      return [
+        new Paragraph({
+          heading: block.level === 1 ? HeadingLevel.HEADING_1 : block.level === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3,
+          children: runsToDocx(block.runs).map((r) => r),
+        }),
+      ];
+    case 'paragraph':
+      return [new Paragraph({ alignment: ALIGN[block.align], spacing: { after: 120 }, children: runsToDocx(block.runs) })];
+    case 'list':
+      return block.items.map((item, i) =>
+        block.ordered
+          ? new Paragraph({ indent: { left: 440, hanging: 280 }, spacing: { after: 60 }, children: [new TextRun({ text: `${item.marker || `${i + 1}.`}\t` }), ...runsToDocx(item.runs)] })
+          : new Paragraph({ bullet: { level: 0 }, spacing: { after: 60 }, children: runsToDocx(item.runs) })
+      );
+    case 'table': {
+      const cols = Math.max(...block.rows.map((r) => r.length));
+      const border = { style: BorderStyle.SINGLE, size: 4, color: 'BFBFBF' };
+      return [
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: block.rows.map(
+            (row, ri) =>
+              new TableRow({
+                children: Array.from({ length: cols }, (_, ci) =>
+                  new TableCell({
+                    borders: { top: border, bottom: border, left: border, right: border },
+                    children: [new Paragraph({ children: [new TextRun({ text: row[ci] ?? '', bold: ri === 0, size: 20 })] })],
+                  })
+                ),
+              })
+          ),
+        }),
+        new Paragraph({ children: [] }),
+      ];
+    }
+  }
+}
+
+/** Builds a .docx from analyzed page layouts (headings, lists, tables, styled runs). */
+export async function buildDocxFromLayout(
+  pages: PageLayout[],
+  fileName: string,
+  options: { pageBreaks: boolean },
+  onProgress?: (progress: number, stage: string) => void
+): Promise<OfficeConversionResult> {
+  onProgress?.(20, 'Building document...');
+  const children: Array<Paragraph | Table> = [];
+  pages.forEach((page, pi) => {
+    page.blocks.forEach((b) => children.push(...blockToDocx(b)));
+    if (options.pageBreaks && pi < pages.length - 1) children.push(new Paragraph({ children: [new PageBreak()] }));
+  });
+  if (children.length === 0) {
+    children.push(new Paragraph({ children: [new TextRun('(This PDF has no extractable text — it may be a scan. Try OCR software first.)')] }));
+  }
+  const first = pages[0];
+  const doc = new Document({
+    styles: { default: { document: { run: { font: 'Calibri', size: 22 } } } },
+    sections: [
+      {
+        properties: first
+          ? { page: { size: { width: Math.round(first.width * 20), height: Math.round(first.height * 20) }, margin: { top: 1080, bottom: 1080, left: 1080, right: 1080 } } }
+          : {},
+        children,
+      },
+    ],
+  });
+  onProgress?.(70, 'Packing .docx archive...');
+  const arrayBuffer = await Packer.toArrayBuffer(doc);
+  onProgress?.(100, 'Word document ready.');
+  return {
+    fileName: `${fileName.replace(/\.[^/.]+$/, '')}.docx`,
+    buffer: arrayBuffer,
+    size: arrayBuffer.byteLength,
+    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  };
+}
+
 if (typeof self !== 'undefined') self.addEventListener('message', async (event: MessageEvent<WorkerRequest<PdfToWordPayload>>) => {
   const { id, action, payload } = event.data;
   if (action !== 'PDF_TO_WORD') return;
 
   try {
-    const result = await buildDocxFromPages(payload.pages, payload.fileName, (progress, stage) => {
-      const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
+    const progress = (p: number, stage: string) => {
+      const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress: p, stage } };
       self.postMessage(msg);
-    });
+    };
+    const result = payload.layout
+      ? await buildDocxFromLayout(payload.layout, payload.fileName, { pageBreaks: payload.pageBreaks ?? false }, progress)
+      : await buildDocxFromPages(payload.pages, payload.fileName, progress);
     const responseMsg: WorkerIncomingMessage<OfficeConversionResult> = {
       type: 'RESPONSE',
       payload: { id, success: true, data: result },

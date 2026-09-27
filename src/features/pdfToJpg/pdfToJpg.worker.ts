@@ -35,17 +35,19 @@ self.addEventListener('message', async (event: MessageEvent<WorkerRequest<BuildJ
 
   try {
     const { images, fileName } = payload;
+    const ext = payload.ext ?? 'jpg';
+    const bytesOf = (img: BuildJpgZipPayload['images'][number]) => ('bytes' in img ? new Uint8Array(img.bytes) : dataUrlToBytes(img.dataUrl));
     if (!images || images.length === 0) throw new Error('No rendered pages to export.');
 
     const cleanBaseName = fileName.replace(/\.[^/.]+$/, '');
 
     if (images.length === 1) {
       emitProgress(60, 'Preparing image...');
-      const bytes = dataUrlToBytes(images[0].dataUrl);
+      const bytes = bytesOf(images[0]);
       const resultBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
       emitProgress(100, 'Image ready.');
       const result: ProcessedPdfResult = {
-        fileName: `${cleanBaseName}.jpg`,
+        fileName: `${cleanBaseName}_page_${images[0].pageNumber}.${ext}`,
         buffer: resultBuffer,
         size: resultBuffer.byteLength,
       };
@@ -58,10 +60,10 @@ self.addEventListener('message', async (event: MessageEvent<WorkerRequest<BuildJ
     }
 
     emitProgress(50, `Packaging ${images.length} images into a ZIP...`);
-    const pad = String(images.length).length;
+    const pad = String(Math.max(...images.map((i) => i.pageNumber))).length;
     const entries = images.map((img) => ({
-      name: `${cleanBaseName}_page_${String(img.pageNumber).padStart(pad, '0')}.jpg`,
-      data: dataUrlToBytes(img.dataUrl),
+      name: `${cleanBaseName}_page_${String(img.pageNumber).padStart(pad, '0')}.${ext}`,
+      data: bytesOf(img),
     }));
     const zipBytes = createZip(entries);
     const resultBuffer = zipBytes.buffer.slice(

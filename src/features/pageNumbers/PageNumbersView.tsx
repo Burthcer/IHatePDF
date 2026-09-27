@@ -1,268 +1,156 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
-import { useWorkerBridge } from '../../hooks/useWorkerBridge';
-import { usePdfRenderer } from '../../hooks/usePdfRenderer';
-import { memoryManager } from '../../services/memoryManager';
-import { Hash } from 'lucide-react';
-import type { PDFFile, ToolMetadata } from '../../types/pdf';
-import type {
-  PageNumbersPayload,
-  PageNumberFormat,
-  WatermarkPosition,
-  ProcessedPdfResult,
-} from '../../types/worker';
 import { PositionGrid } from '../../components/common/PositionGrid';
-
-const PAGE_NUMBERS_TOOL_METADATA: ToolMetadata = {
-  id: 'pageNumbers',
-  title: 'Page Numbers',
-  description: 'Add page numbers with custom position, format, and range.',
-  icon: 'Hash',
-  color: '#F59E0B',
-  category: 'edit',
-  acceptedFiles: 'single',
-};
-
-const FORMAT_OPTIONS: Array<{ value: PageNumberFormat; label: string; example: string }> = [
-  { value: 'n', label: 'Number only', example: '1' },
-  { value: 'n_of_total', label: 'Page N of Total', example: 'Page 1 of 12' },
-  { value: 'roman', label: 'Roman numerals', example: 'i' },
-];
+import { PageThumb } from '../../components/common/PageThumb';
+import { ColorInput, Field, Slider, Spinner, Toggle } from '../../components/ui';
+import { useToolRunner } from '../../hooks/useToolRunner';
+import { usePageThumbnails } from '../../hooks/usePageThumbnails';
+import { toRoman } from '../../services/pdfStampPosition';
+import { getTool } from '../../constants/tools';
+import type { PDFFile } from '../../types/pdf';
+import type { PageNumbersPayload, ProcessedPdfResult, WatermarkPosition } from '../../types/worker';
 
 interface PageNumbersViewProps {
   initialFiles?: PDFFile[];
   onBack: () => void;
 }
 
+type Style = 'n' | 'page_n' | 'n_of_total' | 'roman' | 'custom';
+
+const TEMPLATES: Record<Exclude<Style, 'custom'>, string> = {
+  n: '{n}',
+  page_n: 'Page {n}',
+  n_of_total: 'Page {n} of {total}',
+  roman: '{roman}',
+};
+
+const ALLOWED: WatermarkPosition[] = ['top-left', 'top-center', 'top-right', 'bottom-left', 'bottom-center', 'bottom-right'];
+
 export const PageNumbersView: React.FC<PageNumbersViewProps> = ({ initialFiles = [], onBack }) => {
-  const [files, setFiles] = useState<PDFFile[]>(initialFiles);
-  const [totalPages, setTotalPages] = useState(1);
-  const [format, setFormat] = useState<PageNumberFormat>('n_of_total');
+  const [files, setFiles] = useState<PDFFile[]>(initialFiles.slice(0, 1));
+  const [style, setStyle] = useState<Style>('n');
+  const [custom, setCustom] = useState('{n} / {total}');
   const [position, setPosition] = useState<WatermarkPosition>('bottom-center');
-  const [fontSize, setFontSize] = useState(12);
-  const [color, setColor] = useState('#475569');
-  const [marginMm, setMarginMm] = useState(10);
-  const [startPage, setStartPage] = useState(1);
-  const [endPage, setEndPage] = useState(1);
-  const [startingNumber, setStartingNumber] = useState(1);
-  const [result, setResult] = useState<ProcessedPdfResult | null>(null);
+  const [fontSize, setFontSize] = useState(10);
+  const [color, setColor] = useState('#333333');
+  const [margin, setMargin] = useState(10);
+  const [firstPage, setFirstPage] = useState(1);
+  const [startAt, setStartAt] = useState(1);
+  const [mirror, setMirror] = useState(false);
+  const file = files[0];
+  const { pages } = usePageThumbnails(file?.rawBuffer, 110);
+  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./pageNumbers.worker.ts', import.meta.url), { type: 'module' }));
+  const total = pages.length || file?.pageCount || 1;
+  const template = style === 'custom' ? custom : TEMPLATES[style];
+  const lastNumber = startAt + (total - firstPage);
+  const labelFor = (n: number) => template.replace(/\{n\}/g, String(n)).replace(/\{total\}/g, String(lastNumber)).replace(/\{roman\}/g, toRoman(n));
 
-  const { getPageCount } = usePdfRenderer();
-  const { runTask, isProcessing, progress, stage, error, resetState } =
-    useWorkerBridge<ProcessedPdfResult>(
-      () => new Worker(new URL('./pageNumbers.worker.ts', import.meta.url), { type: 'module' })
-    );
-
-  useEffect(() => {
-    if (files.length > 0) {
-      getPageCount(files[0].rawBuffer)
-        .then((count) => {
-          setTotalPages(count);
-          setEndPage(count);
-        })
-        .catch(() => {
-          setTotalPages(1);
-          setEndPage(1);
-        });
-    }
-  }, [files, getPageCount]);
-
-  const handleFilesAccepted = (acceptedFiles: PDFFile[]) => {
-    const single = acceptedFiles.slice(0, 1);
-    setFiles(single);
-    setResult(null);
-    resetState();
+  const touch = <T,>(set: (v: T) => void) => (v: T) => {
+    set(v);
+    runner.reset();
   };
 
-  const handleClearFiles = () => {
-    setFiles([]);
-    setResult(null);
-    resetState();
-  };
-
-  const executeAddNumbers = async () => {
-    if (files.length === 0) return;
-    const file = files[0];
-
-    try {
-      const bufferCopy = file.rawBuffer.slice(0);
-      const payload: PageNumbersPayload = {
-        fileBuffer: bufferCopy,
-        fileName: file.name,
-        format,
-        position,
-        fontSize,
-        color,
-        marginMm,
-        startPage,
-        endPage,
-        startingNumber,
-      };
-
-      const res = await runTask<PageNumbersPayload>('ADD_PAGE_NUMBERS', payload, [bufferCopy]);
-      setResult(res);
-    } catch (err) {
-      console.error('Page numbers error:', err);
-    }
-  };
-
-  const handleDownload = () => {
-    if (result) memoryManager.downloadBuffer(result.buffer, result.fileName);
+  const execute = () => {
+    const buffer = file.rawBuffer.slice(0);
+    const payload: PageNumbersPayload = {
+      fileBuffer: buffer,
+      fileName: file.name,
+      format: 'n',
+      template,
+      position,
+      fontSize,
+      color,
+      marginMm: margin,
+      startPage: firstPage,
+      startingNumber: startAt,
+      mirror,
+    };
+    void runner.run('ADD_PAGE_NUMBERS', payload, [buffer]);
   };
 
   return (
     <ToolLayout
-      tool={PAGE_NUMBERS_TOOL_METADATA}
-      accentColor="#F59E0B"
+      tool={getTool('pageNumbers')}
       files={files}
       onBack={onBack}
-      onClearFiles={handleClearFiles}
-      onRemoveFile={handleClearFiles}
-      isProcessing={isProcessing}
-      progress={progress}
-      stage={stage}
-      error={error}
-      resultBuffer={result?.buffer || null}
-      resultFileName={result?.fileName || 'numbered_document.pdf'}
-      onDownloadResult={handleDownload}
-      actionButtonLabel="Add Page Numbers"
-      onExecuteAction={executeAddNumbers}
-      canExecute={files.length > 0}
-    >
-      {files.length === 0 ? (
-        <Dropzone
-          multiple={false}
-          onFilesAccepted={handleFilesAccepted}
-          title="Select a PDF file"
-          subtitle="Add page numbers to your document"
-        />
-      ) : (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm space-y-6">
-          <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-            <Hash className="w-5 h-5 text-[#F59E0B]" />
-            <span>Page Number Settings</span>
-          </h3>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Format</label>
-                <div className="space-y-1.5">
-                  {FORMAT_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => setFormat(opt.value)}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-left text-sm transition-colors ${
-                        format === opt.value
-                          ? 'border-[#F59E0B] bg-amber-50 dark:bg-amber-950/20 text-amber-900 dark:text-amber-200'
-                          : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-                      }`}
-                    >
-                      <span className="font-medium">{opt.label}</span>
-                      <span className="text-xs text-slate-400">{opt.example}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="pn-fontsize" className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                    Font Size
-                  </label>
-                  <input
-                    id="pn-fontsize"
-                    type="number"
-                    min={6}
-                    max={48}
-                    value={fontSize}
-                    onChange={(e) => setFontSize(parseInt(e.target.value, 10) || 12)}
-                    className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="pn-color" className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                    Color
-                  </label>
-                  <input
-                    id="pn-color"
-                    type="color"
-                    value={color}
-                    onChange={(e) => setColor(e.target.value)}
-                    className="w-full h-[34px] bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg cursor-pointer"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label htmlFor="pn-margin" className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                  Margin from edge (mm)
-                </label>
-                <input
-                  id="pn-margin"
-                  type="number"
-                  min={0}
-                  value={marginMm}
-                  onChange={(e) => setMarginMm(parseFloat(e.target.value) || 0)}
-                  className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label htmlFor="pn-start" className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                    From page
-                  </label>
-                  <input
-                    id="pn-start"
-                    type="number"
-                    min={1}
-                    max={totalPages}
-                    value={startPage}
-                    onChange={(e) => setStartPage(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                    className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-semibold text-center text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="pn-end" className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                    To page
-                  </label>
-                  <input
-                    id="pn-end"
-                    type="number"
-                    min={startPage}
-                    max={totalPages}
-                    value={endPage}
-                    onChange={(e) => setEndPage(Math.min(totalPages, parseInt(e.target.value, 10) || totalPages))}
-                    className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-semibold text-center text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="pn-startnum" className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                    Start at #
-                  </label>
-                  <input
-                    id="pn-startnum"
-                    type="number"
-                    min={1}
-                    value={startingNumber}
-                    onChange={(e) => setStartingNumber(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                    className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-semibold text-center text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-              </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Document has {totalPages} page{totalPages === 1 ? '' : 's'}.
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">Position</label>
-              <PositionGrid value={position} onChange={setPosition} accentColor="#F59E0B" />
+      onClearFiles={() => setFiles([])}
+      onRemoveFile={() => setFiles([])}
+      {...runner.layout}
+      actionButtonLabel="Add page numbers"
+      onExecuteAction={execute}
+      canExecute={template.includes('{n}') || template.includes('{roman}')}
+      options={
+        <>
+          <Field label="Style">
+            <select className="input" value={style} onChange={(e) => touch(setStyle)(e.target.value as Style)}>
+              <option value="n">1, 2, 3</option>
+              <option value="page_n">Page 1</option>
+              <option value="n_of_total">Page 1 of N</option>
+              <option value="roman">i, ii, iii</option>
+              <option value="custom">Custom…</option>
+            </select>
+          </Field>
+          {style === 'custom' && (
+            <Field label="Template" hint="{n} number · {total} last number · {roman} roman numeral">
+              <input className="input font-mono" value={custom} onChange={(e) => touch(setCustom)(e.target.value)} />
+            </Field>
+          )}
+          <div className="flex gap-4 items-start">
+            <Field label="Position">
+              <PositionGrid value={position} onChange={touch(setPosition)} allowed={ALLOWED} />
+            </Field>
+            <div className="space-y-3 flex-1">
+              <Field label="Size" aside="pt">
+                <input type="number" min={5} max={72} className="input font-mono" value={fontSize} onChange={(e) => touch(setFontSize)(Number(e.target.value) || 10)} />
+              </Field>
+              <ColorInput value={color} onChange={touch(setColor)} />
             </div>
           </div>
+          <Slider label="Distance from edge" min={3} max={40} value={margin} onChange={touch(setMargin)} format={(v) => `${v} mm`} />
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Start on page">
+              <input type="number" min={1} max={total} className="input font-mono" value={firstPage} onChange={(e) => touch(setFirstPage)(Math.min(total, Math.max(1, Number(e.target.value) || 1)))} />
+            </Field>
+            <Field label="First number">
+              <input type="number" min={0} className="input font-mono" value={startAt} onChange={(e) => touch(setStartAt)(Math.max(0, Number(e.target.value) || 0))} />
+            </Field>
+          </div>
+          <Toggle checked={mirror} onChange={touch(setMirror)} label="Mirror on even pages" hint="Left/right swap on facing pages, for double-sided printing." />
+        </>
+      }
+      emptyState={<Dropzone multiple={false} onFilesAccepted={(f) => setFiles(f.slice(0, 1))} title="Choose a PDF to number" />}
+    >
+      {pages.length === 0 ? (
+        <div className="flex items-center gap-2 text-sm text-muted py-10 justify-center">
+          <Spinner /> Loading pages…
+        </div>
+      ) : (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(130px,1fr))] gap-x-4 gap-y-6">
+          {pages.slice(0, 24).map((p, i) => {
+            const numbered = i + 1 >= firstPage;
+            const n = startAt + (i + 1 - firstPage);
+            const pos = mirror && (i + 1 - firstPage) % 2 === 1 ? (position.endsWith('left') ? position.replace('left', 'right') : position.replace('right', 'left')) : position;
+            const [v, h] = pos.split('-');
+            return (
+              <PageThumb key={i} src={p.url} aspect={p.width / p.height} width={120} label={i + 1} dimmed={!numbered}>
+                {numbered && (
+                  <span
+                    className="absolute font-mono text-[9px] text-accent bg-panel/90 px-0.5 whitespace-nowrap"
+                    style={{
+                      top: v === 'top' ? 8 : undefined,
+                      bottom: v === 'bottom' ? 8 : undefined,
+                      left: h === 'left' ? 10 : h === 'center' ? '50%' : undefined,
+                      right: h === 'right' ? 10 : undefined,
+                      transform: h === 'center' ? 'translateX(-50%)' : undefined,
+                    }}
+                  >
+                    {labelFor(n)}
+                  </span>
+                )}
+              </PageThumb>
+            );
+          })}
         </div>
       )}
     </ToolLayout>

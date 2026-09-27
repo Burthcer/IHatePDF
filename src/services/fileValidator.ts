@@ -8,26 +8,35 @@
 
 const PDF_MAGIC_BYTES = [0x25, 0x50, 0x44, 0x46]; // "%PDF-"
 
+// The spec only requires the header somewhere in the first 1024 bytes, and
+// real files (mail attachments, some scanners) do carry leading junk.
+const HEADER_SEARCH_WINDOW = 1024;
+
 /**
- * Validates the raw ArrayBuffer begins with PDF magic bytes (%PDF-).
+ * Validates the buffer carries the PDF magic bytes (%PDF) within the first 1 KB.
  */
 export function validatePdfBuffer(buffer: ArrayBuffer): boolean {
   if (!buffer || buffer.byteLength < 4) {
     return false;
   }
 
-  const bytes = new Uint8Array(buffer, 0, 4);
-  return (
-    bytes[0] === PDF_MAGIC_BYTES[0] &&
-    bytes[1] === PDF_MAGIC_BYTES[1] &&
-    bytes[2] === PDF_MAGIC_BYTES[2] &&
-    bytes[3] === PDF_MAGIC_BYTES[3]
-  );
+  const bytes = new Uint8Array(buffer, 0, Math.min(buffer.byteLength, HEADER_SEARCH_WINDOW));
+  for (let i = 0; i <= bytes.length - 4; i++) {
+    if (
+      bytes[i] === PDF_MAGIC_BYTES[0] &&
+      bytes[i + 1] === PDF_MAGIC_BYTES[1] &&
+      bytes[i + 2] === PDF_MAGIC_BYTES[2] &&
+      bytes[i + 3] === PDF_MAGIC_BYTES[3]
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
- * Inspects the initial 4 bytes of a File object using FileReader/ArrayBuffer slice
- * and asserts equality against magic bytes [0x25, 0x50, 0x44, 0x46] ("%PDF-").
+ * Inspects the first kilobyte of a File object using FileReader/ArrayBuffer slice
+ * for the magic bytes [0x25, 0x50, 0x44, 0x46] ("%PDF").
  *
  * Immediately rejects non-PDF payloads before allocating full document memory.
  */
@@ -37,8 +46,8 @@ export async function validatePdfHeader(file: File): Promise<boolean> {
   }
 
   return new Promise<boolean>((resolve) => {
-    // Read only the first 4 bytes using a blob slice to avoid buffering entire file
-    const slice = file.slice(0, 4);
+    // Read only the header window using a blob slice to avoid buffering the entire file
+    const slice = file.slice(0, HEADER_SEARCH_WINDOW);
     const reader = new FileReader();
 
     reader.onload = () => {

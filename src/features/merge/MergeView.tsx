@@ -1,23 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ArrowDown, ArrowUp, GripVertical, X } from 'lucide-react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
-import { PagePreviewModal } from '../../components/common/PagePreviewModal';
-import { useWorkerBridge } from '../../hooks/useWorkerBridge';
+import { Field, IconButton, Notice, cn, formatBytes } from '../../components/ui';
+import { useToolRunner } from '../../hooks/useToolRunner';
 import { usePdfRenderer } from '../../hooks/usePdfRenderer';
-import { memoryManager } from '../../services/memoryManager';
-import { ArrowUp, ArrowDown, Plus, FileText, GripVertical, Maximize2 } from 'lucide-react';
-import type { PDFFile, ToolMetadata } from '../../types/pdf';
+import { getTool } from '../../constants/tools';
+import type { PDFFile } from '../../types/pdf';
 import type { MergePayload, ProcessedPdfResult } from '../../types/worker';
-
-const MERGE_TOOL_METADATA: ToolMetadata = {
-  id: 'merge',
-  title: 'Merge PDF Documents',
-  description: 'Combine multiple PDF files into one unified document in your preferred order.',
-  icon: 'Combine',
-  color: '#E53E3E',
-  category: 'organize',
-  acceptedFiles: 'multiple',
-};
 
 interface MergeViewProps {
   initialFiles?: PDFFile[];
@@ -26,300 +16,134 @@ interface MergeViewProps {
 
 export const MergeView: React.FC<MergeViewProps> = ({ initialFiles = [], onBack }) => {
   const [files, setFiles] = useState<PDFFile[]>(initialFiles);
-  const [result, setResult] = useState<ProcessedPdfResult | null>(null);
-  const [coverThumbnails, setCoverThumbnails] = useState<Record<string, string>>({});
-  const [pageCounts, setPageCounts] = useState<Record<string, number>>({});
-  const [previewFileId, setPreviewFileId] = useState<string | null>(null);
-  const [previewPageNumber, setPreviewPageNumber] = useState(1);
-  const dragIndexRef = useRef<number | null>(null);
+  const [covers, setCovers] = useState<Record<string, string>>({});
+  const [outputName, setOutputName] = useState('merged');
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
+  const requested = useRef(new Set<string>());
+  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./merge.worker.ts', import.meta.url), { type: 'module' }));
+  const { renderThumbnail } = usePdfRenderer();
 
-  const { runTask, isProcessing, progress, stage, error, resetState } =
-    useWorkerBridge<ProcessedPdfResult>(
-      () => new Worker(new URL('./merge.worker.ts', import.meta.url), { type: 'module' })
-    );
-
-  const { renderThumbnail, getPageCount } = usePdfRenderer();
-
-  // Generate a cover thumbnail + page count for any file that doesn't have one yet.
   useEffect(() => {
-    let cancelled = false;
-    for (const file of files) {
-      if (coverThumbnails[file.id] === undefined) {
-        renderThumbnail(file.rawBuffer, 1, 80)
-          .then((dataUrl) => {
-            if (!cancelled) setCoverThumbnails((prev) => ({ ...prev, [file.id]: dataUrl }));
-          })
-          .catch(() => {
-            if (!cancelled) setCoverThumbnails((prev) => ({ ...prev, [file.id]: '' }));
-          });
-      }
-      if (pageCounts[file.id] === undefined) {
-        getPageCount(file.rawBuffer)
-          .then((count) => {
-            if (!cancelled) setPageCounts((prev) => ({ ...prev, [file.id]: count }));
-          })
-          .catch(() => {
-            if (!cancelled) setPageCounts((prev) => ({ ...prev, [file.id]: 0 }));
-          });
-      }
+    for (const f of files) {
+      if (requested.current.has(f.id)) continue;
+      requested.current.add(f.id);
+      renderThumbnail(f.rawBuffer, 1, 96)
+        .then((url) => setCovers((prev) => ({ ...prev, [f.id]: url })))
+        .catch(() => undefined);
     }
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files]);
+  }, [files, renderThumbnail]);
 
-  const totalPages = files.reduce((sum, f) => sum + (pageCounts[f.id] || 0), 0);
-
-  const handleFilesAccepted = (newFiles: PDFFile[]) => {
-    setFiles((prev) => [...prev, ...newFiles]);
-    setResult(null);
-    resetState();
+  const change = (next: PDFFile[]) => {
+    setFiles(next);
+    runner.reset();
   };
 
-  const handleDragStart = (index: number) => {
-    dragIndexRef.current = index;
+  const move = (from: number, to: number) => {
+    if (to < 0 || to >= files.length || from === to) return;
+    const next = [...files];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    change(next);
   };
 
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-  };
+  const totalPages = files.reduce((n, f) => n + f.pageCount, 0);
 
-  const handleDropReorder = (targetIndex: number) => {
-    const sourceIndex = dragIndexRef.current;
-    dragIndexRef.current = null;
-    if (sourceIndex === null || sourceIndex === targetIndex) return;
-
-    setFiles((prev) => {
-      const reordered = [...prev];
-      const [moved] = reordered.splice(sourceIndex, 1);
-      reordered.splice(targetIndex, 0, moved);
-      return reordered;
-    });
-    setResult(null);
-  };
-
-  const handleRemoveFile = (id: string) => {
-    setFiles((prev) => prev.filter((f) => f.id !== id));
-    setResult(null);
-  };
-
-  const handleClearFiles = () => {
-    setFiles([]);
-    setResult(null);
-    resetState();
-  };
-
-  const moveFile = (index: number, direction: 'up' | 'down') => {
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= files.length) return;
-
-    const reordered = [...files];
-    const [moved] = reordered.splice(index, 1);
-    reordered.splice(targetIndex, 0, moved);
-    setFiles(reordered);
-    setResult(null);
-  };
-
-  const executeMerge = async () => {
-    if (files.length < 2) return;
-
-    try {
-      // Prepare buffers for transfer (clone buffers so state can retain files if needed)
-      const payloadFiles = files.map((f) => ({
-        name: f.name,
-        buffer: f.rawBuffer.slice(0),
-      }));
-
-      const transferables = payloadFiles.map((f) => f.buffer);
-
-      const payload: MergePayload = {
-        files: payloadFiles,
-      };
-
-      const res = await runTask<MergePayload>('MERGE_PDFS', payload, transferables);
-      setResult(res);
-    } catch (err) {
-      console.error('Merge error:', err);
-    }
-  };
-
-  const handleDownload = () => {
-    if (result) {
-      memoryManager.downloadBuffer(result.buffer, result.fileName);
-    }
+  const execute = () => {
+    const payload: MergePayload = { files: files.map((f) => ({ name: f.name, buffer: f.rawBuffer.slice(0) })), outputName };
+    void runner.run('MERGE_PDFS', payload, payload.files.map((f) => f.buffer));
   };
 
   return (
     <ToolLayout
-      tool={MERGE_TOOL_METADATA}
-      accentColor="#E53E3E"
+      tool={getTool('merge')}
       files={files}
       onBack={onBack}
-      onClearFiles={handleClearFiles}
-      onRemoveFile={handleRemoveFile}
-      isProcessing={isProcessing}
-      progress={progress}
-      stage={stage}
-      error={error}
-      resultBuffer={result?.buffer || null}
-      resultFileName={result?.fileName || 'merged_document.pdf'}
-      onDownloadResult={handleDownload}
-      actionButtonLabel="Merge Files"
-      onExecuteAction={executeMerge}
+      onClearFiles={() => change([])}
+      onRemoveFile={(id) => change(files.filter((f) => f.id !== id))}
+      hideFileList
+      {...runner.layout}
+      actionButtonLabel={files.length < 2 ? 'Add at least 2 files' : `Merge ${files.length} files`}
+      onExecuteAction={execute}
       canExecute={files.length >= 2}
+      options={
+        <>
+          <Field label="Output file name" aside=".pdf">
+            <input className="input" value={outputName} onChange={(e) => setOutputName(e.target.value.replace(/[\\/:*?"<>|]/g, ''))} />
+          </Field>
+          <p className="font-mono text-2xs text-muted">
+            {files.length} files · {totalPages} pages total
+          </p>
+        </>
+      }
+      emptyState={<Dropzone multiple onFilesAccepted={(f) => change([...files, ...f])} title="Choose PDFs to merge" />}
     >
-      {files.length === 0 ? (
-        <Dropzone
-          multiple={true}
-          onFilesAccepted={handleFilesAccepted}
-          title="Select PDF files to Merge"
-          subtitle="Select 2 or more files to combine into a single PDF"
-        />
-      ) : (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">
-                Merge Sequence (Drag or use arrows to arrange order)
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                {files.length} file{files.length === 1 ? '' : 's'} • {totalPages} total page
-                {totalPages === 1 ? '' : 's'}
-              </p>
-            </div>
-            <div className="relative">
-              <label
-                htmlFor="add-more-merge-input"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-xs font-semibold rounded-lg cursor-pointer text-slate-700 dark:text-slate-200 transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add More Files</span>
-              </label>
-              <input
-                id="add-more-merge-input"
-                type="file"
-                multiple
-                accept=".pdf"
-                className="hidden"
-                onChange={async (e) => {
-                  if (e.target.files) {
-                    const newFiles: PDFFile[] = [];
-                    for (const file of Array.from(e.target.files)) {
-                      const buf = await file.arrayBuffer();
-                      newFiles.push({
-                        id: `file_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-                        name: file.name,
-                        size: file.size,
-                        pageCount: 0,
-                        rawBuffer: buf,
-                        previewUrls: [],
-                      });
-                    }
-                    handleFilesAccepted(newFiles);
-                    e.target.value = '';
-                  }
-                }}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            {files.map((file, index) => (
-              <div
-                key={file.id}
-                draggable
-                onDragStart={() => handleDragStart(index)}
-                onDragOver={handleDragOver}
-                onDrop={() => handleDropReorder(index)}
-                className="flex items-center justify-between p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs hover:border-slate-300 transition-all cursor-grab active:cursor-grabbing"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <GripVertical className="w-4 h-4 text-slate-300 dark:text-slate-600 shrink-0" />
-                  <span className="w-6 h-6 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 font-bold text-xs flex items-center justify-center shrink-0">
-                    {index + 1}
-                  </span>
-                  {coverThumbnails[file.id] ? (
-                    <button
-                      type="button"
-                      draggable={false}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setPreviewFileId(file.id);
-                        setPreviewPageNumber(1);
-                      }}
-                      className="relative group/cover shrink-0"
-                      title="View full quality"
-                    >
-                      <img
-                        src={coverThumbnails[file.id]}
-                        alt={`Cover of ${file.name}`}
-                        className="w-8 h-10 object-cover rounded border border-slate-200 dark:border-slate-700"
-                      />
-                      <span className="absolute inset-0 flex items-center justify-center rounded bg-black/0 group-hover/cover:bg-black/40 transition-colors">
-                        <Maximize2 className="w-3 h-3 text-white opacity-0 group-hover/cover:opacity-100 transition-opacity" />
-                      </span>
-                    </button>
-                  ) : (
-                    <FileText className="w-5 h-5 text-rose-500 shrink-0" />
-                  )}
-                  <div className="min-w-0">
-                    <p className="font-semibold text-sm text-slate-800 dark:text-slate-200 truncate">
-                      {file.name}
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      {(file.size / 1024 / 1024).toFixed(2)} MB
-                      {pageCounts[file.id] ? ` • ${pageCounts[file.id]} pages` : ''}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => moveFile(index, 'up')}
-                    disabled={index === 0 || isProcessing}
-                    aria-label="Move file up in merge order"
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30"
-                  >
-                    <ArrowUp className="w-4 h-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => moveFile(index, 'down')}
-                    disabled={index === files.length - 1 || isProcessing}
-                    aria-label="Move file down in merge order"
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30"
-                  >
-                    <ArrowDown className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {files.length < 2 && (
-            <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 p-3 rounded-lg border border-amber-200 dark:border-amber-900">
-              Please add at least 2 PDF files to enable merging.
-            </p>
-          )}
+      <div className="bg-panel border border-line rounded-md">
+        <div className="flex items-center justify-between px-4 h-10 border-b border-line">
+          <h2 className="label-mono">Order</h2>
+          <span className="text-2xs text-muted">Drag to reorder — the top file comes first</span>
         </div>
-      )}
-
-      {previewFileId && (() => {
-        const previewFile = files.find((f) => f.id === previewFileId);
-        if (!previewFile) return null;
-        return (
-          <PagePreviewModal
-            pdfBuffer={previewFile.rawBuffer}
-            pageNumber={previewPageNumber}
-            totalPages={pageCounts[previewFileId] || 1}
-            accentColor="#E53E3E"
-            onClose={() => setPreviewFileId(null)}
-            onNavigate={setPreviewPageNumber}
-          />
-        );
-      })()}
+        <ol>
+          {files.map((f, i) => (
+            <li
+              key={f.id}
+              draggable
+              onDragStart={(e) => {
+                setDragIndex(i);
+                e.dataTransfer.effectAllowed = 'move';
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setOverIndex(i);
+              }}
+              onDragEnd={() => {
+                setDragIndex(null);
+                setOverIndex(null);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (dragIndex !== null) move(dragIndex, i);
+                setDragIndex(null);
+                setOverIndex(null);
+              }}
+              className={cn(
+                'group flex items-center gap-3 px-3 py-2 border-b border-line last:border-b-0 bg-panel',
+                dragIndex === i && 'opacity-40',
+                overIndex === i && dragIndex !== null && dragIndex !== i && 'shadow-[inset_0_2px_0_rgb(var(--accent))]'
+              )}
+            >
+              <GripVertical className="w-4 h-4 text-faint cursor-grab shrink-0" />
+              <span className="font-mono text-2xs text-muted w-5 text-right">{i + 1}</span>
+              <div className="w-10 h-12 shrink-0 bg-white shadow-page flex items-center justify-center overflow-hidden">
+                {covers[f.id] && <img src={covers[f.id]} alt="" className="max-w-full max-h-full" />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium truncate" title={f.name}>
+                  {f.name}
+                </p>
+                <p className="font-mono text-2xs text-muted">
+                  {f.pageCount || '?'} pages · {formatBytes(f.size)}
+                  {f.wasProtected && ' · unlocked'}
+                </p>
+              </div>
+              <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100">
+                <IconButton label="Move up" size="sm" disabled={i === 0} onClick={() => move(i, i - 1)}>
+                  <ArrowUp className="w-3.5 h-3.5" />
+                </IconButton>
+                <IconButton label="Move down" size="sm" disabled={i === files.length - 1} onClick={() => move(i, i + 1)}>
+                  <ArrowDown className="w-3.5 h-3.5" />
+                </IconButton>
+                <IconButton label="Remove" size="sm" onClick={() => change(files.filter((x) => x.id !== f.id))}>
+                  <X className="w-3.5 h-3.5" />
+                </IconButton>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </div>
+      {files.length === 1 && <Notice>Add one or more files to merge with this one.</Notice>}
+      <Dropzone multiple compact onFilesAccepted={(f) => change([...files, ...f])} title="Add more PDFs" />
     </ToolLayout>
   );
 };

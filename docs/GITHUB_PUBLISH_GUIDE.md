@@ -1,77 +1,35 @@
-# Publishing IHatePDF to GitHub
+# Publishing a release
 
-Step-by-step instructions to push this project to your own GitHub repository and publish `IHatePDF-Setup.exe` as a downloadable release. Run these yourself in a terminal — nothing here is automated for you.
+Releases are automatic: push a version tag, and GitHub builds the Windows installer and publishes it.
 
-This project is not yet a git repository on this machine, so start from step 1.
+1. **Update the version and notes on `main`.** Set `"version"` in `package.json` and rewrite `docs/RELEASE_NOTES.md` for the new version. That file becomes the release page, so keep its *Install* section.
+2. **Tag and push:**
+   ```bash
+   git checkout main && git pull
+   git tag v1.2.0
+   git push origin v1.2.0
+   ```
+3. **Wait about 5 minutes.** The **Windows installer** workflow (`.github/workflows/windows-installer.yml`) runs on Windows:
+   1. lint;
+   2. tests;
+   3. `npm run build:exe`;
+   4. it creates the *IHatePDF v1.2.0* release with `IHatePDF-Setup.exe` attached, marked as the latest.
 
----
+The README's **Download for Windows** button links to `releases/latest/download/IHatePDF-Setup.exe`, so it always serves the newest release. Nothing needs editing.
 
-## 1. Documentation & Repository Setup
-
-The repository root is already fully prepared with synchronized documentation:
-- `README.md` at project root is already synchronized with `FinalApp/GitHub/README.md`.
-- `HANDOFF.md` at project root is already synchronized with `FinalApp/GitHub/HANDOFF.md`.
-- `.gitignore` is already created at project root, properly ignoring `node_modules/`, `dist/`, `FinalApp/`, and `test-fixtures/`.
-
-If you ever make manual edits inside `FinalApp/GitHub/`, you can re-sync them to the root with:
-```bash
-copy FinalApp\GitHub\README.md README.md
-copy FinalApp\GitHub\HANDOFF.md HANDOFF.md
-```
-
-## 2. Initialize the repository and make your first commit
+## Building the installer by hand
 
 ```bash
-git init
-git add .
-git commit -m "Initial commit: IHatePDF v1.0.0"
+npm ci
+npm run build:exe        # → FinalApp/IHatePDF-Setup.exe
 ```
 
-## 3. Create the GitHub repository and add it as a remote
+On Linux, electron-builder needs Wine to generate the uninstaller: `dpkg --add-architecture i386 && apt install wine64 wine32:i386`.
 
-Create an empty repository on GitHub first (via the GitHub website — do **not** initialize it with a README, since you already have one), then:
-
-```bash
-git remote add origin https://github.com/<your-username>/<your-repo-name>.git
-git branch -M main
-git push -u origin main
-```
-
-## 4. Tag the release
-
-```bash
-git tag -a v1.0.0 -m "IHatePDF v1.0.0"
-git push origin v1.0.0
-```
-
-## 5. Create the GitHub Release and attach the installer
-
-1. On GitHub, go to your repository → **Releases** → **Draft a new release**.
-2. Choose the `v1.0.0` tag you just pushed.
-3. Title: `IHatePDF v1.0.0`.
-4. Body: paste the contents of [`RELEASE_NOTES.md`](./RELEASE_NOTES.md).
-5. Under **Attach binaries**, drag in `FinalApp/IHatePDF-Setup.exe` from your local build.
-6. Publish the release.
-
-Your users can now download `IHatePDF-Setup.exe` directly from the Releases page — that's the link to put in your README's Installation section (the one staged at `FinalApp/GitHub/README.md` already links to `../../releases`, which resolves correctly once this is pushed).
-
-## 6. (Optional) Rebuilding before a future release
-
-Each time you cut a new release:
-
-```bash
-npm run build:exe
-```
-
-This produces a fresh `FinalApp/IHatePDF-Setup.exe`. Recompute its checksum and update `RELEASE_NOTES.md` before publishing:
-
-```powershell
-Get-FileHash FinalApp\IHatePDF-Setup.exe -Algorithm SHA256
-```
-
----
+Pushes to `main` or `claude/**` branches also build the installer, without publishing it. You can download it from that workflow run's *Artifacts* section.
 
 ## Notes
 
-- Never commit `FinalApp/IHatePDF-Setup.exe` itself to git — it's a large binary and belongs as a Release asset, not repo history. The `.gitignore` in step 1 already excludes `FinalApp/`.
-- If you push to a private repo, remember Release assets are still only visible to people with repo access — that's expected and usually what you want during development.
+- Never commit the installer or `FinalApp/`. `.gitignore` excludes them.
+- The installer isn't code-signed, so SmartScreen shows *"Windows protected your PC"* on first run, and users click **More info → Run anyway**. To sign it, provide a certificate through `CSC_LINK` / `CSC_KEY_PASSWORD` secrets and remove `CSC_IDENTITY_AUTO_DISCOVERY: 'false'` from the workflow.
+- Screenshots in `docs/screenshots/` are regenerated with `node scripts/e2e/screenshots.mjs`.
