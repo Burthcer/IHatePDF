@@ -55,7 +55,7 @@
 **Updating:** download the new setup and run it. It replaces the old version in place, and your saved files are never touched.
 **Uninstalling:** *Settings → Apps → IHatePDF → Uninstall*.
 
-Need nothing but a browser? The same app runs as a web page. See [Run from source](#run-from-source).
+Need nothing but a browser? The same app runs as a web page. See [Run it in a browser instead](#run-it-in-a-browser-instead).
 
 ---
 
@@ -94,30 +94,22 @@ It keeps a re-encoded image only if it actually got smaller. If the whole file c
 
 ---
 
-## Run from source
+## Run it in a browser instead
+
+Don't want to install anything? The same app runs as a web page:
 
 ```bash
 git clone https://github.com/Burthcer/IHatePDF.git
 cd IHatePDF
 npm install
-npm run dev          # open the printed localhost URL
+npm run dev          # then open the localhost link it prints
 ```
 
-| Command | What it does |
-|---|---|
-| `npm run build` | Type-checks and builds the web app into `dist/` (host it anywhere as static files). |
-| `npm run build:exe` | Builds the Windows installer at `FinalApp/IHatePDF-Setup.exe`. |
-| `npm test` | Runs 45 automated checks: conversions, the editing engine on a deliberately awkward PDF, encryption, and every tool. |
-| `node scripts/e2e/all-tools.mjs` | Clicks through all 28 tools in a real browser and checks every output (needs `npx vite preview --port 4173`). |
+## More
 
-Every push to `main` builds the installer on GitHub and publishes it as the release for the version in `package.json`.
-
-## Documentation
-
-- [Release notes](docs/RELEASE_NOTES.md): what's new in this version.
-- [Test report](docs/TEST_REPORT.md): the full test results.
-- [Developer handoff](HANDOFF.md): architecture, code map and conventions.
-- [Publishing a release](docs/GITHUB_PUBLISH_GUIDE.md).
+- [What's new in 1.1.0](docs/RELEASE_NOTES.md)
+- [Test results](docs/TEST_REPORT.md)
+- [For developers](HANDOFF.md): how the code is organized, building the installer, and releasing.
 
 ## License
 
