@@ -65,6 +65,8 @@ export interface ImageInfo {
   ctx: number;
   op: number;
   kind: 'xobject' | 'inline';
+  /** The image XObject's reference (xobject images only). */
+  ref?: PDFRef;
   /** Image unit square → user space. */
   ctm: Matrix;
   /** Axis-aligned viewer-space box. */
@@ -492,7 +494,8 @@ export function interpretPage(page: PDFPage): PageModel {
           const subtype = dictName(xo.dict, 'Subtype');
           if (subtype === 'Image') {
             const [vx0, vy0, vx1, vy1] = viewerBox(u2v, gs.ctm);
-            images.push({ id: images.length, ctx: ctxId, op: i, kind: 'xobject', ctm: gs.ctm, box: { x: vx0, y: vy0, width: vx1 - vx0, height: vy1 - vy0 } });
+            const rawRef = xobjects?.get(PDFName.of(nameOp.v));
+            images.push({ id: images.length, ctx: ctxId, op: i, kind: 'xobject', ref: rawRef instanceof PDFRef ? rawRef : undefined, ctm: gs.ctm, box: { x: vx0, y: vy0, width: vx1 - vx0, height: vy1 - vy0 } });
           } else if (subtype === 'Form' && depth < 12 && !visiting.has(xo)) {
             const bytes = streamBytes(xo);
             if (!bytes) break;

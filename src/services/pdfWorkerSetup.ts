@@ -8,8 +8,9 @@
  * scripts/copy-pdfjs-assets.mjs — nothing is fetched from a CDN.
  */
 
+import './polyfills';
 import * as pdfjsLib from 'pdfjs-dist';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import workerUrl from './pdfjs.worker.ts?worker&url';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 

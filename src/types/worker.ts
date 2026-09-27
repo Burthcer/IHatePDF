@@ -101,7 +101,9 @@ export interface OrganizePayload {
 export interface CompressPayload {
   fileBuffer: ArrayBuffer;
   fileName: string;
-  level: 'low' | 'recommended' | 'extreme';
+  level: 'low' | 'recommended' | 'extreme' | 'custom';
+  /** For level 'custom': the size the output should fit in, in bytes. */
+  targetBytes?: number;
 }
 
 export interface ProtectPayload {

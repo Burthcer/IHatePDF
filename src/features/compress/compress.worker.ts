@@ -3,164 +3,263 @@
  * IHatePDF - 100% Client-Side Architecture
  *
  * Where PDF bytes actually go, and what's done about each:
- *  - Photos: JPEGs are downsampled to a pixel budget and re-encoded;
- *    losslessly stored RGB/gray photos (Flate) are converted to JPEG.
- *    Only kept when the result is genuinely smaller.
- *  - Duplicate streams (the same font/image embedded again by each merged
- *    file or page): collapsed to one copy.
- *  - Unreferenced objects left behind by incremental saves: dropped.
- *  - Uncompressed streams: Flate-compressed. Object streams for the rest.
- *  - Page thumbnails and editor-private data (/PieceInfo); on "extreme",
- *    XMP metadata too.
- * If nothing helps, the original file is returned rather than a bigger one.
+ *  - Images (almost always the bulk): every common type is decoded (JPEG
+ *    incl. CMYK, JPEG 2000, lossless Gray/RGB/CMYK/ICC/Indexed at 1-16 bit),
+ *    downsampled to a target resolution based on how large each image is
+ *    actually shown on the page (DPI), and re-encoded — JPEG for photos,
+ *    Flate for flat artwork and soft masks. A new version is only kept when
+ *    it's smaller.
+ *  - Duplicate streams (the same font/image embedded again by merged files):
+ *    collapsed to one copy. Unreferenced objects: dropped.
+ *  - Uncompressed streams: Flate. Object streams for everything else.
+ *  - Page thumbnails and editor-private data; metadata on "extreme".
  *
- * `compressPdf` is a plain exported function so it's testable from Node
- * (image recompression is skipped there — it needs OffscreenCanvas).
+ * Presets pick a DPI/quality pair. "custom" searches the quality ladder for
+ * the best setting that fits a requested file size.
  */
 
-import {
-  PDFArray,
-  PDFBool,
-  PDFDict,
-  PDFName,
-  PDFNumber,
-  PDFRawStream,
-  PDFRef,
-  PDFStream,
-  type PDFContext,
-  type PDFDocument,
-  type PDFObject,
-} from 'pdf-lib';
+import { PDFArray, PDFBool, PDFDict, PDFName, PDFNumber, PDFRawStream, PDFRef, PDFStream, type PDFDocument, type PDFObject } from 'pdf-lib';
+import { deflate } from 'pako';
 import { openPdf } from '../../services/pdfLoader';
-import { streamBytes } from '../editPdf/engine/pdfObjects';
+import { interpretPage } from '../editPdf/engine/interpreter';
+import { configureJpx, decodePdfImage, type DecodedImage } from './imageCodec';
 import type { WorkerRequest, CompressPayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
 
 type Level = CompressPayload['level'];
+interface Setting {
+  dpi: number;
+  quality: number;
+}
 
-const SETTINGS: Record<Level, { maxDim: number; quality: number; convertLossless: boolean; minGain: number }> = {
-  low: { maxDim: 3000, quality: 0.85, convertLossless: false, minGain: 0.1 },
-  recommended: { maxDim: 2000, quality: 0.72, convertLossless: true, minGain: 0.08 },
-  extreme: { maxDim: 1400, quality: 0.55, convertLossless: true, minGain: 0.03 },
+const PRESETS: Record<Exclude<Level, 'custom'>, Setting> = {
+  low: { dpi: 220, quality: 0.85 },
+  recommended: { dpi: 150, quality: 0.72 },
+  extreme: { dpi: 96, quality: 0.5 },
 };
 
-function filterNames(dict: PDFDict): string[] {
-  const f = dict.lookup(PDFName.of('Filter'));
-  if (f instanceof PDFName) return [f.decodeText()];
-  if (f instanceof PDFArray) return f.asArray().map((x) => (x instanceof PDFName ? x.decodeText() : ''));
-  return [];
+/** Best → smallest; custom mode picks the first one that fits. */
+const COARSE_LADDER: Setting[] = [
+  { dpi: 300, quality: 0.9 },
+  { dpi: 250, quality: 0.86 },
+  { dpi: 220, quality: 0.82 },
+  { dpi: 200, quality: 0.78 },
+  { dpi: 170, quality: 0.74 },
+  { dpi: 150, quality: 0.7 },
+  { dpi: 130, quality: 0.64 },
+  { dpi: 110, quality: 0.58 },
+  { dpi: 96, quality: 0.52 },
+  { dpi: 84, quality: 0.46 },
+  { dpi: 72, quality: 0.4 },
+  { dpi: 60, quality: 0.34 },
+  { dpi: 50, quality: 0.28 },
+  { dpi: 40, quality: 0.22 },
+  { dpi: 30, quality: 0.16 },
+];
+
+// Insert a midpoint between every rung so custom targets land close to the
+// requested size instead of far under it (binary search keeps passes to ~5).
+const LADDER: Setting[] = COARSE_LADDER.flatMap((s, i) => {
+  const next = COARSE_LADDER[i + 1];
+  if (!next) return [s];
+  return [s, { dpi: Math.round((s.dpi + next.dpi) / 2), quality: +((s.quality + next.quality) / 2).toFixed(2) }];
+});
+
+type Progress = (progress: number, stage: string) => void;
+
+interface ImageJob {
+  ref: PDFRef;
+  stream: PDFRawStream;
+  originalSize: number;
+  width: number;
+  height: number;
+  isMask: boolean;
+  /** Largest size the image is drawn at on any page, in points. */
+  shownPt: { w: number; h: number } | null;
 }
 
-function num(dict: PDFDict, key: string): number | undefined {
-  const v = dict.lookup(PDFName.of(key));
-  return v instanceof PDFNumber ? v.asNumber() : undefined;
+interface Encoded {
+  bytes: Uint8Array;
+  width: number;
+  height: number;
+  format: 'jpeg' | 'flate';
+  gray: boolean;
 }
 
-/** DeviceRGB / DeviceGray / ICCBased(N=1|3) — the spaces a browser-made JPEG can stand in for. */
-function simpleColorSpace(dict: PDFDict): 1 | 3 | null {
-  const cs = dict.lookup(PDFName.of('ColorSpace'));
-  if (cs instanceof PDFName) {
-    const n = cs.decodeText();
-    return n === 'DeviceRGB' ? 3 : n === 'DeviceGray' ? 1 : null;
-  }
-  if (cs instanceof PDFArray && cs.size() === 2) {
-    const fam = cs.lookup(0);
-    const icc = cs.lookup(1);
-    if (fam instanceof PDFName && fam.decodeText() === 'ICCBased' && icc instanceof PDFStream) {
-      const n = num(icc.dict, 'N');
-      return n === 3 ? 3 : n === 1 ? 1 : null;
-    }
-  }
-  return null;
-}
+const canEncode = () => typeof OffscreenCanvas !== 'undefined';
 
-const canRecodeImages = () => typeof OffscreenCanvas !== 'undefined' && typeof createImageBitmap !== 'undefined';
+// ------------------------------------------------------------------ jobs
 
-async function encodeJpeg(source: ImageBitmap | ImageData, width: number, height: number, quality: number): Promise<Uint8Array> {
-  const canvas = new OffscreenCanvas(width, height);
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0, 0, width, height);
-  if (source instanceof ImageData) {
-    if (source.width === width && source.height === height) ctx.putImageData(source, 0, 0);
-    else {
-      const tmp = new OffscreenCanvas(source.width, source.height);
-      tmp.getContext('2d')!.putImageData(source, 0, 0);
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(tmp, 0, 0, width, height);
-    }
-  } else {
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(source, 0, 0, width, height);
-  }
-  const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
-  return new Uint8Array(await blob.arrayBuffer());
-}
-
-async function recompressImage(context: PDFContext, ref: PDFRef, stream: PDFRawStream, level: Level): Promise<boolean> {
-  const cfg = SETTINGS[level];
-  const dict = stream.dict;
-  const imageMask = dict.lookup(PDFName.of('ImageMask'));
-  if ((imageMask instanceof PDFBool && imageMask.asBoolean()) || dict.lookup(PDFName.of('Decode')) || dict.lookup(PDFName.of('Mask')) instanceof PDFArray) return false;
-  const width = num(dict, 'Width') ?? 0;
-  const height = num(dict, 'Height') ?? 0;
-  if (width < 64 || height < 64) return false;
-  const comps = simpleColorSpace(dict);
-  if (!comps) return false;
-  const filters = filterNames(dict);
-  const original = stream.getContents();
-  if (original.length < 20_000) return false;
-
-  const scale = Math.min(1, cfg.maxDim / Math.max(width, height));
-  const outW = Math.max(1, Math.round(width * scale));
-  const outH = Math.max(1, Math.round(height * scale));
-  let jpeg: Uint8Array | null = null;
-
-  if (filters.length === 1 && filters[0] === 'DCTDecode') {
-    const bitmap = await createImageBitmap(new Blob([original as BlobPart], { type: 'image/jpeg' }));
+function collectJobs(doc: PDFDocument): ImageJob[] {
+  const context = doc.context;
+  const shown = new Map<PDFRef, { w: number; h: number }>();
+  for (const page of doc.getPages()) {
     try {
-      jpeg = await encodeJpeg(bitmap, outW, outH, cfg.quality);
-    } finally {
-      bitmap.close();
+      for (const im of interpretPage(page).images) {
+        if (!im.ref) continue;
+        const w = Math.hypot(im.ctm[0], im.ctm[1]);
+        const h = Math.hypot(im.ctm[2], im.ctm[3]);
+        const prev = shown.get(im.ref);
+        shown.set(im.ref, { w: Math.max(prev?.w ?? 0, w), h: Math.max(prev?.h ?? 0, h) });
+      }
+    } catch {
+      // unreadable page content — its images fall back to the size cap
     }
-  } else if (cfg.convertLossless && filters.every((f) => f === 'FlateDecode' || f === 'LZWDecode') && num(dict, 'BitsPerComponent') === 8 && !dict.lookup(PDFName.of('SMask'))) {
-    const raw = streamBytes(stream);
-    if (!raw || raw.length < width * height * comps) return false;
-    // Skip flat artwork (logos, charts) — JPEG smears it; photos have many colors.
-    const rgba = new Uint8ClampedArray(width * height * 4);
-    const seen = new Set<number>();
-    for (let i = 0, p = 0; i < width * height; i++, p += comps) {
-      const r = raw[p];
-      const g = comps === 3 ? raw[p + 1] : r;
-      const b = comps === 3 ? raw[p + 2] : r;
-      rgba[i * 4] = r;
-      rgba[i * 4 + 1] = g;
-      rgba[i * 4 + 2] = b;
-      rgba[i * 4 + 3] = 255;
-      if (seen.size < 4097 && (i & 7) === 0) seen.add((r << 16) | (g << 8) | b);
-    }
-    if (seen.size < 4096) return false;
-    jpeg = await encodeJpeg(new ImageData(rgba, width, height), outW, outH, cfg.quality);
-  } else {
-    return false;
   }
+  const masks = new Map<PDFRef, PDFRef>(); // smask → owning image
+  const jobs: ImageJob[] = [];
+  for (const [ref, obj] of context.enumerateIndirectObjects()) {
+    if (!(obj instanceof PDFRawStream)) continue;
+    const sub = obj.dict.lookup(PDFName.of('Subtype'));
+    if (!(sub instanceof PDFName) || sub.decodeText() !== 'Image') continue;
+    const sm = obj.dict.get(PDFName.of('SMask'));
+    if (sm instanceof PDFRef) masks.set(sm, ref);
+  }
+  for (const [ref, obj] of context.enumerateIndirectObjects()) {
+    if (!(obj instanceof PDFRawStream)) continue;
+    const d = obj.dict;
+    const sub = d.lookup(PDFName.of('Subtype'));
+    if (!(sub instanceof PDFName) || sub.decodeText() !== 'Image') continue;
+    const im = d.lookup(PDFName.of('ImageMask'));
+    if (im instanceof PDFBool && im.asBoolean()) continue; // 1-bit stencils are already tiny
+    if (d.lookup(PDFName.of('Mask')) instanceof PDFArray) continue; // color-key masking needs exact pixels
+    const width = (d.lookup(PDFName.of('Width')) as PDFNumber | undefined)?.asNumber?.() ?? 0;
+    const height = (d.lookup(PDFName.of('Height')) as PDFNumber | undefined)?.asNumber?.() ?? 0;
+    if (width < 32 || height < 32) continue;
+    const size = obj.getContents().length;
+    if (size < 8_000) continue;
+    const owner = masks.get(ref);
+    jobs.push({ ref, stream: obj, originalSize: size, width, height, isMask: !!owner, shownPt: shown.get(owner ?? ref) ?? null });
+  }
+  return jobs.sort((a, b) => b.originalSize - a.originalSize);
+}
 
-  if (!jpeg || jpeg.length > original.length * (1 - cfg.minGain)) return false;
+function targetDims(job: ImageJob, s: Setting): { w: number; h: number } {
+  let scale: number;
+  if (job.shownPt && job.shownPt.w > 1 && job.shownPt.h > 1) {
+    const wantW = (job.shownPt.w / 72) * s.dpi;
+    const wantH = (job.shownPt.h / 72) * s.dpi;
+    scale = Math.max(wantW / job.width, wantH / job.height);
+  } else {
+    // Not placed on a page we could read: cap the long side at A4-length × dpi.
+    scale = ((11.7 * s.dpi) / Math.max(job.width, job.height));
+  }
+  scale = Math.min(1, scale);
+  return { w: Math.max(16, Math.round(job.width * scale)), h: Math.max(16, Math.round(job.height * scale)) };
+}
 
-  const next = dict.clone(context);
-  next.set(PDFName.of('Filter'), PDFName.of('DCTDecode'));
-  next.delete(PDFName.of('DecodeParms'));
-  next.set(PDFName.of('Width'), PDFNumber.of(outW));
-  next.set(PDFName.of('Height'), PDFNumber.of(outH));
-  next.set(PDFName.of('BitsPerComponent'), PDFNumber.of(8));
-  // Browser JPEG encoders always emit RGB.
-  if (comps === 1) next.set(PDFName.of('ColorSpace'), PDFName.of('DeviceRGB'));
-  // A soft mask at the old resolution still lines up: masks are mapped onto
-  // the image's unit square, not its pixel grid.
-  context.assign(ref, PDFRawStream.of(next, jpeg));
+// ------------------------------------------------------------------ encoding
+
+function resample(img: DecodedImage, w: number, h: number): OffscreenCanvas {
+  const src = new OffscreenCanvas(img.width, img.height);
+  src.getContext('2d')!.putImageData(new ImageData(img.rgba as unknown as Uint8ClampedArray<ArrayBuffer>, img.width, img.height), 0, 0);
+  if (w === img.width && h === img.height) return src;
+  // Halve in steps first: a single large downscale aliases.
+  let cur: OffscreenCanvas = src;
+  let cw = img.width;
+  let ch = img.height;
+  while (cw / 2 >= w && ch / 2 >= h) {
+    const next = new OffscreenCanvas(Math.round(cw / 2), Math.round(ch / 2));
+    const ctx = next.getContext('2d')!;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(cur, 0, 0, next.width, next.height);
+    cur = next;
+    cw = next.width;
+    ch = next.height;
+  }
+  const out = new OffscreenCanvas(w, h);
+  const ctx = out.getContext('2d')!;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(cur, 0, 0, w, h);
+  return out;
+}
+
+async function encode(job: ImageJob, img: DecodedImage, s: Setting): Promise<Encoded | null> {
+  const { w, h } = targetDims(job, s);
+  const downsample = w < img.width || h < img.height;
+  const canvas = resample(img, w, h);
+  const lossyOk = !job.isMask && (img.colors > 1024 || isLossySource(job));
+  if (lossyOk) {
+    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: s.quality });
+    return { bytes: new Uint8Array(await blob.arrayBuffer()), width: w, height: h, format: 'jpeg', gray: false };
+  }
+  if (!downsample && job.stream.dict.has(PDFName.of('Filter'))) return null; // lossless & same size: nothing to gain
+  const px = canvas.getContext('2d')!.getImageData(0, 0, w, h).data;
+  const gray = job.isMask || isGrayish(px);
+  const raw = new Uint8Array(w * h * (gray ? 1 : 3));
+  for (let i = 0, p = 0; i < w * h; i++, p += 4) {
+    if (gray) raw[i] = px[p];
+    else {
+      raw[i * 3] = px[p];
+      raw[i * 3 + 1] = px[p + 1];
+      raw[i * 3 + 2] = px[p + 2];
+    }
+  }
+  return { bytes: deflate(raw, { level: 9 }), width: w, height: h, format: 'flate', gray };
+}
+
+function isLossySource(job: ImageJob): boolean {
+  const f = job.stream.dict.lookup(PDFName.of('Filter'));
+  const names = f instanceof PDFName ? [f.decodeText()] : f instanceof PDFArray ? f.asArray().map((x) => (x instanceof PDFName ? x.decodeText() : '')) : [];
+  return names.includes('DCTDecode') || names.includes('JPXDecode');
+}
+
+function isGrayish(px: Uint8ClampedArray): boolean {
+  for (let i = 0; i < px.length; i += 4 * 97) if (px[i] !== px[i + 1] || px[i] !== px[i + 2]) return false;
   return true;
 }
 
-/** Content hash for dedup (FNV-1a over a sample + length; full compare on hit). */
+function applyEncoded(doc: PDFDocument, job: ImageJob, enc: Encoded) {
+  const dict = job.stream.dict.clone(doc.context);
+  dict.set(PDFName.of('Width'), PDFNumber.of(enc.width));
+  dict.set(PDFName.of('Height'), PDFNumber.of(enc.height));
+  dict.set(PDFName.of('BitsPerComponent'), PDFNumber.of(8));
+  dict.set(PDFName.of('Filter'), PDFName.of(enc.format === 'jpeg' ? 'DCTDecode' : 'FlateDecode'));
+  dict.set(PDFName.of('ColorSpace'), PDFName.of(enc.gray ? 'DeviceGray' : 'DeviceRGB'));
+  for (const k of ['DecodeParms', 'Decode', 'Length', 'DL', 'Intent']) dict.delete(PDFName.of(k));
+  // A soft mask still lines up after resampling: masks map onto the image's
+  // unit square, not its pixel grid.
+  doc.context.assign(job.ref, PDFRawStream.of(dict, enc.bytes));
+}
+
+/** Decodes each job once per pass (bounded memory) and encodes it at `s`. */
+async function encodeAll(jobs: ImageJob[], s: Setting, report: (i: number) => void): Promise<Map<PDFRef, Encoded>> {
+  const out = new Map<PDFRef, Encoded>();
+  for (let i = 0; i < jobs.length; i++) {
+    report(i);
+    const job = jobs[i];
+    try {
+      const img = await decodeCached(job);
+      if (!img) continue;
+      const enc = await encode(job, img, s);
+      if (enc && enc.bytes.length < job.originalSize * 0.97) out.set(job.ref, enc);
+    } catch {
+      // an image we can't decode stays as it is
+    }
+  }
+  return out;
+}
+
+// Keep recently decoded images around for the custom-size search (bounded).
+const decodeCache = new Map<PDFRef, DecodedImage | null>();
+let cacheBytes = 0;
+const CACHE_LIMIT = 400 * 1024 * 1024;
+async function decodeCached(job: ImageJob): Promise<DecodedImage | null> {
+  if (decodeCache.has(job.ref)) return decodeCache.get(job.ref)!;
+  const img = await decodePdfImage(job.stream);
+  const size = img ? img.rgba.byteLength : 0;
+  if (cacheBytes + size <= CACHE_LIMIT) {
+    decodeCache.set(job.ref, img);
+    cacheBytes += size;
+  }
+  return img;
+}
+function clearCache() {
+  decodeCache.clear();
+  cacheBytes = 0;
+}
+
+// ------------------------------------------------------------------ structure
+
 function streamKey(stream: PDFRawStream): string {
   const c = stream.getContents();
   let h = 0x811c9dc5;
@@ -204,8 +303,6 @@ function dedupeStreams(doc: PDFDocument): number {
   const map = new Map<PDFRef, PDFRef>();
   for (const [ref, obj] of context.enumerateIndirectObjects()) {
     if (!(obj instanceof PDFRawStream)) continue;
-    const type = obj.dict.lookup(PDFName.of('Type'));
-    if (type instanceof PDFName && (type.decodeText() === 'XRef' || type.decodeText() === 'ObjStm')) continue;
     const key = streamKey(obj);
     const first = firstByKey.get(key);
     if (!first) {
@@ -257,106 +354,179 @@ function removeUnreachable(doc: PDFDocument): number {
   return removed;
 }
 
+function losslessCleanup(doc: PDFDocument, level: Level): { deduped: number; removed: number } {
+  const context = doc.context;
+  for (const page of doc.getPages()) {
+    page.node.delete(PDFName.of('Thumb'));
+    page.node.delete(PDFName.of('PieceInfo'));
+  }
+  doc.catalog.delete(PDFName.of('PieceInfo'));
+  if (level === 'extreme') doc.catalog.delete(PDFName.of('Metadata'));
+  const deduped = dedupeStreams(doc);
+  const removed = removeUnreachable(doc);
+  for (const [ref, obj] of context.enumerateIndirectObjects()) {
+    if (obj instanceof PDFRawStream && !obj.dict.has(PDFName.of('Filter')) && obj.getContents().length > 256) {
+      const dict = obj.dict.clone(context);
+      dict.set(PDFName.of('Filter'), PDFName.of('FlateDecode'));
+      dict.delete(PDFName.of('DecodeParms'));
+      context.assign(ref, PDFRawStream.of(dict, deflate(obj.getContents(), { level: 9 })));
+    }
+  }
+  return { deduped, removed };
+}
+
+async function saveBytes(doc: PDFDocument): Promise<Uint8Array> {
+  return doc.save({ useObjectStreams: true, addDefaultPage: false, updateFieldAppearances: false });
+}
+
+function toBuffer(b: Uint8Array): ArrayBuffer {
+  return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
+}
+
+const fmt = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(2)} MB` : `${Math.round(n / 1024)} KB`);
+
+// ------------------------------------------------------------------ main
+
 export async function compressPdf(
   fileBuffer: ArrayBuffer,
   fileName: string,
   level: Level = 'recommended',
-  onProgress?: (progress: number, stage: string) => void
+  onProgress?: Progress,
+  targetBytes?: number
 ): Promise<ProcessedPdfResult & { note?: string }> {
   if (!fileBuffer) throw new Error('No PDF buffer provided for compression.');
   const originalSize = fileBuffer.byteLength;
   const originalCopy = fileBuffer.slice(0);
+  const base = fileName.replace(/\.[^/.]+$/, '');
+  const outName = `${base}_compressed.pdf`;
+  const progress = onProgress ?? (() => undefined);
 
-  onProgress?.(8, 'Reading document...');
-  const pdfDoc = await openPdf(fileBuffer);
-  const context = pdfDoc.context;
-  const pageCount = pdfDoc.getPageCount();
-
-  onProgress?.(15, 'Removing page thumbnails and editor leftovers...');
-  for (const page of pdfDoc.getPages()) {
-    page.node.delete(PDFName.of('Thumb'));
-    page.node.delete(PDFName.of('PieceInfo'));
+  if (level === 'custom' && (!targetBytes || targetBytes <= 0)) throw new Error('Choose a target size.');
+  if (level === 'custom' && targetBytes! >= originalSize) {
+    return { fileName: outName, buffer: originalCopy, size: originalSize, note: `The file is already ${fmt(originalSize)} — under the ${fmt(targetBytes!)} target, so it's unchanged.` };
   }
-  pdfDoc.catalog.delete(PDFName.of('PieceInfo'));
-  if (level === 'extreme') pdfDoc.catalog.delete(PDFName.of('Metadata'));
 
-  let recoded = 0;
-  if (canRecodeImages()) {
-    const images: Array<[PDFRef, PDFRawStream]> = [];
-    for (const [ref, obj] of context.enumerateIndirectObjects()) {
-      if (obj instanceof PDFRawStream) {
-        const sub = obj.dict.lookup(PDFName.of('Subtype'));
-        if (sub instanceof PDFName && sub.decodeText() === 'Image') images.push([ref, obj]);
+  progress(5, 'Reading document...');
+  const doc = await openPdf(fileBuffer);
+  const pageCount = doc.getPageCount();
+  progress(12, 'Removing duplicates and unused objects...');
+  const { deduped, removed } = losslessCleanup(doc, level);
+  progress(18, 'Measuring images...');
+  const jobs = canEncode() ? collectJobs(doc) : [];
+  const imageTotal = jobs.reduce((n, j) => n + j.originalSize, 0);
+
+  let chosen: Map<PDFRef, Encoded> = new Map();
+  let note = '';
+  try {
+    if (level !== 'custom') {
+      chosen = await encodeAll(jobs, PRESETS[level], (i) => progress(20 + Math.round((i / Math.max(1, jobs.length)) * 65), `Recompressing image ${i + 1} of ${jobs.length}...`));
+    } else {
+      // Estimate the non-image weight once, then binary-search the ladder.
+      const cleaned = (await saveBytes(doc)).byteLength;
+      const other = Math.max(0, cleaned - imageTotal);
+      const target = targetBytes!;
+      const results = new Map<number, Map<PDFRef, Encoded>>();
+      const estimate = (m: Map<PDFRef, Encoded>) => other + jobs.reduce((n, j) => n + (m.get(j.ref)?.bytes.length ?? j.originalSize), 0);
+      let passes = 0;
+      const evaluate = async (idx: number) => {
+        if (!results.has(idx)) {
+          passes++;
+          const s = LADDER[idx];
+          results.set(idx, await encodeAll(jobs, s, (i) => progress(Math.min(88, 20 + passes * 12), `Trying ${s.dpi} dpi / ${Math.round(s.quality * 100)}% quality (image ${i + 1} of ${jobs.length})...`)));
+        }
+        return results.get(idx)!;
+      };
+      let lo = 0;
+      let hi = LADDER.length - 1;
+      let best = -1;
+      if (other >= target) {
+        best = LADDER.length - 1;
+      } else {
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (estimate(await evaluate(mid)) <= target) {
+            best = mid;
+            hi = mid - 1;
+          } else {
+            lo = mid + 1;
+          }
+        }
+        if (best === -1) best = LADDER.length - 1;
+      }
+      chosen = await evaluate(best);
+      // The estimate ignores object overhead; step down while the real file is too big.
+      for (;;) {
+        chosen.forEach((enc, ref) => applyEncoded(doc, jobs.find((j) => j.ref === ref)!, enc));
+        const bytes = await saveBytes(doc);
+        if (bytes.byteLength <= target || best >= LADDER.length - 1) {
+          const reached = bytes.byteLength <= target;
+          note = reached
+            ? `Target ${fmt(target)} reached with images at ${LADDER[best].dpi} dpi, ${Math.round(LADDER[best].quality * 100)}% quality.`
+            : `Couldn't get down to ${fmt(target)} — this is as small as it goes without destroying legibility (${fmt(bytes.byteLength)}). Text, fonts and vector graphics can't be shrunk further.`;
+          clearCache();
+          progress(100, 'Done.');
+          return finish(bytes);
+        }
+        best++;
+        chosen = await evaluate(best);
       }
     }
-    for (let i = 0; i < images.length; i++) {
-      onProgress?.(20 + Math.round((i / Math.max(1, images.length)) * 50), `Recompressing images (${i + 1}/${images.length})...`);
-      try {
-        if (await recompressImage(context, images[i][0], images[i][1], level)) recoded++;
-      } catch {
-        // an image the browser can't decode — leave it as it is
-      }
+  } finally {
+    clearCache();
+  }
+
+  chosen.forEach((enc, ref) => applyEncoded(doc, jobs.find((j) => j.ref === ref)!, enc));
+  progress(92, 'Writing optimized file...');
+  const bytes = await saveBytes(doc);
+  progress(100, 'Done.');
+  return finish(bytes);
+
+  function finish(bytes: Uint8Array): ProcessedPdfResult & { note?: string } {
+    if (bytes.byteLength >= originalSize) {
+      return {
+        fileName: outName,
+        buffer: originalCopy,
+        size: originalSize,
+        pageCount,
+        note:
+          jobs.length === 0 && !canEncode()
+            ? 'Image recompression isn’t available in this browser; the original is returned unchanged.'
+            : 'Nothing in this file could be made smaller — it has no oversized images and no duplicate data. The original is returned unchanged.',
+      };
     }
+    const parts = [
+      chosen.size ? `${chosen.size} of ${jobs.length} image${jobs.length === 1 ? '' : 's'} recompressed` : jobs.length ? 'images already optimal' : '',
+      deduped ? `${deduped} duplicate${deduped === 1 ? '' : 's'} merged` : '',
+      removed ? `${removed} unused object${removed === 1 ? '' : 's'} dropped` : '',
+    ].filter(Boolean);
+    return { fileName: outName, buffer: toBuffer(bytes), size: bytes.byteLength, pageCount, note: [note, parts.join(' · ')].filter(Boolean).join(' ') || undefined };
   }
-
-  onProgress?.(75, 'Collapsing duplicate fonts and images...');
-  const deduped = dedupeStreams(pdfDoc);
-  const removed = removeUnreachable(pdfDoc);
-
-  onProgress?.(82, 'Compressing uncompressed streams...');
-  for (const [ref, obj] of context.enumerateIndirectObjects()) {
-    if (obj instanceof PDFRawStream && !obj.dict.has(PDFName.of('Filter')) && obj.getContents().length > 256) {
-      const flate = context.flateStream(obj.getContents());
-      const dict = obj.dict.clone(context);
-      dict.set(PDFName.of('Filter'), PDFName.of('FlateDecode'));
-      dict.delete(PDFName.of('DecodeParms'));
-      context.assign(ref, PDFRawStream.of(dict, flate.getContents()));
-    }
-  }
-
-  onProgress?.(90, 'Writing optimized file...');
-  const bytes = await pdfDoc.save({ useObjectStreams: true, addDefaultPage: false });
-  const cleanBaseName = fileName.replace(/\.[^/.]+$/, '');
-  onProgress?.(100, 'Done.');
-
-  if (bytes.byteLength >= originalSize) {
-    return {
-      fileName: `${cleanBaseName}_compressed.pdf`,
-      buffer: originalCopy,
-      size: originalSize,
-      pageCount,
-      note: 'This file is already about as small as it gets — the original is returned unchanged.',
-    };
-  }
-  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-  const parts = [
-    recoded ? `${recoded} image${recoded === 1 ? '' : 's'} recompressed` : '',
-    deduped ? `${deduped} duplicate${deduped === 1 ? '' : 's'} merged` : '',
-    removed ? `${removed} unused object${removed === 1 ? '' : 's'} dropped` : '',
-  ].filter(Boolean);
-  return {
-    fileName: `${cleanBaseName}_compressed.pdf`,
-    buffer,
-    size: buffer.byteLength,
-    pageCount,
-    note: parts.join(' · ') || undefined,
-  };
 }
 
-if (typeof self !== 'undefined') self.addEventListener('message', async (event: MessageEvent<WorkerRequest<CompressPayload>>) => {
-  const { id, action, payload } = event.data;
-  if (action !== 'COMPRESS_PDF') return;
-
+if (typeof self !== 'undefined' && typeof (self as { addEventListener?: unknown }).addEventListener === 'function') {
   try {
-    const result = await compressPdf(payload.fileBuffer, payload.fileName, payload.level, (progress, stage) => {
-      const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-      self.postMessage(msg);
-    });
-    const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = { type: 'RESPONSE', payload: { id, success: true, data: result } };
-    (self as any).postMessage(responseMsg, [result.buffer]);
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : 'Failed to compress PDF document';
-    const responseMsg: WorkerIncomingMessage = { type: 'RESPONSE', payload: { id, success: false, error: errorMsg } };
-    self.postMessage(responseMsg);
+    configureJpx(new URL('pdfjs/wasm/', self.location.href.replace(/assets\/[^/]*$|src\/.*$/, '')).href);
+  } catch {
+    // JPEG 2000 images will simply be left alone
   }
-});
+  self.addEventListener('message', async (event: MessageEvent<WorkerRequest<CompressPayload>>) => {
+    const { id, action, payload } = event.data;
+    if (action !== 'COMPRESS_PDF') return;
+    try {
+      const result = await compressPdf(
+        payload.fileBuffer,
+        payload.fileName,
+        payload.level,
+        (progress, stage) => {
+          const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
+          self.postMessage(msg);
+        },
+        payload.targetBytes
+      );
+      (self as unknown as Worker).postMessage({ type: 'RESPONSE', payload: { id, success: true, data: result } }, [result.buffer]);
+    } catch (err) {
+      const msg: WorkerIncomingMessage = { type: 'RESPONSE', payload: { id, success: false, error: err instanceof Error ? err.message : 'Failed to compress PDF document' } };
+      self.postMessage(msg);
+    }
+  });
+}
