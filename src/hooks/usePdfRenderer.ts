@@ -4,12 +4,12 @@
  */
 
 import { useCallback } from 'react';
-import { openPdfJsDocument } from '../services/pdfWorkerSetup';
 import { memoryManager } from '../services/memoryManager';
 
 export function usePdfRenderer() {
   /** Renders page `pageNumber` (1-based) at `targetWidth` pixels wide and returns a JPEG data URL. */
   const renderThumbnail = useCallback(async (pdfBuffer: ArrayBuffer, pageNumber: number, targetWidth = 200): Promise<string> => {
+    const { openPdfJsDocument } = await import('../services/pdfWorkerSetup'); // loaded on first use
     const doc = await openPdfJsDocument(pdfBuffer).promise;
     try {
       const page = await doc.getPage(pageNumber);

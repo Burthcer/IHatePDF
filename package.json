@@ -60,12 +60,14 @@
     "appId": "com.ihatepdf.desktop",
     "productName": "IHatePDF",
     "directories": {
-      "output": "FinalApp"
+      "output": "FinalApp",
+      "buildResources": "build"
     },
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/**/*"
     ],
     "win": {
       "target": [
@@ -75,7 +77,8 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -86,7 +89,10 @@
       "shortcutName": "IHatePDF",
       "artifactName": "IHatePDF-Setup.${ext}",
       "uninstallDisplayName": "IHatePDF",
-      "runAfterFinish": true
+      "runAfterFinish": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false
     }
   }
 }

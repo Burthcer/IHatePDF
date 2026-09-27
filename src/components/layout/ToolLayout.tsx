@@ -1,5 +1,7 @@
 import React from 'react';
-import { ArrowLeft, Download, FileText, RotateCcw, X } from 'lucide-react';
+import { ArrowLeft, FileText, RotateCcw, X } from 'lucide-react';
+import { AutoSave } from '../common/AutoSave';
+import { resultKey } from '../../services/fileNames';
 import { Button, IconButton, Notice, ProgressLine, formatBytes } from '../ui';
 import { toolIcon } from '../../constants/toolIcons';
 import type { ToolMetadata, PDFFile } from '../../types/pdf';
@@ -16,7 +18,8 @@ interface ToolLayoutProps {
   error: string | null;
   resultBuffer: ArrayBuffer | null;
   resultFileName?: string;
-  onDownloadResult?: () => void;
+  /** Saves the result; `fileName` is the (possibly user-edited) name to save under. */
+  onDownloadResult?: (fileName?: string) => void;
   actionButtonLabel: string;
   onExecuteAction: () => void;
   canExecute?: boolean;
@@ -153,9 +156,7 @@ export const ToolLayout: React.FC<ToolLayoutProps> = ({
                   </p>
                   {resultNote && <div className="text-xs text-muted mt-1">{resultNote}</div>}
                 </div>
-                <Button variant="primary" size="lg" block icon={<Download className="w-4 h-4" />} onClick={onDownloadResult}>
-                  Download
-                </Button>
+                <AutoSave key={resultKey(resultBuffer)} fileName={resultFileName} onSave={(name) => onDownloadResult?.(name)} />
                 {onReset && (
                   <Button variant="ghost" size="sm" block icon={<RotateCcw className="w-3.5 h-3.5" />} onClick={onReset}>
                     Change settings and run again
