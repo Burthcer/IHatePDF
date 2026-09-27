@@ -7,15 +7,17 @@
  *
  * `mergePdfs` is a plain exported function (no Worker/`self` dependency)
  * so it's directly testable from a Node script — see
- * scripts/test-all-features.ts.
+ * scripts/verify-conversions.ts.
  */
 
 import { PDFDocument } from 'pdf-lib';
+import { openPdf } from '../../services/pdfLoader';
 import type { WorkerRequest, MergePayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
 
 export async function mergePdfs(
   files: MergePayload['files'],
-  onProgress?: (progress: number, stage: string) => void
+  onProgress?: (progress: number, stage: string) => void,
+  outputName = 'merged.pdf'
 ): Promise<ProcessedPdfResult> {
   if (!files || files.length < 2) {
     throw new Error('At least two PDF files are required for merging.');
@@ -32,7 +34,12 @@ export async function mergePdfs(
     const progressBase = 10 + Math.round((i / totalFiles) * 80);
     onProgress?.(progressBase, `Importing pages from "${file.name}" (${i + 1}/${totalFiles})...`);
 
-    const sourceDoc = await PDFDocument.load(file.buffer, { ignoreEncryption: false });
+    let sourceDoc: PDFDocument;
+    try {
+      sourceDoc = await openPdf(file.buffer);
+    } catch (err) {
+      throw new Error(`"${file.name}" couldn't be read: ${err instanceof Error ? err.message : String(err)}`);
+    }
     const pageIndices = sourceDoc.getPageIndices();
     const copiedPages = await mergedDoc.copyPages(sourceDoc, pageIndices);
 
@@ -53,7 +60,7 @@ export async function mergePdfs(
   onProgress?.(100, 'Merge completed successfully.');
 
   return {
-    fileName: 'merged_document.pdf',
+    fileName: outputName.toLowerCase().endsWith('.pdf') ? outputName : `${outputName}.pdf`,
     buffer: resultBuffer,
     size: resultBuffer.byteLength,
     pageCount: totalPagesMerged,
@@ -65,10 +72,14 @@ if (typeof self !== 'undefined') self.addEventListener('message', async (event: 
   if (action !== 'MERGE_PDFS') return;
 
   try {
-    const result = await mergePdfs(payload.files, (progress, stage) => {
-      const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-      self.postMessage(msg);
-    });
+    const result = await mergePdfs(
+      payload.files,
+      (progress, stage) => {
+        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
+        self.postMessage(msg);
+      },
+      payload.outputName || 'merged.pdf'
+    );
     const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = {
       type: 'RESPONSE',
       payload: { id, success: true, data: result },

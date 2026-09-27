@@ -1,98 +1,124 @@
+<div align="center">
+
+<img src="build/icon.png" width="96" alt="IHatePDF logo">
+
 # IHatePDF
 
-**Every tool you need to work with PDFs — 100% client-side, zero server, zero uploads.**
+**Edit, compress, convert and fix PDFs — on your own computer.**<br>
+28 tools. Real text editing. No uploads, no accounts, no watermarks, no AI.
 
-![Architecture](https://img.shields.io/badge/architecture-100%25%20client--side-16A34A)
-![Platform](https://img.shields.io/badge/platform-Windows-2563EB?logo=windows&logoColor=white)
-![Stack](https://img.shields.io/badge/stack-React%20%2B%20Electron-61DAFB?logo=react&logoColor=black)
-![AI](https://img.shields.io/badge/AI%20features-none-DC2626)
-![License](https://img.shields.io/badge/license-MIT-green)
+[![Download for Windows](https://img.shields.io/badge/Download_for_Windows-IHatePDF--Setup.exe-de3a24?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Burthcer/IHatePDF/releases/latest/download/IHatePDF-Setup.exe)
 
-IHatePDF is a full PDF tool suite modeled on the iLovePDF catalog — merge, split, compress, convert, sign, redact, and more — with one hard rule: your files never leave your device. There is no backend, no upload endpoint, and no network call in the entire application. Every operation runs inside your own browser (or the bundled Electron shell) using WebAssembly and Web Workers.
+[![Latest release](https://img.shields.io/github/v/release/Burthcer/IHatePDF?style=flat-square&color=171612)](https://github.com/Burthcer/IHatePDF/releases/latest)
+![Runs offline](https://img.shields.io/badge/runs-100%25_offline-247a48?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-74_passing-247a48?style=flat-square)
+[![License: MIT](https://img.shields.io/badge/license-MIT-171612?style=flat-square)](LICENSE)
 
-There are deliberately no "AI" features — no summarizer, no AI translate, no cloud inference of any kind.
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/home-dark.png">
+  <img src="docs/screenshots/home-light.png" alt="IHatePDF home screen with all 28 tools" width="900">
+</picture>
+
+</div>
 
 ---
 
-## Tool Matrix
+## Why IHatePDF
 
-| Category | Tools |
+- **Edit the actual text.** Double-click any paragraph and retype it, like in Word. The paragraph reflows in the document's own font, and the old characters are removed from the file, not hidden under a white box.
+- **Compress to the size you need.** Choose a preset, or type a target like `2 MB` or `400 KB` and it finds the best quality that fits. For example, a 35 MB scan becomes 1.7 MB with no visible difference.
+- **Your files never leave your computer.** There's no server and nothing to upload to. Every tool runs locally, and the app works with the network unplugged.
+- **Results save themselves.** When a tool finishes, the file saves after 5 seconds under a sensible name. Rename it during the countdown if you want. In the desktop app, files land in `Downloads\IHatePDF`.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/editor.png" alt="Editing a paragraph inside a PDF"><br><sub><b>Edit PDF</b> — retype a paragraph in place, change font, size, color and alignment.</sub></td>
+    <td width="50%"><img src="docs/screenshots/compress.png" alt="Compressing a 35.5 MB PDF to a 2 MB target"><br><sub><b>Compress</b> — custom target: 35.5 MB → 1.95 MB for a 2 MB target, auto-saving in 4 s.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/organize.png" alt="Organizing pages with thumbnails"><br><sub><b>Organize</b> — drag thumbnails to reorder, rotate, duplicate or delete pages.</sub></td>
+    <td width="50%"><img src="docs/screenshots/convert.png" alt="PowerPoint converted to PDF"><br><sub><b>Convert</b> — PowerPoint, Word, Excel, HTML and images to PDF, and back.</sub></td>
+  </tr>
+</table>
+
+---
+
+## Install on Windows
+
+1. **[Download IHatePDF-Setup.exe](https://github.com/Burthcer/IHatePDF/releases/latest/download/IHatePDF-Setup.exe)** (about 115 MB).
+2. **Run it.** Windows may say *"Windows protected your PC"*, because the installer isn't code-signed. Click **More info → Run anyway**.
+3. **Click through the setup.** You can choose the install folder and whether you want desktop and Start-menu shortcuts.
+4. **Open IHatePDF** from the desktop or the Start menu.
+
+**Updating:** download the new setup and run it. It replaces the old version in place, and your saved files are never touched.
+**Uninstalling:** *Settings → Apps → IHatePDF → Uninstall*.
+
+Need nothing but a browser? The same app runs as a web page. See [Run from source](#run-from-source).
+
+---
+
+## All 28 tools
+
+| | Tools |
 |---|---|
-| **Organize** | Merge PDF · Split PDF · Organize PDF (reorder/delete/duplicate pages) · Rotate PDF · Crop PDF · Compare PDF |
-| **Optimize** | Compress PDF · Repair PDF |
-| **Convert** | PDF ↔ Word (real fonts, tables, headings) · PDF ↔ PowerPoint (real backgrounds, colors, positioned text) · PDF ↔ JPG/PNG · PDF ↔ Excel · PDF → Markdown · HTML → PDF · Scan to PDF (camera capture) |
-| **Edit** | Watermark · Page Numbers · PDF Forms (fill AcroForm fields) · Edit PDF (freeform text/images) · Redact PDF (irrecoverable) |
-| **Security** | Protect PDF (AES-256 encryption) · Unlock PDF · PDF → PDF/A (archival metadata) · Sign PDF |
+| ✏️ **Edit** | **Edit PDF** — retype text, move/resize/delete text and images, add text, images, shapes, highlights, whiteout · **Sign** — draw, type or upload · **Fill forms** · **Watermark** — text or image · **Page numbers** · **Redact** — draw boxes or search, removed for good |
+| 🗂️ **Organize** | **Merge** · **Split** — ranges, every N pages, one file per page · **Organize pages** · **Rotate** · **Crop** · **Compare** — word-level diff plus visual overlay |
+| 📤 **Convert from PDF** | **Word** — headings, lists, tables, bold/italic · **Excel** — detected tables · **PowerPoint** — editable text boxes · **JPG/PNG** — up to 600 dpi · **Markdown** |
+| 📥 **Convert to PDF** | **Images** · **Word** · **Excel** · **PowerPoint** · **HTML** — real, selectable text · **Scan** — camera with perspective correction |
+| ⚡ **Optimize** | **Compress** — Light / Balanced / Smallest or a custom size · **Repair** — recovers damaged and cut-off files · **PDF/A** — archival |
+| 🔒 **Security** | **Protect** — AES-256 password, printing/copying limits · **Unlock** — RC4 and AES files you have the password for |
 
-28 tools total. Full technical details, Web Worker contracts, and per-tool verification status are in [`HANDOFF.md`](./HANDOFF.md).
-
----
-
-## Security Model: Why Your Files Never Leave Your Device
-
-IHatePDF has no backend. There is nothing to upload to, and nothing that could leak your documents even if it wanted to:
-
-- **No network layer** — the app makes zero HTTP requests for document processing. Open your browser's Network tab during any operation and you'll see nothing but the initial page load.
-- **RAM-only buffers** — files are read into `ArrayBuffer`s in memory and processed there. Nothing is written to disk unless you explicitly click Download.
-- **Web Workers + WebAssembly** — every heavy operation (rendering, compression, encryption, format conversion) runs in an isolated Worker thread using `pdf-lib` and `pdfjs-dist`, not a remote service.
-- **No accounts, no telemetry, no analytics** — there's nothing to sign in to and nothing phoning home.
-- **Open source and verifiable** — don't take our word for it. Read the source, or just watch the Network tab yourself.
-
-This isn't a policy promise ("we won't look at your files") — it's an architectural guarantee ("there is no server that could").
+Password-protected PDFs work in every tool: you type the password once when you open the file.
 
 ---
 
-## Installation
+## How it works
 
-### Windows Desktop App (recommended)
+Everything runs on your machine:
+- **[pdf-lib](https://pdf-lib.js.org/)** and **[pdf.js](https://mozilla.github.io/pdf.js/)** do the PDF work in Web Workers, so the window never freezes.
+- The desktop app wraps the same code in Electron.
 
-1. Download `IHatePDF-Setup.exe` from the [Releases](../../releases) page.
-2. Run the installer. You'll get a normal setup wizard — choose your install location, and choose whether to create a desktop shortcut and Start Menu entry.
-3. Launch IHatePDF from your Start Menu or desktop shortcut. No installation of Node, Python, or any runtime is required — everything is bundled.
+**The text editor** is a small PDF engine of its own (`src/features/editPdf/engine/`):
+1. It reads each page's drawing instructions and works out every character's font, position and color.
+2. It groups those characters into lines and paragraphs.
+3. When you retype a paragraph, it removes the old characters from the page without moving anything else, then typesets your new text. It uses the original font when that font contains all the characters, and the closest match otherwise.
 
-### Run it in any browser instead
+**The compressor** handles:
+- every common image type in PDFs: JPEG, JPEG 2000, CMYK, color-profiled, palette, 16-bit and transparent;
+- DPI-aware downsampling that uses each image's size *as displayed on the page*;
+- merging duplicate images and dropping objects nothing uses.
 
-IHatePDF is also a static web app — see [Local Development](#local-development) below to build and serve `dist/` yourself, no Electron required.
+It keeps a re-encoded image only if it actually got smaller. If the whole file can't shrink, you get the original back.
 
 ---
 
-## Local Development
+## Run from source
 
 ```bash
-# Install dependencies
+git clone https://github.com/Burthcer/IHatePDF.git
+cd IHatePDF
 npm install
-
-# Start the Vite dev server (hot-reload)
-npm run dev
-
-# Type-check and build production web assets to dist/
-npm run build
-
-# Package the Windows installer (IHatePDF-Setup.exe) into FinalApp/
-npm run build:exe
- 
-# Generate test fixtures, then run the comprehensive automated test suite
-npm test
-# or: npx tsx scripts/verify-conversions.ts
+npm run dev          # open the printed localhost URL
 ```
 
-**Stack:** React + TypeScript + Vite, Tailwind CSS, `pdf-lib` + `pdfjs-dist` for all PDF processing
-(in Web Workers), pure OOXML parsers for PowerPoint (`pptxParser.ts`) and Word (`docxParser.ts`)
-with direct `pdf-lib` vector rendering, `docx`/`pptxgenjs` for reverse conversions, Electron for
-the desktop shell, `electron-builder` (NSIS target) for the Windows installer.
+| Command | What it does |
+|---|---|
+| `npm run build` | Type-checks and builds the web app into `dist/` (host it anywhere as static files). |
+| `npm run build:exe` | Builds the Windows installer at `FinalApp/IHatePDF-Setup.exe`. |
+| `npm test` | Runs 45 automated checks: conversions, the editing engine on a deliberately awkward PDF, encryption, and every tool. |
+| `node scripts/e2e/all-tools.mjs` | Clicks through all 28 tools in a real browser and checks every output (needs `npx vite preview --port 4173`). |
 
-No PDF processing dependency ever makes a network call — everything ships bundled in the app.
+Pushing a `v*` tag builds the installer on GitHub and publishes it as a release.
 
-## Testing
+## Documentation
 
-`scripts/verify-conversions.ts` executes the end-to-end automated test suite (17/17 tests passing,
-100% success rate) against real generated fixtures (`test-slides.pptx`, `test-document.docx`, `test-multi.pdf`)
-covering PowerPoint to PDF, Word to PDF, round-trip conversions (Images, Word, PowerPoint), and all
-core PDF tools (Merge, Split, Rotate, Organize, Compress, Protect, Unlock, Watermark, Page Numbers).
-See [`TEST_REPORT.md`](docs/TEST_REPORT.md) for full execution results and logs. See [`RELEASE_NOTES.md`](docs/RELEASE_NOTES.md) for release notes.
+- [Release notes](docs/RELEASE_NOTES.md): what's new in this version.
+- [Test report](docs/TEST_REPORT.md): the full test results.
+- [Developer handoff](HANDOFF.md): architecture, code map and conventions.
+- [Publishing a release](docs/GITHUB_PUBLISH_GUIDE.md).
 
----
+## License
 
-## License & Contributions
-
-See [`HANDOFF.md`](./HANDOFF.md) for architecture details, worker contracts, and the complete implementation status of every tool before contributing.
+[MIT](LICENSE). Free to use, modify and share.

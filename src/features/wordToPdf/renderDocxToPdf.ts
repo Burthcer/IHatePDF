@@ -9,7 +9,8 @@
  * - Complete styling: font sizes, bold, italics, direct RGB colors, and callout blocks
  */
 
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
+import { PDFDocument, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
+import { collectText, fontCollection } from '../../services/fonts';
 import {
   parseDocx,
   type ParsedDocxDocument,
@@ -106,12 +107,7 @@ export async function convertDocxToPdf(
 
   onProgress?.(40, 'Initializing PDF layout engine...');
   const pdfDoc = await PDFDocument.create();
-  const fonts: FontCollection = {
-    regular: await pdfDoc.embedFont(StandardFonts.Helvetica),
-    bold: await pdfDoc.embedFont(StandardFonts.HelveticaBold),
-    italic: await pdfDoc.embedFont(StandardFonts.HelveticaOblique),
-    boldItalic: await pdfDoc.embedFont(StandardFonts.HelveticaBoldOblique),
-  };
+  const fonts: FontCollection = await fontCollection(pdfDoc, collectText(doc.blocks));
 
   const { pageSetup, blocks } = doc;
   const pageWidth = pageSetup.widthPt;

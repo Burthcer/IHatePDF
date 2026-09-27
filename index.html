@@ -2,10 +2,19 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="IHatePDF - 100% Client-Side, Zero-Server PDF Tools Suite. Merge, Split, Rotate, Organize, Compress, Protect, and Unlock PDFs in your browser." />
-    <title>IHatePDF | 100% Client-Side PDF Tools</title>
+    <meta name="description" content="Edit, merge, split, compress, convert and sign PDFs in your browser. Nothing is uploaded — every tool runs on your own device." />
+    <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#121210" media="(prefers-color-scheme: dark)" />
+    <title>IHatePDF — PDF tools that stay on your computer</title>
+    <script>
+      // Apply the saved/system theme before first paint (no light flash in dark mode).
+      try {
+        var t = localStorage.getItem('ihatepdf-theme');
+        if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark');
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

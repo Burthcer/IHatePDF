@@ -1,7 +1,7 @@
 {
   "name": "ihatepdf",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "IHatePDF - 100% client-side, zero-server PDF tools suite.",
   "author": "IHatePDF",
   "type": "module",
@@ -10,17 +10,27 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "tsx scripts/verify-conversions.ts",
+    "test": "tsx scripts/verify-conversions.ts && tsx scripts/test-editor-and-tools.ts",
     "preview": "vite preview",
     "electron:dev": "electron .",
-    "build:exe": "npm run build && electron-builder --win nsis"
+    "build:exe": "npm run build && electron-builder --win nsis --publish never",
+    "predev": "node scripts/copy-pdfjs-assets.mjs",
+    "prebuild": "node scripts/copy-pdfjs-assets.mjs",
+    "postinstall": "node scripts/copy-pdfjs-assets.mjs",
+    "test:engine": "tsx scripts/test-editor-and-tools.ts"
   },
   "dependencies": {
+    "@fontsource/caveat": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
+    "@pdf-lib/fontkit": "^1.1.1",
+    "@pdf-lib/standard-fonts": "^1.0.0",
     "clsx": "^2.1.1",
     "docx": "^9.7.1",
     "html2canvas": "^1.4.1",
     "lucide-react": "^1.43.0",
     "mammoth": "^1.12.2",
+    "pako": "^3.0.2",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.3.289",
     "pptxgenjs": "^4.0.1",
@@ -31,6 +41,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
+    "@types/pako": "^2.0.4",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.1.0",
@@ -38,6 +49,7 @@
     "electron": "^44.3.0",
     "electron-builder": "^26.15.3",
     "oxlint": "^1.79.0",
+    "playwright-core": "1.56",
     "postcss": "^8.5.28",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.23.13",
@@ -48,12 +60,14 @@
     "appId": "com.ihatepdf.desktop",
     "productName": "IHatePDF",
     "directories": {
-      "output": "FinalApp"
+      "output": "FinalApp",
+      "buildResources": "build"
     },
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/**/*"
     ],
     "win": {
       "target": [
@@ -63,7 +77,8 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -74,7 +89,10 @@
       "shortcutName": "IHatePDF",
       "artifactName": "IHatePDF-Setup.${ext}",
       "uninstallDisplayName": "IHatePDF",
-      "runAfterFinish": true
+      "runAfterFinish": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false
     }
   }
 }

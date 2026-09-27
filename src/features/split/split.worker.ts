@@ -2,89 +2,94 @@
  * Split PDF Web Worker
  * IHatePDF - 100% Client-Side Architecture
  *
- * Extracts selected page ranges or splits PDF into distinct documents.
+ * Either extracts pages into one new PDF, or writes several PDFs (one per
+ * group of pages) packed into a ZIP.
  *
  * `splitPdf` is a plain exported function (no Worker/`self` dependency) so
- * it's directly testable from a Node script — see
- * scripts/test-all-features.ts.
+ * it's directly testable from a Node script.
  */
 
 import { PDFDocument } from 'pdf-lib';
 import { createZip } from '../../services/zipWriter';
+import { openPdf } from '../../services/pdfLoader';
 import type { WorkerRequest, SplitPayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
+
+async function buildDoc(source: PDFDocument, indices: number[]): Promise<Uint8Array> {
+  const doc = await PDFDocument.create();
+  const copied = await doc.copyPages(source, indices);
+  copied.forEach((p) => doc.addPage(p));
+  return doc.save({ useObjectStreams: true });
+}
+
+function toBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+function label(indices: number[]): string {
+  const first = indices[0] + 1;
+  const last = indices[indices.length - 1] + 1;
+  return first === last ? `p${first}` : `p${first}-${last}`;
+}
 
 export async function splitPdf(
   fileBuffer: ArrayBuffer,
   fileName: string,
   ranges: SplitPayload['ranges'],
-  onProgress?: (progress: number, stage: string) => void
+  onProgress?: (progress: number, stage: string) => void,
+  options: { groups?: number[][] } = {}
 ): Promise<ProcessedPdfResult> {
   if (!fileBuffer) throw new Error('No PDF buffer supplied for splitting.');
 
   onProgress?.(10, 'Loading source PDF document...');
-  const sourceDoc = await PDFDocument.load(fileBuffer);
+  const sourceDoc = await openPdf(fileBuffer);
   const totalPages = sourceDoc.getPageCount();
-  const cleanBaseName = fileName.replace(/\.[^/.]+$/, '');
+  const base = fileName.replace(/\.[^/.]+$/, '');
 
-  let result: ProcessedPdfResult;
-
-  if (ranges === 'all') {
-    const zipEntries: { name: string; data: Uint8Array }[] = [];
-    const pad = String(totalPages).length;
-
-    for (let i = 0; i < totalPages; i++) {
-      onProgress?.(10 + Math.round((i / totalPages) * 75), `Extracting page ${i + 1} of ${totalPages}...`);
-      const pageDoc = await PDFDocument.create();
-      const [copiedPage] = await pageDoc.copyPages(sourceDoc, [i]);
-      pageDoc.addPage(copiedPage);
-      const pageBytes = await pageDoc.save();
-      zipEntries.push({ name: `${cleanBaseName}_page_${String(i + 1).padStart(pad, '0')}.pdf`, data: pageBytes });
+  // Multiple output files
+  let groups = options.groups;
+  if (!groups && ranges === 'all') groups = Array.from({ length: totalPages }, (_, i) => [i]);
+  if (groups) {
+    const valid = groups.map((g) => g.filter((i) => i >= 0 && i < totalPages)).filter((g) => g.length > 0);
+    if (valid.length === 0) throw new Error('No valid pages selected.');
+    if (valid.length === 1) {
+      onProgress?.(60, 'Extracting pages...');
+      const bytes = await buildDoc(sourceDoc, valid[0]);
+      const buffer = toBuffer(bytes);
+      onProgress?.(100, 'Done.');
+      return { fileName: `${base}_${label(valid[0])}.pdf`, buffer, size: buffer.byteLength, pageCount: valid[0].length };
     }
-
-    onProgress?.(90, `Packaging ${totalPages} pages into a ZIP archive...`);
-    const zipBytes = createZip(zipEntries);
-    const resultBuffer = zipBytes.buffer.slice(zipBytes.byteOffset, zipBytes.byteOffset + zipBytes.byteLength) as ArrayBuffer;
-
-    result = {
-      fileName: `${cleanBaseName}_pages.zip`,
-      buffer: resultBuffer,
-      size: resultBuffer.byteLength,
-      pageCount: totalPages,
-    };
-  } else {
-    const targetDoc = await PDFDocument.create();
-    const pageIndicesToCopy: number[] = [];
-
-    if (Array.isArray(ranges)) {
-      for (const range of ranges) {
-        const start = Math.max(0, range.from - 1);
-        const end = Math.min(totalPages - 1, range.to - 1);
-        for (let p = start; p <= end; p++) {
-          if (!pageIndicesToCopy.includes(p)) pageIndicesToCopy.push(p);
-        }
-      }
+    const entries: { name: string; data: Uint8Array }[] = [];
+    const pad = String(valid.length).length;
+    for (let i = 0; i < valid.length; i++) {
+      onProgress?.(10 + Math.round((i / valid.length) * 80), `Writing file ${i + 1} of ${valid.length}...`);
+      entries.push({ name: `${base}_${String(i + 1).padStart(pad, '0')}_${label(valid[i])}.pdf`, data: await buildDoc(sourceDoc, valid[i]) });
     }
-
-    if (pageIndicesToCopy.length === 0) throw new Error('No valid pages selected to extract.');
-
-    onProgress?.(60, `Extracting ${pageIndicesToCopy.length} pages...`);
-    const copiedPages = await targetDoc.copyPages(sourceDoc, pageIndicesToCopy);
-    for (const page of copiedPages) targetDoc.addPage(page);
-
-    onProgress?.(85, 'Serializing extracted PDF...');
-    const splitBytes = await targetDoc.save();
-    const resultBuffer = splitBytes.buffer.slice(splitBytes.byteOffset, splitBytes.byteOffset + splitBytes.byteLength) as ArrayBuffer;
-
-    result = {
-      fileName: `${cleanBaseName}_split.pdf`,
-      buffer: resultBuffer,
-      size: resultBuffer.byteLength,
-      pageCount: pageIndicesToCopy.length,
+    onProgress?.(92, `Packing ${valid.length} files into a ZIP...`);
+    const buffer = toBuffer(createZip(entries));
+    onProgress?.(100, 'Done.');
+    return {
+      fileName: `${base}_split.zip`,
+      buffer,
+      size: buffer.byteLength,
+      pageCount: valid.reduce((n, g) => n + g.length, 0),
     };
   }
 
+  // One output file from the given ranges
+  const indices: number[] = [];
+  if (Array.isArray(ranges)) {
+    for (const range of ranges) {
+      const start = Math.max(0, range.from - 1);
+      const end = Math.min(totalPages - 1, range.to - 1);
+      for (let p = start; p <= end; p++) indices.push(p);
+    }
+  }
+  if (indices.length === 0) throw new Error('No valid pages selected to extract.');
+
+  onProgress?.(60, `Extracting ${indices.length} pages...`);
+  const buffer = toBuffer(await buildDoc(sourceDoc, indices));
   onProgress?.(100, 'Split operation complete.');
-  return result;
+  return { fileName: `${base}_split.pdf`, buffer, size: buffer.byteLength, pageCount: indices.length };
 }
 
 if (typeof self !== 'undefined') self.addEventListener('message', async (event: MessageEvent<WorkerRequest<SplitPayload>>) => {
@@ -92,14 +97,17 @@ if (typeof self !== 'undefined') self.addEventListener('message', async (event: 
   if (action !== 'SPLIT_PDF') return;
 
   try {
-    const result = await splitPdf(payload.fileBuffer, payload.fileName, payload.ranges, (progress, stage) => {
-      const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-      self.postMessage(msg);
-    });
-    const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = {
-      type: 'RESPONSE',
-      payload: { id, success: true, data: result },
-    };
+    const result = await splitPdf(
+      payload.fileBuffer,
+      payload.fileName,
+      payload.ranges,
+      (progress, stage) => {
+        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
+        self.postMessage(msg);
+      },
+      { groups: payload.groups }
+    );
+    const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = { type: 'RESPONSE', payload: { id, success: true, data: result } };
     (self as any).postMessage(responseMsg, [result.buffer]);
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : 'Failed to split PDF document';

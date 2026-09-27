@@ -10,6 +10,10 @@ export interface PDFFile {
   pageCount: number;
   rawBuffer: ArrayBuffer;
   previewUrls: string[];
+  /** The file was password-protected and has been decrypted on the way in. */
+  wasProtected?: boolean;
+  /** Still encrypted (only for tools that handle encryption themselves). */
+  encrypted?: boolean;
 }
 
 export interface PDFPagePreview {
@@ -48,10 +52,9 @@ export type ToolType =
   | 'redact'
   | 'compare'
   | 'scanToPdf'
-  | 'editPdf'
-  | 'ocr';
+  | 'editPdf';
 
-export type ToolCategory = 'organize' | 'optimize' | 'convert' | 'edit' | 'security';
+export type ToolCategory = 'organize' | 'edit' | 'convertTo' | 'convertFrom' | 'optimize' | 'security';
 
 export interface ToolMetadata {
   id: ToolType;
@@ -62,4 +65,7 @@ export interface ToolMetadata {
   category: ToolCategory;
   badge?: string;
   acceptedFiles: 'single' | 'multiple';
+  /** What the tool takes as input; non-PDF tools can't receive dropped PDFs. */
+  input?: 'pdf' | 'other';
+  keywords?: string;
 }

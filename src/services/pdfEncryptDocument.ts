@@ -1,5 +1,6 @@
 /**
- * pdf-lib object-graph encryption/decryption
+ * pdf-lib object-graph encryption (Protect). Reading encrypted files of
+ * every revision lives in pdfLoader.ts / pdfSecurity.ts.
  * IHatePDF - 100% Client-Side Architecture
  *
  * pdf-lib has no concept of encryption: it can neither write an /Encrypt
@@ -36,10 +37,7 @@ import {
 import {
   buildEncryptionMaterial,
   bytesToHex,
-  decryptBytesAESV3,
   encryptBytesAESV3,
-  recoverFileKey,
-  type StandardSecurityDictValues,
 } from './pdfCrypto';
 
 export interface PermissionFlags {
@@ -190,54 +188,6 @@ export async function encryptPdfDocument(
 
   const encryptDict = buildStandardSecurityDict(pdfDoc.context, material, permissionsP, true);
   pdfDoc.context.trailerInfo.Encrypt = encryptDict;
-}
-
-export interface DecryptResult {
-  success: boolean;
-  isOwnerPassword?: boolean;
-  error?: string;
-}
-
-/**
- * Attempts to decrypt `pdfDoc` (previously loaded with `ignoreEncryption:
- * true`) using `password`, removing the /Encrypt entry on success.
- */
-export async function decryptPdfDocument(pdfDoc: PDFDocument, password: string): Promise<DecryptResult> {
-  const context = pdfDoc.context;
-  const encryptDict = context.lookupMaybe(context.trailerInfo.Encrypt, PDFDict);
-  if (!encryptDict) {
-    return { success: false, error: 'This PDF is not encrypted.' };
-  }
-
-  const filter = encryptDict.lookupMaybe(PDFName.of('Filter'), PDFName);
-  const v = encryptDict.lookupMaybe(PDFName.of('V'), PDFNumber)?.asNumber();
-  const r = encryptDict.lookupMaybe(PDFName.of('R'), PDFNumber)?.asNumber();
-  if (filter !== PDFName.of('Standard') || v !== 5 || r !== 6) {
-    return {
-      success: false,
-      error:
-        'This PDF uses an encryption scheme not supported by IHatePDF (only AES-256 / revision 6, ' +
-        'the scheme IHatePDF\'s own Protect tool produces, is currently supported).',
-    };
-  }
-
-  const values: StandardSecurityDictValues = {
-    O: encryptDict.lookup(PDFName.of('O'), PDFString, PDFHexString).asBytes(),
-    U: encryptDict.lookup(PDFName.of('U'), PDFString, PDFHexString).asBytes(),
-    OE: encryptDict.lookup(PDFName.of('OE'), PDFString, PDFHexString).asBytes(),
-    UE: encryptDict.lookup(PDFName.of('UE'), PDFString, PDFHexString).asBytes(),
-  };
-
-  const recovered = await recoverFileKey(password, values);
-  if (!recovered) {
-    return { success: false, error: 'Incorrect password.' };
-  }
-
-  await walkAndTransform(context, (bytes) => decryptBytesAESV3(recovered.fileKey, bytes));
-
-  delete context.trailerInfo.Encrypt;
-
-  return { success: true, isOwnerPassword: recovered.isOwner };
 }
 
 /**

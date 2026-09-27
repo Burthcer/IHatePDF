@@ -1,21 +1,20 @@
 import React, { useState } from 'react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
-import { useWorkerBridge } from '../../hooks/useWorkerBridge';
-import { memoryManager } from '../../services/memoryManager';
-import { Minimize2, Zap, Gauge, Sparkles } from 'lucide-react';
-import type { PDFFile, ToolMetadata } from '../../types/pdf';
+import { Field, Panel, cn, formatBytes } from '../../components/ui';
+import { useToolRunner } from '../../hooks/useToolRunner';
+import { getTool } from '../../constants/tools';
+import type { PDFFile } from '../../types/pdf';
 import type { CompressPayload, ProcessedPdfResult } from '../../types/worker';
 
-const COMPRESS_TOOL_METADATA: ToolMetadata = {
-  id: 'compress',
-  title: 'Compress PDF',
-  description: 'Reduce PDF file size while optimizing quality directly in your browser.',
-  icon: 'Minimize2',
-  color: '#10B981',
-  category: 'optimize',
-  acceptedFiles: 'single',
-};
+type Level = CompressPayload['level'];
+
+const LEVELS: Array<{ id: Level; title: string; body: string }> = [
+  { id: 'low', title: 'Light', body: 'Images to 220 dpi at high quality. Almost no visible difference.' },
+  { id: 'recommended', title: 'Balanced', body: 'Images to 150 dpi at good quality. Right for email and sharing.' },
+  { id: 'extreme', title: 'Smallest', body: 'Images to 96 dpi, lower quality, metadata removed.' },
+  { id: 'custom', title: 'Custom size', body: 'Pick the file size you need; the best quality that fits is chosen for you.' },
+];
 
 interface CompressViewProps {
   initialFiles?: PDFFile[];
@@ -23,184 +22,121 @@ interface CompressViewProps {
 }
 
 export const CompressView: React.FC<CompressViewProps> = ({ initialFiles = [], onBack }) => {
-  const [files, setFiles] = useState<PDFFile[]>(initialFiles);
-  const [level, setLevel] = useState<'low' | 'recommended' | 'extreme'>('recommended');
-  const [result, setResult] = useState<ProcessedPdfResult | null>(null);
+  const [files, setFiles] = useState<PDFFile[]>(initialFiles.slice(0, 1));
+  const [level, setLevel] = useState<Level>('recommended');
+  const [targetValue, setTargetValue] = useState('');
+  const [unit, setUnit] = useState<'MB' | 'KB'>('MB');
+  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./compress.worker.ts', import.meta.url), { type: 'module' }));
+  const file = files[0];
 
-  const { runTask, isProcessing, progress, stage, error, resetState } =
-    useWorkerBridge<ProcessedPdfResult>(
-      () => new Worker(new URL('./compress.worker.ts', import.meta.url), { type: 'module' })
-    );
+  const targetBytes = Math.round((parseFloat(targetValue) || 0) * (unit === 'MB' ? 1024 * 1024 : 1024));
+  const targetError =
+    level !== 'custom'
+      ? null
+      : !targetBytes
+        ? 'Enter a size.'
+        : file && targetBytes >= file.size
+          ? `Must be smaller than the current ${formatBytes(file.size)} — compression only makes files smaller.`
+          : targetBytes < 10 * 1024
+            ? 'That’s smaller than any readable PDF page can be.'
+            : null;
 
-  const handleFilesAccepted = (acceptedFiles: PDFFile[]) => {
-    const single = acceptedFiles.slice(0, 1);
-    setFiles(single);
-    setResult(null);
-    resetState();
+  const execute = () => {
+    const buffer = file.rawBuffer.slice(0);
+    const payload: CompressPayload = { fileBuffer: buffer, fileName: file.name, level, targetBytes: level === 'custom' ? targetBytes : undefined };
+    void runner.run<CompressPayload>('COMPRESS_PDF', payload, [buffer]);
   };
 
-  const handleClearFiles = () => {
-    setFiles([]);
-    setResult(null);
-    resetState();
-  };
-
-  const executeCompress = async () => {
-    if (files.length === 0) return;
-    const file = files[0];
-
-    try {
-      const bufferCopy = file.rawBuffer.slice(0);
-      const payload: CompressPayload = {
-        fileBuffer: bufferCopy,
-        fileName: file.name,
-        level,
-      };
-
-      const res = await runTask<CompressPayload>('COMPRESS_PDF', payload, [bufferCopy]);
-      setResult(res);
-    } catch (err) {
-      console.error('Compress error:', err);
-    }
-  };
-
-  const handleDownload = () => {
-    if (result) {
-      memoryManager.downloadBuffer(result.buffer, result.fileName);
-    }
-  };
-
-  const originalSize = files[0]?.size || 0;
-  const compressedSize = result?.size || 0;
-  const savingsPercent =
-    originalSize > 0 && compressedSize > 0
-      ? Math.max(0, Math.round(((originalSize - compressedSize) / originalSize) * 100))
-      : 0;
+  const result = runner.result;
+  const saved = result && file ? 1 - result.size / file.size : 0;
 
   return (
     <ToolLayout
-      tool={COMPRESS_TOOL_METADATA}
-      accentColor="#10B981"
+      tool={getTool('compress')}
       files={files}
       onBack={onBack}
-      onClearFiles={handleClearFiles}
-      onRemoveFile={handleClearFiles}
-      isProcessing={isProcessing}
-      progress={progress}
-      stage={stage}
-      error={error}
-      resultBuffer={result?.buffer || null}
-      resultFileName={result?.fileName || 'compressed_document.pdf'}
-      onDownloadResult={handleDownload}
-      actionButtonLabel="Compress PDF"
-      onExecuteAction={executeCompress}
-      canExecute={files.length > 0}
-    >
-      {files.length === 0 ? (
-        <Dropzone
-          multiple={false}
-          onFilesAccepted={handleFilesAccepted}
-          title="Select a PDF file to Compress"
-          subtitle="Reduce file size with zero data upload"
-        />
-      ) : (
-        <div className="space-y-6">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs space-y-6">
-            <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-              <Minimize2 className="w-5 h-5 text-green-600" />
-              <span>Compression Level</span>
-            </h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Extreme */}
+      onClearFiles={() => setFiles([])}
+      onRemoveFile={() => setFiles([])}
+      {...runner.layout}
+      resultNote={
+        result && (
+          <>
+            <span className="font-mono">
+              {formatBytes(file.size)} → {formatBytes(result.size)}
+              {saved > 0.005 && <span className="text-ok"> (−{Math.round(saved * 100)}%)</span>}
+            </span>
+            {result.note && <p className="mt-1">{result.note}</p>}
+          </>
+        )
+      }
+      actionButtonLabel={level === 'custom' && targetBytes ? `Compress to ${formatBytes(targetBytes)}` : 'Compress'}
+      onExecuteAction={execute}
+      canExecute={!targetError}
+      options={
+        <Field label="Compression">
+          <div className="space-y-1.5">
+            {LEVELS.map((l) => (
               <button
+                key={l.id}
                 type="button"
-                onClick={() => setLevel('extreme')}
-                className={`p-5 rounded-2xl border text-left flex flex-col justify-between space-y-3 transition-all ${
-                  level === 'extreme'
-                    ? 'border-green-600 bg-green-50/50 dark:bg-green-950/20 ring-2 ring-green-600/20'
-                    : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
-                }`}
+                onClick={() => {
+                  setLevel(l.id);
+                  runner.reset();
+                }}
+                className={cn(
+                  'w-full text-left p-2.5 rounded border transition-colors',
+                  level === l.id ? 'border-ink bg-sunken' : 'border-line hover:border-line-strong'
+                )}
               >
-                <div className="flex items-center justify-between w-full">
-                  <span className="font-bold text-sm text-slate-900 dark:text-white">
-                    Extreme Compression
-                  </span>
-                  <Zap className="w-4 h-4 text-green-600" />
-                </div>
-                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                  Aggressively prunes all metadata and streams. Less quality, maximum file size reduction.
-                </p>
+                <span className="block text-sm font-medium">{l.title}</span>
+                <span className="block text-2xs text-muted leading-snug mt-0.5">{l.body}</span>
               </button>
-
-              {/* Recommended */}
-              <button
-                type="button"
-                onClick={() => setLevel('recommended')}
-                className={`p-5 rounded-2xl border text-left flex flex-col justify-between space-y-3 transition-all relative ${
-                  level === 'recommended'
-                    ? 'border-green-600 bg-green-50/50 dark:bg-green-950/20 ring-2 ring-green-600/20'
-                    : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
-                }`}
-              >
-                <div className="flex items-center justify-between w-full">
-                  <span className="font-bold text-sm text-slate-900 dark:text-white">
-                    Recommended Compression
-                  </span>
-                  <Sparkles className="w-4 h-4 text-green-600" />
-                </div>
-                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                  Optimal balance between visual fidelity and reduced bytes. Perfect for sharing and email.
-                </p>
-              </button>
-
-              {/* Low */}
-              <button
-                type="button"
-                onClick={() => setLevel('low')}
-                className={`p-5 rounded-2xl border text-left flex flex-col justify-between space-y-3 transition-all ${
-                  level === 'low'
-                    ? 'border-green-600 bg-green-50/50 dark:bg-green-950/20 ring-2 ring-green-600/20'
-                    : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
-                }`}
-              >
-                <div className="flex items-center justify-between w-full">
-                  <span className="font-bold text-sm text-slate-900 dark:text-white">
-                    Low Compression
-                  </span>
-                  <Gauge className="w-4 h-4 text-green-600" />
-                </div>
-                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                  High quality, subtle compression. Reorganizes internal streams while retaining high asset quality.
-                </p>
-              </button>
-            </div>
-
-            {/* Savings indicator if processed */}
-            {result && (
-              <div className="p-4 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-center justify-between text-xs">
-                <div>
-                  <span className="font-bold text-emerald-800 dark:text-emerald-200">
-                    Original:{' '}
-                  </span>
-                  <span className="text-slate-600 dark:text-slate-400">
-                    {(originalSize / 1024 / 1024).toFixed(2)} MB
-                  </span>
-                  <span className="mx-2 text-slate-400">→</span>
-                  <span className="font-bold text-emerald-800 dark:text-emerald-200">New: </span>
-                  <span className="text-slate-600 dark:text-slate-400">
-                    {(compressedSize / 1024 / 1024).toFixed(2)} MB
-                  </span>
-                </div>
-
-                <span className="px-2.5 py-1 bg-emerald-200 dark:bg-emerald-800 text-emerald-900 dark:text-emerald-100 font-bold rounded-full">
-                  {savingsPercent}% Saved
-                </span>
-              </div>
-            )}
+            ))}
           </div>
-        </div>
-      )}
+          {level === 'custom' && (
+            <div className="mt-3 space-y-1.5">
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  step="any"
+                  inputMode="decimal"
+                  autoFocus
+                  placeholder={file ? (file.size / 1024 / 1024 / 4).toFixed(1) : '5'}
+                  className="input font-mono"
+                  value={targetValue}
+                  onChange={(e) => {
+                    setTargetValue(e.target.value);
+                    runner.reset();
+                  }}
+                  aria-label="Target size"
+                />
+                <select className="input w-20" value={unit} onChange={(e) => setUnit(e.target.value as 'MB' | 'KB')} aria-label="Unit">
+                  <option>MB</option>
+                  <option>KB</option>
+                </select>
+              </div>
+              <p className={`text-2xs ${targetError && targetValue ? 'text-danger' : 'text-muted'}`}>
+                {targetError && targetValue ? targetError : `Currently ${formatBytes(file?.size ?? 0)}. Only shrinks — never upscales.`}
+              </p>
+            </div>
+          )}
+        </Field>
+      }
+      emptyState={<Dropzone multiple={false} onFilesAccepted={(f) => setFiles(f.slice(0, 1))} title="Choose a PDF to compress" />}
+    >
+      <Panel className="p-6">
+        <p className="label-mono">Current size</p>
+        <p className="text-3xl font-semibold tracking-tight mt-1 font-mono">{formatBytes(file?.size ?? 0)}</p>
+        <p className="text-xs text-muted mt-1">
+          {file?.pageCount ? `${file.pageCount} pages · ` : ''}
+          {file?.pageCount ? `${formatBytes((file.size ?? 0) / file.pageCount)} per page` : ''}
+        </p>
+        <p className="text-xs text-muted mt-4 max-w-lg leading-relaxed">
+          Text and vector graphics stay sharp at every level — only photos and scans are re-encoded, and only when that
+          actually makes them smaller. If a file can’t be made smaller, you get the original back.
+        </p>
+      </Panel>
     </ToolLayout>
   );
 };

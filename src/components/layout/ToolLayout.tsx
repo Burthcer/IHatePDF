@@ -1,6 +1,9 @@
 import React from 'react';
-import { ArrowLeft, Trash2, Download, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { ProgressBar } from '../common/ProgressBar';
+import { ArrowLeft, FileText, RotateCcw, X } from 'lucide-react';
+import { AutoSave } from '../common/AutoSave';
+import { resultKey } from '../../services/fileNames';
+import { Button, IconButton, Notice, ProgressLine, formatBytes } from '../ui';
+import { toolIcon } from '../../constants/toolIcons';
 import type { ToolMetadata, PDFFile } from '../../types/pdf';
 
 interface ToolLayoutProps {
@@ -15,18 +18,44 @@ interface ToolLayoutProps {
   error: string | null;
   resultBuffer: ArrayBuffer | null;
   resultFileName?: string;
-  onDownloadResult?: () => void;
+  /** Saves the result; `fileName` is the (possibly user-edited) name to save under. */
+  onDownloadResult?: (fileName?: string) => void;
   actionButtonLabel: string;
   onExecuteAction: () => void;
   canExecute?: boolean;
-  /** Hex color for this tool's accent (action button, badges). Falls back to the brand red. */
+  /** Settings shown in the side panel above the action button. */
+  options?: React.ReactNode;
+  /** Extra line under the result, e.g. "Saved 42%". */
+  resultNote?: React.ReactNode;
+  /** Go back to settings after a result (keeps the files). Defaults to clearing the result via onClearFiles. */
+  onReset?: () => void;
+  /** Hide the loaded-files list (tools that show files in the workspace themselves). */
+  hideFileList?: boolean;
+  /** Content shown when no file is loaded yet (defaults to children). */
+  emptyState?: React.ReactNode;
+  /** Legacy prop from the previous design; ignored. */
   accentColor?: string;
   children?: React.ReactNode;
 }
 
-function hexToRgba(hex: string, alpha: number): string {
-  const n = parseInt(hex.replace('#', ''), 16);
-  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+export function ToolHeader({ tool, onBack }: { tool: ToolMetadata; onBack: () => void }) {
+  const Icon = toolIcon(tool);
+  return (
+    <div className="space-y-4">
+      <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink transition-colors">
+        <ArrowLeft className="w-3.5 h-3.5" /> All tools
+      </button>
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 w-9 h-9 shrink-0 rounded border border-line bg-panel flex items-center justify-center">
+          <Icon className="w-[18px] h-[18px]" strokeWidth={1.75} />
+        </div>
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold tracking-tight leading-tight">{tool.title}</h1>
+          <p className="text-sm text-muted mt-0.5">{tool.description}</p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export const ToolLayout: React.FC<ToolLayoutProps> = ({
@@ -45,150 +74,103 @@ export const ToolLayout: React.FC<ToolLayoutProps> = ({
   actionButtonLabel,
   onExecuteAction,
   canExecute = true,
-  accentColor = '#E53E3E',
+  options,
+  resultNote,
+  onReset,
+  hideFileList,
+  emptyState,
   children,
 }) => {
-  return (
-    <div className="w-full max-w-[1600px] mx-auto px-4 py-6 space-y-6">
-      {/* Compact Tool Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
-        <div className="flex items-start gap-3">
-          <button
-            onClick={onBack}
-            className="mt-0.5 p-2 rounded-full text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white bg-white dark:bg-slate-900 shadow-soft dark:shadow-soft-dark hover:-translate-x-0.5 active:scale-[0.92] transition-all duration-200 ease-out-expo"
-            title="Back to Catalog"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">
-                {tool.title}
-              </h1>
-              {tool.badge && (
-                <span
-                  className="text-[11px] px-2.5 py-0.5 rounded-full font-semibold text-white shadow-sm"
-                  style={{ backgroundColor: accentColor }}
-                >
-                  {tool.badge}
-                </span>
-              )}
-            </div>
-            <p className="text-sm text-slate-600 dark:text-slate-400 mt-0.5">{tool.description}</p>
-          </div>
-        </div>
-
-        {files.length > 0 && (
-          <button
-            onClick={onClearFiles}
-            disabled={isProcessing}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 shadow-soft dark:shadow-soft-dark hover:text-rose-600 dark:hover:text-rose-400 rounded-full active:scale-[0.96] transition-all duration-200 self-start sm:self-auto disabled:opacity-50"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>Clear All ({files.length})</span>
-          </button>
-        )}
+  if (files.length === 0) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-8">
+        <ToolHeader tool={tool} onBack={onBack} />
+        {emptyState ?? children}
       </div>
+    );
+  }
 
-      {/* Before any file is loaded there's nothing for a sidebar to show yet —
-          skip the two-pane grid so the dropzone centers on the full width
-          instead of being squeezed into a reserved-but-empty left column. */}
-      {files.length === 0 ? (
-        <div className="max-w-3xl mx-auto">{children}</div>
-      ) : (
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
-        {/* Central Staging Area */}
-        <div className="min-w-0 space-y-6">{children}</div>
+  return (
+    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-8 space-y-6">
+      <ToolHeader tool={tool} onBack={onBack} />
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-6 items-start">
+        <div className="min-w-0 space-y-4">{children}</div>
 
-        {/* Right Configuration Sidebar */}
-        <aside className="space-y-4 lg:sticky lg:top-20">
-          {files.length > 0 && (
-            <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 shadow-soft dark:shadow-soft-dark animate-float-in">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">
-                Loaded Documents ({files.length})
-              </h4>
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {files.map((file) => (
-                  <div
-                    key={file.id}
-                    className="flex items-center justify-between p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl text-xs"
-                  >
-                    <div className="truncate mr-2">
-                      <p className="font-semibold text-slate-800 dark:text-slate-200 truncate">
-                        {file.name}
+        <aside className="lg:sticky lg:top-16 bg-panel border border-line rounded-md divide-y divide-line">
+          {!hideFileList && (
+            <div className="p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="label-mono">{files.length === 1 ? 'File' : `Files · ${files.length}`}</h3>
+                {files.length > 1 && (
+                  <button onClick={onClearFiles} disabled={isProcessing} className="text-2xs text-muted hover:text-danger disabled:opacity-50">
+                    Remove all
+                  </button>
+                )}
+              </div>
+              <ul className="space-y-1 max-h-48 overflow-y-auto scroll-thin">
+                {files.map((f) => (
+                  <li key={f.id} className="group flex items-center gap-2 -mx-1 px-1 py-1 rounded hover:bg-hover">
+                    <FileText className="w-4 h-4 text-faint shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium truncate" title={f.name}>
+                        {f.name}
                       </p>
-                      <p className="text-[11px] text-slate-400">
-                        {(file.size / 1024 / 1024).toFixed(2)} MB
-                        {file.pageCount > 0 ? ` • ${file.pageCount} pages` : ''}
+                      <p className="font-mono text-2xs text-muted">
+                        {formatBytes(f.size)}
+                        {f.pageCount > 0 && ` · ${f.pageCount} pg`}
+                        {f.wasProtected && ' · unlocked'}
                       </p>
                     </div>
-                    <button
-                      onClick={() => onRemoveFile(file.id)}
+                    <IconButton
+                      label={`Remove ${f.name}`}
+                      size="sm"
                       disabled={isProcessing}
-                      className="p-1 text-slate-400 hover:text-rose-600 rounded-md active:scale-90 transition-all shrink-0"
-                      title="Remove file"
+                      className="opacity-0 group-hover:opacity-100 focus:opacity-100"
+                      onClick={() => onRemoveFile(f.id)}
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                      <X className="w-3.5 h-3.5" />
+                    </IconButton>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </div>
           )}
 
-          {isProcessing && (
-            <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 shadow-soft dark:shadow-soft-dark animate-float-in">
-              <ProgressBar progress={progress} stage={stage} accentColor={accentColor} />
-            </div>
-          )}
+          {options && !resultBuffer && <div className="p-4 space-y-5">{options}</div>}
 
-          {error && (
-            <div className="p-4 bg-rose-50 dark:bg-rose-950/40 rounded-2xl shadow-soft dark:shadow-soft-dark flex items-start gap-2.5 text-rose-900 dark:text-rose-200 text-sm animate-float-in">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-semibold text-sm">Operation Failed</p>
-                <p className="text-xs text-rose-700 dark:text-rose-300 mt-0.5">{error}</p>
-              </div>
-            </div>
-          )}
+          <div className="p-4 space-y-3">
+            {isProcessing && <ProgressLine progress={progress} stage={stage} />}
 
-          {resultBuffer && !isProcessing && (
-            <div className="p-4 bg-emerald-50 dark:bg-emerald-950/40 rounded-2xl shadow-soft dark:shadow-soft-dark space-y-3 animate-float-in">
-              <div className="flex items-center gap-2.5">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-300 shrink-0" />
+            {error && !isProcessing && (
+              <Notice tone="error" title="That didn’t work">
+                {error}
+              </Notice>
+            )}
+
+            {resultBuffer && !isProcessing ? (
+              <div className="space-y-3">
                 <div>
-                  <h3 className="font-bold text-slate-900 dark:text-white text-sm">Ready for Download</h3>
-                  <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
-                    {(resultBuffer.byteLength / 1024 / 1024).toFixed(2)} MB
+                  <p className="text-sm font-medium">Done</p>
+                  <p className="text-xs text-muted break-all">
+                    {resultFileName} · <span className="font-mono">{formatBytes(resultBuffer.byteLength)}</span>
                   </p>
+                  {resultNote && <div className="text-xs text-muted mt-1">{resultNote}</div>}
                 </div>
+                <AutoSave key={resultKey(resultBuffer)} fileName={resultFileName} onSave={(name) => onDownloadResult?.(name)} />
+                {onReset && (
+                  <Button variant="ghost" size="sm" block icon={<RotateCcw className="w-3.5 h-3.5" />} onClick={onReset}>
+                    Change settings and run again
+                  </Button>
+                )}
               </div>
-              <button
-                onClick={onDownloadResult}
-                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-xl shadow-md hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.97] active:translate-y-0 transition-all duration-200 ease-out-expo"
-              >
-                <Download className="w-4 h-4" />
-                <span className="truncate">Download {resultFileName}</span>
-              </button>
-            </div>
-          )}
-
-          {files.length > 0 && !resultBuffer && (
-            <button
-              onClick={onExecuteAction}
-              disabled={isProcessing || !canExecute}
-              className="w-full px-5 py-3.5 text-white font-bold text-sm rounded-2xl hover:-translate-y-0.5 active:scale-[0.98] active:translate-y-0 transition-all duration-200 ease-out-expo focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:translate-y-0 disabled:hover:shadow-none"
-              style={{
-                backgroundColor: accentColor,
-                boxShadow: isProcessing || !canExecute ? undefined : `0 10px 24px -8px ${hexToRgba(accentColor, 0.55)}`,
-              }}
-            >
-              {actionButtonLabel}
-            </button>
-          )}
+            ) : (
+              <Button variant="primary" size="lg" block onClick={onExecuteAction} disabled={isProcessing || !canExecute} loading={isProcessing}>
+                {actionButtonLabel}
+              </Button>
+            )}
+          </div>
         </aside>
       </div>
-      )}
     </div>
   );
 };
