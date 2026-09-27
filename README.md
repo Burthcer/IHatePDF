@@ -110,7 +110,7 @@ npm run dev          # open the printed localhost URL
 | `npm test` | Runs 45 automated checks: conversions, the editing engine on a deliberately awkward PDF, encryption, and every tool. |
 | `node scripts/e2e/all-tools.mjs` | Clicks through all 28 tools in a real browser and checks every output (needs `npx vite preview --port 4173`). |
 
-Pushing a `v*` tag builds the installer on GitHub and publishes it as a release.
+Every push to `main` builds the installer on GitHub and publishes it as the release for the version in `package.json`.
 
 ## Documentation
 
