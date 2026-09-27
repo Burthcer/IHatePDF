@@ -1,53 +1,35 @@
-# Publishing a release of IHatePDF
+# Publishing a release
 
-The project already lives on GitHub. Development happens on feature branches that get merged into `main`. This guide covers cutting a release and attaching `IHatePDF-Setup.exe` to it.
+Releases are automatic: push a version tag, and GitHub builds the Windows installer and publishes it.
 
-## 1. Merge the work into `main`
+1. **Update the version and notes on `main`.** Set `"version"` in `package.json` and rewrite `docs/RELEASE_NOTES.md` for the new version. That file becomes the release page, so keep its *Install* section.
+2. **Tag and push:**
+   ```bash
+   git checkout main && git pull
+   git tag v1.2.0
+   git push origin v1.2.0
+   ```
+3. **Wait about 5 minutes.** The **Windows installer** workflow (`.github/workflows/windows-installer.yml`) runs on Windows:
+   1. lint;
+   2. tests;
+   3. `npm run build:exe`;
+   4. it creates the *IHatePDF v1.2.0* release with `IHatePDF-Setup.exe` attached, marked as the latest.
 
-Open a pull request from the feature branch (for example `claude/bold-cori-o7rx16`) into `main`, review it, and merge.
+The README's **Download for Windows** button links to `releases/latest/download/IHatePDF-Setup.exe`, so it always serves the newest release. Nothing needs editing.
 
-## 2. Bump the version
-
-Set `"version"` in `package.json`. The installer and Windows' *Apps & features* entry show this number. Commit it to `main`.
-
-## 3. Build the installer
-
-You can build it in either of two ways.
-
-**On GitHub (no local setup):** push a tag. The **Windows installer** workflow (`.github/workflows/windows-installer.yml`) runs on `windows-latest`. It lints, runs the tests and builds the installer, then uploads it as the `IHatePDF-Setup` artifact on the workflow run.
-
-```bash
-git checkout main && git pull
-git tag -a v1.1.0 -m "IHatePDF v1.1.0"
-git push origin v1.1.0
-```
-
-You can also start the workflow by hand: **Actions → Windows installer → Run workflow**.
-
-**Locally:**
+## Building the installer by hand
 
 ```bash
 npm ci
 npm run build:exe        # → FinalApp/IHatePDF-Setup.exe
 ```
 
-On Windows this works as-is. On Linux, electron-builder needs Wine (64- and 32-bit) to generate the uninstaller, e.g. `apt install wine64 wine32:i386` after `dpkg --add-architecture i386`.
+On Linux, electron-builder needs Wine to generate the uninstaller: `dpkg --add-architecture i386 && apt install wine64 wine32:i386`.
 
-## 4. Create the GitHub Release
-
-1. Go to **Releases → Draft a new release** and pick the tag.
-2. Title it `IHatePDF v1.1.0`, and paste the matching section of [`RELEASE_NOTES.md`](./RELEASE_NOTES.md) as the body.
-3. Attach `IHatePDF-Setup.exe`, either downloaded from the workflow artifact (it comes zipped) or from your local `FinalApp/`.
-4. Publish.
-
-Optionally, add a checksum to the release notes:
-
-```powershell
-Get-FileHash IHatePDF-Setup.exe -Algorithm SHA256
-```
+Pushes to `main` or `claude/**` branches also build the installer, without publishing it. You can download it from that workflow run's *Artifacts* section.
 
 ## Notes
 
-- Never commit the installer or `FinalApp/` to git. They are large binaries that belong on the Releases page, and `.gitignore` excludes them.
-- The installer isn't code-signed, so Windows SmartScreen shows *“Windows protected your PC”* the first time. Users click **More info → Run anyway**. Signing it requires a code-signing certificate (set `CSC_LINK` / `CSC_KEY_PASSWORD` for electron-builder).
-- Installing a new version over an old one replaces the app in place. Saved files in `Downloads\IHatePDF` are never touched.
+- Never commit the installer or `FinalApp/`. `.gitignore` excludes them.
+- The installer isn't code-signed, so SmartScreen shows *"Windows protected your PC"* on first run, and users click **More info → Run anyway**. To sign it, provide a certificate through `CSC_LINK` / `CSC_KEY_PASSWORD` secrets and remove `CSC_IDENTITY_AUTO_DISCOVERY: 'false'` from the workflow.
+- Screenshots in `docs/screenshots/` are regenerated with `node scripts/e2e/screenshots.mjs`.

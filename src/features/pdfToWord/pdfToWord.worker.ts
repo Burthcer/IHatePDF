@@ -61,7 +61,7 @@ function pickHeadingLevel(sizePt: number, medianSize: number): (typeof HeadingLe
 /**
  * Builds a .docx from styled page text. Plain exported function (no
  * Worker/`self` dependency) so it's directly testable from a Node script —
- * see scripts/test-all-features.ts.
+ * see scripts/verify-conversions.ts.
  */
 export async function buildDocxFromPages(
   pages: PdfToWordPayload['pages'],

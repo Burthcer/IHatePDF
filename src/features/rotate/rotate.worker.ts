@@ -6,7 +6,7 @@
  *
  * `rotatePdfPages` is a plain exported function (no Worker/`self`
  * dependency) so it's directly testable from a Node script — see
- * scripts/test-all-features.ts.
+ * scripts/verify-conversions.ts.
  */
 
 import { degrees } from 'pdf-lib';
