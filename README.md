@@ -5,7 +5,7 @@
 # IHatePDF
 
 **Edit, compress, convert and fix PDFs — on your own computer.**<br>
-28 tools. Real text editing. No uploads, no accounts, no watermarks, no AI.
+28 PDF tools, plus sending files to a phone offline. Real text editing. No uploads, no accounts, no watermarks, no AI.
 
 [![Download for Windows](https://img.shields.io/badge/Download_for_Windows-IHatePDF--Setup.exe-de3a24?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Burthcer/IHatePDF/releases/latest/download/IHatePDF-Setup.exe)
 
@@ -30,6 +30,7 @@
 - **Edit the actual text.** Double-click any paragraph and retype it, like in Word. The paragraph reflows in the document's own font, and the old characters are removed from the file, not hidden under a white box.
 - **Compress to the size you need.** Choose a preset, or type a target like `2 MB` or `400 KB` and it finds the best quality that fits. For example, a 35 MB scan becomes 1.7 MB with no visible difference.
 - **Your files never leave your computer.** There's no server and nothing to upload to. Every tool runs locally, and the app works with the network unplugged.
+- **Send files to a phone, offline.** Share files or whole folders to a phone with a QR code, over Wi-Fi, this PC's own hotspot or Bluetooth. Nothing goes through the internet. See [Share to phone](#share-to-phone).
 - **Results save themselves.** When a tool finishes, the file saves after 5 seconds under a sensible name. Rename it during the countdown if you want. In the desktop app, files land in `Downloads\IHatePDF`.
 
 <table>
@@ -49,13 +50,48 @@
 
 1. **[Download IHatePDF-Setup.exe](https://github.com/Burthcer/IHatePDF/releases/latest/download/IHatePDF-Setup.exe)** (about 115 MB).
 2. **Run it.** Windows may say *"Windows protected your PC"*, because the installer isn't code-signed. Click **More info → Run anyway**.
-3. **Click through the setup.** You can choose the install folder and whether you want desktop and Start-menu shortcuts.
+3. **Click through the setup.** Windows asks once for administrator permission: the installer adds a Windows Firewall rule so phones can download from [Share to phone](#share-to-phone) without the app ever showing a network prompt. You can choose the install folder and whether you want desktop and Start-menu shortcuts.
 4. **Open IHatePDF** from the desktop or the Start menu.
 
 **Updating:** download the new setup and run it. It replaces the old version in place, and your saved files are never touched.
 **Uninstalling:** *Settings → Apps → IHatePDF → Uninstall*.
 
 Need nothing but a browser? The same app runs as a web page. See [Run it in a browser instead](#run-it-in-a-browser-instead).
+
+---
+
+## Share to phone
+
+Send files, or whole folders, from the PC to a phone. Nothing is uploaded anywhere and no app is needed on the phone. It's the first tool on the home screen.
+
+1. **Add what to share:** files, folders, or both (buttons or drag and drop).
+2. **Pick how the phone connects:**
+
+| | Same Wi-Fi | PC hotspot (offline) | Bluetooth (offline) |
+|---|---|---|---|
+| **When to use it** | PC and phone are on the same Wi-Fi or network (internet not needed) | No Wi-Fi network at all: the PC's Wi-Fi card makes a private hotspot | No Wi-Fi at all |
+| **On the phone** | Scan one QR code, tap Download | Scan a QR code to join the hotspot, then one to download | Open Bluetooth settings so it's visible, pick it in the app, tap Accept |
+| **Phones** | Any (Android, iPhone) | Any (Android, iPhone) | Android only (iPhones can't receive files over Bluetooth) |
+| **Size limit** | None | None | 4 GB, and slow (large files take minutes) |
+| **Folders** | Download as a .zip | Download as a .zip | Sent as one .zip |
+| **Needs** | A network | A PC with Wi-Fi | Bluetooth on the PC and the phone |
+
+3. **Choose how long the QR code stays active** (1, 5 or 10 minutes; changing it restarts the countdown). The link stops working when time runs out, when you press **Stop sharing**, or when you close the app. If the app turned the hotspot on, it turns it off again.
+
+With several items, the phone can download each one on its own or everything as one .zip. For Bluetooth, the app never picks a phone for you: you choose it from the phones it finds nearby.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/share-setup.png" alt="Choosing a folder and a file, and picking PC hotspot"><br><sub><b>Pick what to share and how</b>: a folder and a file, sent over this PC's own hotspot.</sub></td>
+    <td width="50%"><img src="docs/screenshots/share-qr.png" alt="QR code with a countdown"><br><sub><b>Scan the QR code</b>: active for 1, 5 or 10 minutes.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/share-phone.png" alt="Download page on the phone" width="280"><br><sub><b>On the phone</b>: download each item, or everything as one .zip.</sub></td>
+    <td width="50%"><img src="docs/screenshots/share-bluetooth.png" alt="Bluetooth mode looking for nearby phones"><br><sub><b>Bluetooth</b>: finds nearby phones; nothing is chosen until you pick one.</sub></td>
+  </tr>
+</table>
+
+Share to phone is only in the Windows desktop app; a browser tab can't run it.
 
 ---
 
@@ -68,6 +104,7 @@ Need nothing but a browser? The same app runs as a web page. See [Run it in a br
 | 📤 **Convert from PDF** | **Word** — headings, lists, tables, bold/italic · **Excel** — detected tables · **PowerPoint** — editable text boxes · **JPG/PNG** — up to 600 dpi · **Markdown** |
 | 📥 **Convert to PDF** | **Images** · **Word** · **Excel** · **PowerPoint** · **HTML** — real, selectable text · **Scan** — camera with perspective correction |
 | ⚡ **Optimize** | **Compress** — Light / Balanced / Smallest or a custom size · **Repair** — recovers damaged and cut-off files · **PDF/A** — archival |
+| 📱 **Share** | **Share to phone** — files and folders to a phone by QR code (Wi-Fi or this PC's hotspot) or Bluetooth, offline |
 | 🔒 **Security** | **Protect** — AES-256 password, printing/copying limits · **Unlock** — RC4 and AES files you have the password for |
 
 Password-protected PDFs work in every tool: you type the password once when you open the file.
