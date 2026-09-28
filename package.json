@@ -1,7 +1,7 @@
 {
   "name": "ihatepdf",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "IHatePDF - 100% client-side, zero-server PDF tools suite.",
   "author": "IHatePDF",
   "type": "module",

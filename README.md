@@ -144,7 +144,7 @@ npm run dev          # then open the localhost link it prints
 
 ## More
 
-- [What's new in 1.1.0](docs/RELEASE_NOTES.md)
+- [What's new in 1.2.0](docs/RELEASE_NOTES.md): Share to phone
 - [Test results](docs/TEST_REPORT.md)
 - [For developers](HANDOFF.md): how the code is organized, building the installer, and releasing.
 
