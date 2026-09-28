@@ -34,6 +34,7 @@ const CompareView = lazy(() => import('./features/compare/CompareView').then((m)
 const ScanToPdfView = lazy(() => import('./features/scanToPdf/ScanToPdfView').then((m) => ({ default: m.ScanToPdfView })));
 const EditPdfView = lazy(() => import('./features/editPdf/EditPdfView').then((m) => ({ default: m.EditPdfView })));
 const HtmlToPdfView = lazy(() => import('./features/htmlToPdf/HtmlToPdfView').then((m) => ({ default: m.HtmlToPdfView })));
+const ShareView = lazy(() => import('./features/share/ShareView').then((m) => ({ default: m.ShareView })));
 const RedactView = lazy(() => import('./features/redact/RedactView').then((m) => ({ default: m.RedactView })));
 
 type ToolViewProps = { initialFiles?: PDFFile[]; onBack: () => void };
@@ -67,6 +68,7 @@ const VIEWS: Record<ToolType, React.ComponentType<ToolViewProps>> = {
   editPdf: EditPdfView,
   htmlToPdf: HtmlToPdfView,
   redact: RedactView,
+  share: ShareView,
 };
 
 function toolFromHash(): ToolType | null {

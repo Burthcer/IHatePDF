@@ -9,12 +9,21 @@
  *   background — even if the page is busy or tries to block unloading.
  * - Downloads are saved straight to Downloads/IHatePDF (no dialog), with
  *   a numbered name when one already exists; the page is told where.
+ * - "Share to phone": a QR download page over Wi-Fi or this PC's own hotspot
+ *   (share.cjs, hotspot.cjs), or Bluetooth (bluetooth.cjs).
  */
 
-const { app, BrowserWindow, Menu, ipcMain, nativeTheme, net, protocol, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, net, protocol, shell } = require('electron');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const share = require('./share.cjs');
+const { createZip } = require('./zip.cjs');
+
+// Hotspot and Bluetooth call Windows through a native FFI; load them only when used.
+const natives = {};
+const native = (name) => (natives[name] ??= require(`./${name}.cjs`));
 
 const DIST = path.join(__dirname, '..', 'dist');
 const HOST = 'app://ihatepdf';
@@ -151,6 +160,67 @@ ipcMain.on('ihp:show-in-folder', (event, file) => {
   if (typeof file === 'string' && path.normalize(file).startsWith(saveDir())) shell.showItemInFolder(file);
 });
 
+// ---- Share to phone ----
+
+ipcMain.handle('ihp:share-pick', async (event, kind) => {
+  const res = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+    title: kind === 'folder' ? 'Choose folders to share' : 'Choose files to share',
+    properties: [kind === 'folder' ? 'openDirectory' : 'openFile', 'multiSelections'],
+  });
+  return res.canceled ? [] : res.filePaths;
+});
+ipcMain.handle('ihp:share-describe', (event, paths) => share.describe(paths));
+
+async function stopHotspot() {
+  if (natives.hotspot) await natives.hotspot.stop();
+}
+
+ipcMain.handle('ihp:share-start', async (event, { paths, minutes, mode }) => {
+  const onEnd = (reason) => {
+    if (reason === 'replaced') return;
+    void stopHotspot();
+    if (!event.sender.isDestroyed()) event.sender.send('ihp:share-ended', reason);
+  };
+  let wifi = null;
+  let preferred;
+  if (mode === 'hotspot') {
+    const hs = await native('hotspot').start();
+    wifi = { ssid: hs.ssid, password: hs.password };
+    preferred = hs.address;
+  } else await stopHotspot();
+  try {
+    return { ...(await share.start(paths, minutes, onEnd, preferred)), wifi };
+  } catch (e) {
+    await stopHotspot();
+    throw e;
+  }
+});
+ipcMain.handle('ihp:share-minutes', (event, minutes) => share.setMinutes(minutes));
+ipcMain.handle('ihp:share-stop', () => share.stop());
+
+ipcMain.handle('ihp:bt-scan', () => native('bluetooth').scan());
+ipcMain.handle('ihp:bt-send', async (event, { deviceId, paths }) => {
+  const emit = (ev) => !event.sender.isDestroyed() && event.sender.send('ihp:bt-event', ev);
+  const items = share.describe(paths);
+  if (items.reduce((n, i) => n + i.size, 0) >= 2 ** 32) throw new Error('Bluetooth can’t send more than 4 GB at once. Use Same Wi-Fi or PC hotspot instead.');
+  // One plain file goes as it is; several files or a folder go as one .zip (one "Accept" on the phone).
+  if (items.length === 1 && !items[0].isDir) return native('bluetooth').sendFile(deviceId, items[0].path, items[0].name, emit);
+  const name = items.length === 1 ? `${items[0].name}.zip` : 'IHatePDF files.zip';
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ihatepdf-'));
+  try {
+    emit({ type: 'zipping' });
+    const file = path.join(dir, name);
+    const out = fs.createWriteStream(file);
+    await createZip(paths).pipe(out);
+    await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())));
+    await native('bluetooth').sendFile(deviceId, file, name, emit);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+ipcMain.handle('ihp:bt-cancel', () => natives.bluetooth?.cancel());
+ipcMain.on('ihp:bt-settings', () => shell.openExternal('ms-settings:bluetooth'));
+
 app.on('second-instance', () => {
   if (!mainWindow) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
@@ -168,5 +238,8 @@ app.on('window-all-closed', () => app.quit());
 
 // Last resort: if something keeps the process alive after quitting, end it.
 app.on('will-quit', () => {
+  share.stop();
+  natives.bluetooth?.cancel();
+  void stopHotspot();
   setTimeout(() => process.exit(0), 2000).unref();
 });

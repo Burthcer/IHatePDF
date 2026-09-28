@@ -32,7 +32,45 @@ interface IhpDesktopBridge {
   /** Called whenever a download finishes; returns an unsubscribe function. */
   onSaved(cb: (info: { name: string; path: string }) => void): () => void;
   showInFolder(path: string): void;
+  /** "Share to phone" (electron/share.cjs, hotspot.cjs, bluetooth.cjs). */
+  share: {
+    /** Native picker; resolves to the chosen paths ([] if cancelled). */
+    pick(kind: 'files' | 'folder'): Promise<string[]>;
+    /** Paths of dropped files/folders. */
+    pathsOf(files: File[]): string[];
+    describe(paths: string[]): Promise<ShareItem[]>;
+    start(paths: string[], minutes: number, mode: 'wifi' | 'hotspot'): Promise<ShareInfo>;
+    /** Restarts the countdown; resolves to the new expiry (ms since epoch). */
+    setMinutes(minutes: number): Promise<number | null>;
+    stop(): Promise<void>;
+    onEnded(cb: (reason: string) => void): () => void;
+  };
+  bluetooth: {
+    /** Phones in range (a ~8 s Bluetooth scan). */
+    scan(): Promise<{ radio: 'On' | 'Off'; devices: BluetoothPhone[] }>;
+    /** Resolves when it's on the phone; rejects with a readable message. */
+    send(deviceId: string, paths: string[]): Promise<void>;
+    cancel(): Promise<void>;
+    onEvent(cb: (ev: BluetoothEvent) => void): () => void;
+    openSettings(): void;
+  };
 }
+interface ShareItem {
+  path: string;
+  name: string;
+  isDir: boolean;
+  size: number;
+  count: number;
+}
+interface ShareInfo {
+  expiresAt: number;
+  /** One download link per network adapter, the most likely one first. */
+  urls: Array<{ name: string; url: string }>;
+  /** Set for PC hotspot: what the phone joins first. */
+  wifi: { ssid: string; password: string } | null;
+}
+type BluetoothPhone = { id: string; name: string; paired: boolean };
+type BluetoothEvent = { type: 'zipping' } | { type: 'connecting' } | { type: 'waiting' | 'progress'; sent: number; size: number };
 interface Window {
   ihpDesktop?: IhpDesktopBridge;
 }

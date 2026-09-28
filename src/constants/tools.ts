@@ -44,9 +44,13 @@ export const TOOLS: ToolMetadata[] = [
   // Security
   { id: 'protect', title: 'Protect', description: 'Encrypt with AES-256 and a password, and restrict printing or copying.', icon: 'Lock', color: '', category: 'security', acceptedFiles: 'single', keywords: 'password encrypt lock' },
   { id: 'unlock', title: 'Unlock', description: 'Remove a password or printing/copying restrictions you’re allowed to remove.', icon: 'Unlock', color: '', category: 'security', acceptedFiles: 'single', keywords: 'decrypt remove password restrictions' },
+
+  // Share
+  { id: 'share', title: 'Share to phone', description: 'Send files or whole folders to a phone: scan a QR code over Wi-Fi or this PC’s own hotspot, or send over Bluetooth. Works offline, nothing is uploaded.', icon: 'QrCode', color: '', category: 'share', acceptedFiles: 'multiple', input: 'other', keywords: 'qr code bluetooth hotspot wifi send transfer phone mobile folder filebin offline' },
 ];
 
 export const CATEGORIES: Array<{ id: ToolCategory; label: string }> = [
+  { id: 'share', label: 'Share' },
   { id: 'edit', label: 'Edit' },
   { id: 'organize', label: 'Organize' },
   { id: 'convertFrom', label: 'Convert from PDF' },

@@ -40,7 +40,8 @@ src/
                                pageOverlay, textLayout + layoutToMarkdown, pageRanges,
                                imagePrep, fileNames, memoryManager, workerClient, zip*
   types/                       pdf.ts (PDFFile, tool types), worker.ts (RPC envelopes, payloads)
-electron/                      main.cjs (app:// protocol, window, downloads), preload.cjs
+electron/                      main.cjs (app:// protocol, window, downloads), preload.cjs,
+                               share.cjs + zip.cjs + hotspot.cjs + bluetooth.cjs (Share to phone)
 build/                         app icon (icon.ico / icon.png)
 scripts/                       test suites, fixture generators, e2e/ browser + Electron tests
 docs/                          release notes, test report, publishing guide, screenshots/
@@ -105,6 +106,11 @@ The main thread sends `{ id, action, payload }` (`WorkerRequest`). The worker re
 - `will-prevent-unload` is ignored and `closed` → `app.quit()` on every platform, so the X button always ends the process.
 - `will-download` saves to `Downloads/IHatePDF/` with ` (n)` de-duplication and sends `ihp:saved {name, path}`. The preload exposes `window.ihpDesktop.onSaved` / `showInFolder`, which the AutoSave component uses.
 - The icon is at `build/icon.ico` (generated from `public/favicon.svg`). The packaged `app.asar` holds only `dist/` + `electron/`: `node_modules` is excluded, since everything is bundled by Vite.
+- **Share to phone** (`src/features/share/ShareView.tsx`, desktop only). Files and folders go to a phone three ways:
+  - *Same Wi-Fi* / *PC hotspot*: `share.cjs` serves a token-protected download page (QR code) for 1/5/10 min; folders and "everything" stream as stored (uncompressed) `.zip` from `zip.cjs`, ZIP64 past 4 GB. `hotspot.cjs` turns on Windows Mobile Hotspot through WinRT and shows a `WIFI:` join QR first, and turns it off afterwards if it turned it on.
+  - *Bluetooth*: `bluetooth.cjs` scans (~8 s inquiry, phones only, nothing preselected) and sends with OBEX Object Push over an RFCOMM socket; several items go as one `.zip`. Android only, 4 GB max.
+  - Hotspot and Bluetooth call Windows directly through `koffi` (FFI, in-process). No PowerShell or helper `.exe`: McAfee deleted a compiled helper, and PowerShell `Add-Type` (compiling C# at runtime) is a common antivirus trigger. WinRT method slots/IIDs come from `C:\Windows\System32\WinMetadata`.
+  - The installer is per-machine (one UAC prompt) so `build/installer.nsh` can add a Windows Firewall rule (IHatePDF only, TCP, local subnet) and remove any block rule; without it Windows prompts on first share. `scripts/e2e/share.mjs` tests it all on 127.0.0.1 (`IHP_SHARE_HOST`), so it never triggers that prompt.
 - CI: `.github/workflows/windows-installer.yml` builds `IHatePDF-Setup.exe` on `windows-latest` and uploads it as an artifact.
 
 **Editor input** — pressing on an object captures the pointer on the page layer (for dragging), so the browser delivers `dblclick` to the layer, not the object. `PageCanvas` therefore also handles double-click on the layer and edits the current selection. Esc and Ctrl+Enter both finish an edit and keep the text.
