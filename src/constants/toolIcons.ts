@@ -1,5 +1,6 @@
 import {
   Archive,
+  QrCode,
   Camera,
   Code2,
   Combine,
@@ -33,6 +34,7 @@ import type { ToolMetadata } from '../types/pdf';
 
 const ICONS: Record<string, LucideIcon> = {
   Archive,
+  QrCode,
   Camera,
   Code2,
   Combine,

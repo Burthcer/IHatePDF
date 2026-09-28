@@ -52,9 +52,10 @@ export type ToolType =
   | 'redact'
   | 'compare'
   | 'scanToPdf'
-  | 'editPdf';
+  | 'editPdf'
+  | 'share';
 
-export type ToolCategory = 'organize' | 'edit' | 'convertTo' | 'convertFrom' | 'optimize' | 'security';
+export type ToolCategory = 'organize' | 'edit' | 'convertTo' | 'convertFrom' | 'optimize' | 'security' | 'share';
 
 export interface ToolMetadata {
   id: ToolType;
