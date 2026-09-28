@@ -1,45 +1,38 @@
-# IHatePDF v1.1.0
+# IHatePDF v1.2.0
 
-A reliability release: every tool was re-tested end to end on real files, and everything that didn't work was fixed.
+Adds **Share to phone**: send files or whole folders from the PC to a phone, fully offline, with nothing uploaded anywhere.
+
+<img src="https://raw.githubusercontent.com/Burthcer/IHatePDF/main/docs/screenshots/share-setup.png" width="600" alt="Share to phone">
 
 ## Install
 
 1. Download **IHatePDF-Setup.exe** below, under *Assets*.
 2. Run it. If Windows says *"Windows protected your PC"*, click **More info → Run anyway**. The installer isn't code-signed.
-3. Follow the setup, then open IHatePDF from the desktop or Start menu. It replaces any older version, and your files are untouched.
+3. Windows asks once for **administrator permission**. The installer uses it to add a Windows Firewall rule for IHatePDF, so phones can download from Share to phone without the app ever showing a network prompt.
+4. If you installed an earlier version, uninstall it first (*Settings → Apps → IHatePDF*): this version installs for all users.
 
-## New
+## New: Share to phone
 
-- **Custom compression size.** Choose *Custom size*, type a target in MB or KB (it can only shrink, never grow), and the compressor finds the best image resolution and quality that fits, e.g. 35.5 MB → 1.95 MB for a 2 MB target.
-- **Auto-save.** Finished results save themselves after a 5-second countdown under an automatic name. During the countdown you can rename the file, save it right away, or turn auto-save off for that result. You can also save a copy under another name later. The editor's Download button uses the same flow.
-- **Desktop app saves to `Downloads\IHatePDF`** with no dialog. Existing names get a ` (2)` suffix, and **Show in folder** opens the location.
-- **Word-processor-style PDF editing.** Double-click any text to retype it. The paragraph reflows in the document's own font, and the old characters are removed from the file, not just covered. You can also move and resize text and images, and add text, images, shapes, highlights and whiteout.
-- **Redesigned interface** across the home screen and every tool.
+It's the first tool on the home screen, and it's in the desktop app only.
 
-## Fixed
+1. Add files, folders, or both (buttons or drag and drop).
+2. Pick how the phone connects:
+   - **Same Wi-Fi:** the PC and phone are on the same network (internet not needed). Scan the QR code and download.
+   - **PC hotspot (offline):** no Wi-Fi network at all. The PC's Wi-Fi card becomes a private hotspot; scan one QR code to join it and a second to download.
+   - **Bluetooth (offline):** turn Bluetooth on on both devices and open the phone's Bluetooth settings so it can be found. Pick the phone from the list (none is chosen for you), then tap Accept on the phone.
+3. The QR code stays active for 1, 5 or 10 minutes. It stops on **Stop sharing** or when you close the app, and the hotspot is turned off again if the app turned it on.
 
-- **Compress now actually compresses.** Before, it only recompressed plain RGB/gray JPEGs, so most real PDFs came back unchanged apart from the name. It now decodes and re-encodes:
-  - JPEG, JPEG 2000, CMYK, ICC-based, indexed, 16-bit, soft-masked and predictor-compressed images;
-  - downsampled to the chosen DPI at their *displayed* size.
+Folders download as a .zip. With several items the phone can download each one, or everything as one .zip.
 
-  It also merges duplicate images and drops unused objects. A 35.5 MB scan goes to 1.7 MB (Balanced), and an 88.6 MB mixed file to 3.1 MB, with no visible change.
-- **Double-click to edit text** in the editor didn't open the text box: the drag handler captured the pointer and swallowed the double-click. Pressing Esc while typing now keeps your text.
-- **Page rendering and password detection** broke on Chromium/Electron builds without the newest JavaScript APIs (`Math.sumPrecise`, `Map#getOrInsertComputed`). This could also make a password-protected file look unprotected. The app now uses pdf.js's legacy build, which includes polyfills.
-- **Repair** recovers truncated downloads: a cut-off compressed object stream is partially recovered, unreadable objects are skipped, and a lost page tree is rebuilt.
-- **HTML to PDF** could convert the previous HTML if you clicked *Create PDF* right after pasting or opening a file.
-- **PDF to Markdown / Excel / Word:**
-  - tables drawn with padding spaces are detected;
-  - two side-by-side text columns are no longer mistaken for a table;
-  - superscripts stay on their line.
-- **Desktop app:**
-  - closing the window always quits (nothing is left running in the background);
-  - only one copy runs at a time;
-  - the window appears once the first frame is drawn, with no blank white window;
-  - compiled code is cached, so later launches are faster;
-  - pdf.js is loaded on first use, so the startup bundle is 225 KB instead of 712 KB;
-  - the app is served over an `app://` protocol, so WASM decoders and workers behave exactly as on the web;
-  - the installer has a proper icon and no longer bundles unused `node_modules`.
+| | Same Wi-Fi | PC hotspot | Bluetooth |
+|---|---|---|---|
+| Phones | Any | Any | Android only |
+| Size limit | None | None | 4 GB, and slow |
+| Needs | A network | A PC with Wi-Fi | Bluetooth on both devices |
 
-## Testing
+## Also changed
 
-`npm test` (45 checks) plus browser end-to-end runs of all 28 tools, the compression levels on 35–90 MB files, and the Electron app. See the [test report](https://github.com/Burthcer/IHatePDF/blob/main/docs/TEST_REPORT.md).
+- The phone's download page works on small screens, with long names and folder details wrapping properly.
+- Share is the first section on the home screen.
+
+Earlier changes: [v1.1.0 release notes](https://github.com/Burthcer/IHatePDF/releases/tag/v1.1.0).
