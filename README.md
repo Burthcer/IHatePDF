@@ -11,7 +11,7 @@
 
 [![Latest release](https://img.shields.io/github/v/release/Burthcer/IHatePDF?style=flat-square&color=171612)](https://github.com/Burthcer/IHatePDF/releases/latest)
 ![Runs offline](https://img.shields.io/badge/runs-100%25_offline-247a48?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-74_passing-247a48?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-79_passing-247a48?style=flat-square)
 [![License: MIT](https://img.shields.io/badge/license-MIT-171612?style=flat-square)](LICENSE)
 
 **New in 1.3.0:** big files use up to 6× less memory, a built-in memory fail-safe protects the PC, and Hindi, Marathi, Chinese and Japanese text works in every tool that writes text. [What changed](#whats-new-in-130)
