@@ -45,7 +45,7 @@ function FileChooser({ files, onPick, onCancel }: { files: PDFFile[]; onPick: (i
   useEffect(() => {
     let cancelled = false;
     if (files[0] && !files[0].encrypted) {
-      renderThumbnail(files[0].rawBuffer, 1, 180)
+      renderThumbnail(files[0].data, 1, 180)
         .then((url) => !cancelled && setThumb(url))
         .catch(() => undefined);
     }

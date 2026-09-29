@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { Spinner } from './components/ui';
 import { Header } from './components/common/Header';
 import { Footer } from './components/common/Footer';
+import { SystemNotice } from './components/common/SystemNotice';
 import { Home } from './components/home/Home';
 import { memoryManager } from './services/memoryManager';
 import { TOOLS, getTool, takesPdf } from './constants/tools';
@@ -122,6 +123,7 @@ export function App() {
   return (
     <div className="min-h-screen flex flex-col">
       <Header onHome={goHome} />
+      <SystemNotice />
       <main className="flex-1">
         {View ? (
           <Suspense

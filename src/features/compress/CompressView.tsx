@@ -42,9 +42,8 @@ export const CompressView: React.FC<CompressViewProps> = ({ initialFiles = [], o
             : null;
 
   const execute = () => {
-    const buffer = file.rawBuffer.slice(0);
-    const payload: CompressPayload = { fileBuffer: buffer, fileName: file.name, level, targetBytes: level === 'custom' ? targetBytes : undefined };
-    void runner.run<CompressPayload>('COMPRESS_PDF', payload, [buffer]);
+    const payload: CompressPayload = { fileBuffer: file.data, fileName: file.name, level, targetBytes: level === 'custom' ? targetBytes : undefined };
+    void runner.run<CompressPayload>('COMPRESS_PDF', payload);
   };
 
   const result = runner.result;

@@ -5,7 +5,7 @@ import { ToolLayout } from '../../components/layout/ToolLayout';
 import { Button, Notice, ProgressLine, Toggle } from '../../components/ui';
 import { useLayoutAnalysis } from '../../hooks/useLayoutAnalysis';
 import { layoutToMarkdown } from '../../services/layoutToMarkdown';
-import { memoryManager } from '../../services/memoryManager';
+import { saveResult } from '../../services/toolOutput';
 import { getTool } from '../../constants/tools';
 import type { PDFFile } from '../../types/pdf';
 
@@ -20,7 +20,7 @@ export const PdfToMarkdownView: React.FC<PdfToMarkdownViewProps> = ({ initialFil
   const [emphasis, setEmphasis] = useState(true);
   const [copied, setCopied] = useState(false);
   const file = files[0];
-  const analysis = useLayoutAnalysis(file?.rawBuffer);
+  const analysis = useLayoutAnalysis(file?.data);
   const markdown = useMemo(() => (analysis.pages ? layoutToMarkdown(analysis.pages, { pageHeadings: pageMarkers, emphasis }) : ''), [analysis.pages, pageMarkers, emphasis]);
   const buffer = useMemo(() => (markdown ? (new TextEncoder().encode(markdown).buffer as ArrayBuffer) : null), [markdown]);
   const outName = `${(file?.name ?? 'document').replace(/\.[^/.]+$/, '')}.md`;
@@ -36,9 +36,9 @@ export const PdfToMarkdownView: React.FC<PdfToMarkdownViewProps> = ({ initialFil
       progress={analysis.progress ? (analysis.progress.done / analysis.progress.total) * 100 : 0}
       stage={analysis.progress ? `Reading page ${analysis.progress.done} of ${analysis.progress.total}…` : 'Reading document…'}
       error={analysis.error}
-      resultBuffer={analysis.pages && analysis.hasText ? buffer : null}
+      resultData={analysis.pages && analysis.hasText ? buffer : null}
       resultFileName={outName}
-      onDownloadResult={(name) => buffer && memoryManager.downloadBuffer(buffer, name || outName, 'text/markdown')}
+      onDownloadResult={(name) => buffer && void saveResult(buffer, name || outName, 'text/markdown')}
       resultNote={
         <div className="space-y-3 mt-2">
           <Toggle checked={emphasis} onChange={setEmphasis} label="Keep bold and italic" />

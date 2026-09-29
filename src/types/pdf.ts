@@ -8,7 +8,12 @@ export interface PDFFile {
   name: string;
   size: number;
   pageCount: number;
-  rawBuffer: ArrayBuffer;
+  /**
+   * The file's bytes. For picked files this is the File itself, backed by
+   * the file on disk: tools read what they need from it on demand instead
+   * of holding a copy in memory.
+   */
+  data: Blob;
   previewUrls: string[];
   /** The file was password-protected and has been decrypted on the way in. */
   wasProtected?: boolean;

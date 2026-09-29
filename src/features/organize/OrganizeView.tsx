@@ -3,6 +3,7 @@ import { Copy, FilePlus2, RotateCw, Trash2, Undo2 } from 'lucide-react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
 import { PageThumb } from '../../components/common/PageThumb';
+import { VirtualGrid } from '../../components/common/VirtualGrid';
 import { Button, IconButton, Section, Spinner, cn } from '../../components/ui';
 import { useToolRunner } from '../../hooks/useToolRunner';
 import { usePageThumbnails } from '../../hooks/usePageThumbnails';
@@ -31,7 +32,7 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({ initialFiles = [], o
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [overKey, setOverKey] = useState<string | null>(null);
   const file = files[0];
-  const { pages } = usePageThumbnails(file?.rawBuffer);
+  const { pages, thumbRef } = usePageThumbnails(file?.data);
   const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./organize.worker.ts', import.meta.url), { type: 'module' }));
 
   useEffect(() => {
@@ -60,14 +61,13 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({ initialFiles = [], o
   const unchanged = items.length === pages.length && items.every((it, i) => it.source === i && it.rotate % 360 === 0);
 
   const execute = () => {
-    const buffer = file.rawBuffer.slice(0);
     const payload: OrganizePayload = {
-      fileBuffer: buffer,
+      fileBuffer: file.data,
       fileName: file.name,
       pageOrder: items.map((it) => it.source),
       rotations: items.map((it) => it.rotate),
     };
-    void runner.run('ORGANIZE_PAGES', payload, [buffer]);
+    void runner.run('ORGANIZE_PAGES', payload);
   };
 
   const refAspect = pages[0] ? pages[0].width / pages[0].height : 0.707;
@@ -112,8 +112,9 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({ initialFiles = [], o
           <Spinner /> Loading pages…
         </div>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-x-4 gap-y-6">
-          {items.map((it, pos) => {
+        <VirtualGrid count={items.length} minColWidth={140} rowHeight={196}>
+          {(pos) => {
+            const it = items[pos];
             const p = it.source >= 0 ? pages[it.source] : null;
             return (
               <div
@@ -145,6 +146,7 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({ initialFiles = [], o
               >
                 <PageThumb
                   src={p?.url}
+                  viewRef={it.source >= 0 ? thumbRef(it.source) : undefined}
                   aspect={p ? p.width / p.height : refAspect}
                   rotate={it.rotate}
                   label={
@@ -170,8 +172,8 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({ initialFiles = [], o
                 </div>
               </div>
             );
-          })}
-        </div>
+          }}
+        </VirtualGrid>
       )}
     </ToolLayout>
   );

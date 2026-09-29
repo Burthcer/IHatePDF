@@ -26,10 +26,11 @@ export const OfficeToPdfView: React.FC<OfficeToPdfViewProps> = ({ toolId, accept
   const [wrongType, setWrongType] = useState<string | null>(null);
   const runner = useToolRunner<OfficeConversionResult>(workerFactory);
   const file = files[0];
-  const { pages } = usePageThumbnails(runner.result?.buffer ?? null);
+  const { pages, thumbRef } = usePageThumbnails(runner.result?.buffer ?? null);
+  const convert = async (f: PDFFile) => void runner.run(action, { fileBuffer: await f.data.arrayBuffer(), fileName: f.name });
 
   useEffect(() => {
-    if (file) void runner.run(action, { fileBuffer: file.rawBuffer.slice(0), fileName: file.name });
+    if (file) void convert(file);
     // run automatically once a file is chosen
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file]);
@@ -42,7 +43,7 @@ export const OfficeToPdfView: React.FC<OfficeToPdfViewProps> = ({ toolId, accept
       return;
     }
     setWrongType(null);
-    setFiles([{ id: crypto.randomUUID(), name: f.name, size: f.size, pageCount: 0, rawBuffer: await f.arrayBuffer(), previewUrls: [] }]);
+    setFiles([{ id: crypto.randomUUID(), name: f.name, size: f.size, pageCount: 0, data: f, previewUrls: [] }]);
   };
 
   return (
@@ -56,7 +57,7 @@ export const OfficeToPdfView: React.FC<OfficeToPdfViewProps> = ({ toolId, accept
       onReset={undefined}
       resultNote={runner.result?.pageCount ? `${runner.result.pageCount} pages` : undefined}
       actionButtonLabel="Convert again"
-      onExecuteAction={() => void runner.run(action, { fileBuffer: file.rawBuffer.slice(0), fileName: file.name })}
+      onExecuteAction={() => void convert(file)}
       emptyState={
         <div className="space-y-3">
           <GenericFileInput accept={accept} title={title} subtitle={subtitle} onFileAccepted={(f) => void onFile(f)} />
@@ -68,7 +69,7 @@ export const OfficeToPdfView: React.FC<OfficeToPdfViewProps> = ({ toolId, accept
       {runner.result && pages.length > 0 ? (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-x-4 gap-y-6">
           {pages.slice(0, 24).map((p, i) => (
-            <PageThumb key={i} src={p.url} aspect={p.width / p.height} width={150} label={i + 1} />
+            <PageThumb key={i} src={p.url} viewRef={thumbRef(i)} aspect={p.width / p.height} width={150} label={i + 1} />
           ))}
         </div>
       ) : (

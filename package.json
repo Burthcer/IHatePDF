@@ -1,7 +1,7 @@
 {
   "name": "ihatepdf",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "IHatePDF - 100% client-side, zero-server PDF tools suite.",
   "author": "IHatePDF",
   "type": "module",
@@ -13,7 +13,7 @@
     "test": "tsx scripts/verify-conversions.ts && tsx scripts/test-editor-and-tools.ts",
     "preview": "vite preview",
     "electron:dev": "electron .",
-    "build:exe": "npm run build && electron-builder --win nsis --publish never",
+    "build:exe": "npm run build && node scripts/check-win-build.mjs && electron-builder --win nsis --publish never && node scripts/check-win-build.mjs --after",
     "predev": "node scripts/copy-pdfjs-assets.mjs",
     "prebuild": "node scripts/copy-pdfjs-assets.mjs",
     "postinstall": "node scripts/copy-pdfjs-assets.mjs",
@@ -38,6 +38,7 @@
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "regenerator-runtime": "^0.14.1",
     "tailwind-merge": "^3.6.0",
     "xlsx": "^0.18.5"
   },

@@ -15,7 +15,10 @@ import { fontForText } from '../../services/fonts';
 import { withViewerFrame } from '../../services/pageOverlay';
 import { hexToRgb01, rotatedPlacement } from '../../services/pdfStampPosition';
 import { parsePageRanges, rangesToPages } from '../../services/pageRanges';
-import type { WorkerRequest, WatermarkPayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
+import type { WatermarkPayload, ProcessedPdfResult } from '../../types/worker';
+import { emitPdf } from '../../services/workerEmit';
+import { serveTask } from '../../services/workerTask';
+import type { OutputSink } from '../../services/workerOutput';
 
 function moveLastStreamToFront(page: PDFPage): void {
   const contents = page.node.get(PDFName.of('Contents'));
@@ -29,7 +32,8 @@ function moveLastStreamToFront(page: PDFPage): void {
 
 export async function applyWatermark(
   payload: WatermarkPayload,
-  onProgress?: (progress: number, stage: string) => void
+  onProgress?: (progress: number, stage: string) => void,
+  sink?: OutputSink
 ): Promise<ProcessedPdfResult> {
   const { fileBuffer, fileName, mode, text, imageBytes, imageType, fontSize, color, opacity, rotationDegrees, position, layer } = payload;
   if (!fileBuffer) throw new Error('No PDF buffer provided.');
@@ -110,29 +114,13 @@ export async function applyWatermark(
   });
 
   onProgress?.(90, 'Saving document...');
-  const outBytes = await pdfDoc.save({ useObjectStreams: true });
-  const resultBuffer = outBytes.buffer.slice(outBytes.byteOffset, outBytes.byteOffset + outBytes.byteLength) as ArrayBuffer;
+  const out = await emitPdf(pdfDoc, sink, { useObjectStreams: true });
   onProgress?.(100, 'Watermark applied.');
   return {
     fileName: `${fileName.replace(/\.[^/.]+$/, '')}_watermarked.pdf`,
-    buffer: resultBuffer,
-    size: resultBuffer.byteLength,
+    ...out,
     pageCount: pages.length,
   };
 }
 
-if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
-  (self as any).addEventListener('message', async (event: MessageEvent<WorkerRequest<WatermarkPayload>>) => {
-    const { id, action, payload } = event.data;
-    if (action !== 'WATERMARK_PDF') return;
-    try {
-      const result = await applyWatermark(payload, (progress, stage) => {
-        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-        (self as any).postMessage(msg);
-      });
-      (self as any).postMessage({ type: 'RESPONSE', payload: { id, success: true, data: result } }, [result.buffer]);
-    } catch (err) {
-      (self as any).postMessage({ type: 'RESPONSE', payload: { id, success: false, error: err instanceof Error ? err.message : 'Failed to watermark PDF document' } });
-    }
-  });
-}
+serveTask<WatermarkPayload, ProcessedPdfResult>('WATERMARK_PDF', (p, ctx) => applyWatermark(p, ctx.progress, ctx.sink()), 'Failed to watermark PDF document');

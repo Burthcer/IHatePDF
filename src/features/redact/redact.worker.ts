@@ -9,11 +9,16 @@
  * Document metadata can be stripped as well.
  */
 
-import { PDFDocument, PDFName } from 'pdf-lib';
+import { PDFDocument, PDFName, type PDFPage } from 'pdf-lib';
+import { appendPages, newPage } from '../../services/pageTree';
 import { openPdf } from '../../services/pdfLoader';
-import type { WorkerRequest, RedactPdfPayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
+import type { RedactPdfPayload, ProcessedPdfResult } from '../../types/worker';
+import { drawImageFull, embedJpegSource } from '../../services/lazyImage';
+import { emitPdf } from '../../services/workerEmit';
+import { serveTask } from '../../services/workerTask';
+import type { OutputSink } from '../../services/workerOutput';
 
-export async function redactPdf(payload: RedactPdfPayload, onProgress?: (p: number, s: string) => void): Promise<ProcessedPdfResult> {
+export async function redactPdf(payload: RedactPdfPayload, onProgress?: (p: number, s: string) => void, sink?: OutputSink): Promise<ProcessedPdfResult> {
   const { fileBuffer, fileName, pages, stripMetadata } = payload;
   if (!pages.length) throw new Error('Mark at least one area to redact.');
 
@@ -26,17 +31,20 @@ export async function redactPdf(payload: RedactPdfPayload, onProgress?: (p: numb
   const copied = await out.copyPages(source, keep);
   const byIndex = new Map(keep.map((idx, k) => [idx, copied[k]]));
 
+  const ordered: PDFPage[] = [];
   for (let i = 0; i < total; i++) {
     const r = replaced.get(i);
     if (!r) {
-      out.addPage(byIndex.get(i)!);
+      ordered.push(byIndex.get(i)!);
       continue;
     }
     onProgress?.(20 + Math.round((i / total) * 65), `Rebuilding page ${i + 1}...`);
-    const image = await out.embedJpg(new Uint8Array(r.jpeg));
-    const page = out.addPage([r.widthPt, r.heightPt]);
-    page.drawImage(image, { x: 0, y: 0, width: r.widthPt, height: r.heightPt });
+    const image = await embedJpegSource(out, r.jpeg);
+    const page = newPage(out, [r.widthPt, r.heightPt]);
+    drawImageFull(page, image, r.widthPt, r.heightPt);
+    ordered.push(page);
   }
+  appendPages(out, ordered);
 
   if (stripMetadata) {
     out.catalog.delete(PDFName.of('Metadata'));
@@ -52,30 +60,14 @@ export async function redactPdf(payload: RedactPdfPayload, onProgress?: (p: numb
   }
 
   onProgress?.(92, 'Saving PDF...');
-  const bytes = await out.save({ useObjectStreams: true });
-  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const written = await emitPdf(out, sink, { useObjectStreams: true });
   onProgress?.(100, 'Done.');
   return {
     fileName: `${fileName.replace(/\.[^/.]+$/, '')}_redacted.pdf`,
-    buffer,
-    size: buffer.byteLength,
+    ...written,
     pageCount: total,
     note: `${pages.length} page${pages.length === 1 ? '' : 's'} flattened; ${total - pages.length} left untouched.`,
   };
 }
 
-if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
-  self.addEventListener('message', async (event: MessageEvent<WorkerRequest<RedactPdfPayload>>) => {
-    const { id, action, payload } = event.data;
-    if (action !== 'REDACT_PDF') return;
-    try {
-      const result = await redactPdf(payload, (progress, stage) => {
-        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-        self.postMessage(msg);
-      });
-      (self as any).postMessage({ type: 'RESPONSE', payload: { id, success: true, data: result } }, [result.buffer]);
-    } catch (err) {
-      self.postMessage({ type: 'RESPONSE', payload: { id, success: false, error: err instanceof Error ? err.message : 'Failed to redact PDF' } });
-    }
-  });
-}
+serveTask<RedactPdfPayload, ProcessedPdfResult>('REDACT_PDF', (p, ctx) => redactPdf(p, ctx.progress, ctx.sink()), 'Failed to redact PDF');

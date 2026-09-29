@@ -9,12 +9,16 @@
  * every other tool receives a plain PDF.
  */
 
-import { openPdf, PdfPasswordError, wasEncrypted } from '../../services/pdfLoader';
-import type { WorkerRequest, UnlockPayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
+import { openPdf, wasEncrypted } from '../../services/pdfLoader';
+import type { UnlockPayload, ProcessedPdfResult } from '../../types/worker';
+import { emitPdf } from '../../services/workerEmit';
+import { serveTask } from '../../services/workerTask';
+import type { OutputSink } from '../../services/workerOutput';
 
 export async function unlockPdf(
   payload: UnlockPayload,
-  onProgress?: (progress: number, stage: string) => void
+  onProgress?: (progress: number, stage: string) => void,
+  sink?: OutputSink
 ): Promise<ProcessedPdfResult & { wasEncrypted: boolean }> {
   const { fileBuffer, fileName, password } = payload;
   if (!fileBuffer) throw new Error('No PDF buffer provided to unlock.');
@@ -24,36 +28,16 @@ export async function unlockPdf(
   const encrypted = wasEncrypted(pdfDoc);
 
   onProgress?.(70, encrypted ? 'Writing an unencrypted copy...' : 'This document was not encrypted — saving a clean copy...');
-  const bytes = await pdfDoc.save({ useObjectStreams: true });
-  const resultBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const out = await emitPdf(pdfDoc, sink, { useObjectStreams: true });
 
   onProgress?.(100, 'Unlocked.');
   const cleanBaseName = fileName.replace(/\.[^/.]+$/, '');
   return {
     fileName: `${cleanBaseName}_unlocked.pdf`,
-    buffer: resultBuffer,
-    size: resultBuffer.byteLength,
+    ...out,
     pageCount: pdfDoc.getPageCount(),
     wasEncrypted: encrypted,
   };
 }
 
-if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
-  (self as any).addEventListener('message', async (event: MessageEvent<WorkerRequest<UnlockPayload>>) => {
-    const { id, action, payload } = event.data;
-    if (action !== 'UNLOCK_PDF') return;
-
-    try {
-      const result = await unlockPdf(payload, (progress, stage) => {
-        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-        (self as any).postMessage(msg);
-      });
-      const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = { type: 'RESPONSE', payload: { id, success: true, data: result } };
-      (self as any).postMessage(responseMsg, [result.buffer]);
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to unlock PDF document';
-      const code = err instanceof PdfPasswordError ? err.code : undefined;
-      (self as any).postMessage({ type: 'RESPONSE', payload: { id, success: false, error: errorMsg, code } });
-    }
-  });
-}
+serveTask<UnlockPayload, ProcessedPdfResult>('UNLOCK_PDF', (p, ctx) => unlockPdf(p, ctx.progress, ctx.sink()), 'Failed to unlock PDF document');

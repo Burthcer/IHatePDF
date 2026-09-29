@@ -30,7 +30,40 @@ export const PDFJS_DOCUMENT_OPTIONS = {
   isEvalSupported: false,
 };
 
-export function openPdfJsDocument(data: ArrayBuffer | Uint8Array, password?: string) {
+/**
+ * Feeds pdf.js from a (disk-backed) Blob on demand, so a large PDF is never
+ * read into memory whole — only the parts needed for what's rendered.
+ */
+class BlobRangeTransport extends pdfjsLib.PDFDataRangeTransport {
+  constructor(private readonly blob: Blob) {
+    super(blob.size, null);
+  }
+
+  override requestDataRange(begin: number, end: number) {
+    this.blob
+      .slice(begin, end)
+      .arrayBuffer()
+      .then((buf) => this.onDataRange(begin, new Uint8Array(buf)))
+      .catch((err) => console.warn('PDF range read failed (document closed?)', err));
+  }
+}
+
+/** Above this, pdf.js only fetches the ranges it actually needs. */
+const FETCH_ON_DEMAND_BYTES = 16 * 1024 * 1024;
+
+export type PdfJsSource = ArrayBuffer | Uint8Array | Blob;
+
+export function openPdfJsDocument(data: PdfJsSource, password?: string) {
+  if (data instanceof Blob) {
+    return pdfjsLib.getDocument({
+      ...PDFJS_DOCUMENT_OPTIONS,
+      range: new BlobRangeTransport(data),
+      rangeChunkSize: 256 * 1024,
+      disableAutoFetch: data.size >= FETCH_ON_DEMAND_BYTES,
+      disableStream: true,
+      password,
+    });
+  }
   const bytes = data instanceof Uint8Array ? data.slice() : new Uint8Array(data.slice(0));
   return pdfjsLib.getDocument({ ...PDFJS_DOCUMENT_OPTIONS, data: bytes, password });
 }

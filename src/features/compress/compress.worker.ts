@@ -23,7 +23,12 @@ import { deflate } from 'pako';
 import { openPdf } from '../../services/pdfLoader';
 import { interpretPage } from '../editPdf/engine/interpreter';
 import { configureJpx, decodePdfImage, type DecodedImage } from './imageCodec';
-import type { WorkerRequest, CompressPayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
+import type { CompressPayload, ProcessedPdfResult, PdfInput } from '../../types/worker';
+import { measurePdf } from '../../services/pdfStreamSave';
+import { emitInput, emitPdf, inputSize } from '../../services/workerEmit';
+import { serveTask } from '../../services/workerTask';
+import { memoryBudget, memoryTight } from '../../services/workerMemory';
+import type { OutputSink } from '../../services/workerOutput';
 
 type Level = CompressPayload['level'];
 interface Setting {
@@ -125,7 +130,7 @@ function collectJobs(doc: PDFDocument): ImageJob[] {
     const width = (d.lookup(PDFName.of('Width')) as PDFNumber | undefined)?.asNumber?.() ?? 0;
     const height = (d.lookup(PDFName.of('Height')) as PDFNumber | undefined)?.asNumber?.() ?? 0;
     if (width < 32 || height < 32) continue;
-    const size = obj.getContents().length;
+    const size = obj.getContentsSize();
     if (size < 8_000) continue;
     const owner = masks.get(ref);
     jobs.push({ ref, stream: obj, originalSize: size, width, height, isMask: !!owner, shownPt: shown.get(owner ?? ref) ?? null });
@@ -221,12 +226,26 @@ function applyEncoded(doc: PDFDocument, job: ImageJob, enc: Encoded) {
   doc.context.assign(job.ref, PDFRawStream.of(dict, enc.bytes));
 }
 
+/**
+ * Recompressing an image holds its pixels several times over (decoded,
+ * canvas, downscaling steps). Images that would need more than a third of the
+ * app's memory budget are left as they are rather than risk the PC's memory.
+ */
+function tooBigToDecode(job: ImageJob): boolean {
+  return job.width * job.height * 4 * 3 > memoryBudget() / 3;
+}
+const skippedHuge = new Set<PDFRef>();
+
 /** Decodes each job once per pass (bounded memory) and encodes it at `s`. */
 async function encodeAll(jobs: ImageJob[], s: Setting, report: (i: number) => void): Promise<Map<PDFRef, Encoded>> {
   const out = new Map<PDFRef, Encoded>();
   for (let i = 0; i < jobs.length; i++) {
     report(i);
     const job = jobs[i];
+    if (tooBigToDecode(job)) {
+      skippedHuge.add(job.ref);
+      continue;
+    }
     try {
       const img = await decodeCached(job);
       if (!img) continue;
@@ -239,15 +258,18 @@ async function encodeAll(jobs: ImageJob[], s: Setting, report: (i: number) => vo
   return out;
 }
 
-// Keep recently decoded images around for the custom-size search (bounded).
+// Keep decoded images around for the custom-size search, which encodes each
+// image several times (bounded). Single-pass presets don't cache.
 const decodeCache = new Map<PDFRef, DecodedImage | null>();
 let cacheBytes = 0;
-const CACHE_LIMIT = 400 * 1024 * 1024;
+let cacheEnabled = false;
+/** At most 256 MB, and at most an eighth of the memory budget; off when memory is tight. */
+const cacheLimit = () => (memoryTight() ? 0 : Math.min(256 * 1024 * 1024, memoryBudget() / 8));
 async function decodeCached(job: ImageJob): Promise<DecodedImage | null> {
   if (decodeCache.has(job.ref)) return decodeCache.get(job.ref)!;
   const img = await decodePdfImage(job.stream);
   const size = img ? img.rgba.byteLength : 0;
-  if (cacheBytes + size <= CACHE_LIMIT) {
+  if (cacheEnabled && cacheBytes + size <= cacheLimit()) {
     decodeCache.set(job.ref, img);
     cacheBytes += size;
   }
@@ -256,22 +278,28 @@ async function decodeCached(job: ImageJob): Promise<DecodedImage | null> {
 function clearCache() {
   decodeCache.clear();
   cacheBytes = 0;
+  cacheEnabled = false;
 }
 
 // ------------------------------------------------------------------ structure
 
-function streamKey(stream: PDFRawStream): string {
-  const c = stream.getContents();
-  let h = 0x811c9dc5;
-  const step = Math.max(1, Math.floor(c.length / 4096));
-  for (let i = 0; i < c.length; i += step) h = Math.imul(h ^ c[i], 16777619);
+/** Size + dictionary: cheap, and enough to rule out almost every non-duplicate. */
+function shapeKey(stream: PDFRawStream): string {
   const entries = stream.dict
     .entries()
     .filter(([k]) => k.decodeText() !== 'Length')
     .map(([k, v]) => `${k.decodeText()}=${v.toString()}`)
     .sort()
     .join('|');
-  return `${c.length}:${h >>> 0}:${entries}`;
+  return `${stream.getContentsSize()}:${entries}`;
+}
+
+function sampleHash(stream: PDFRawStream): number {
+  const c = stream.getContents();
+  let h = 0x811c9dc5;
+  const step = Math.max(1, Math.floor(c.length / 4096));
+  for (let i = 0; i < c.length; i += step) h = Math.imul(h ^ c[i], 16777619);
+  return h >>> 0;
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
@@ -299,18 +327,29 @@ function remapRefs(obj: PDFObject, map: Map<PDFRef, PDFRef>): void {
 
 function dedupeStreams(doc: PDFDocument): number {
   const context = doc.context;
-  const firstByKey = new Map<string, PDFRef>();
-  const map = new Map<PDFRef, PDFRef>();
+  const byShape = new Map<string, PDFRef[]>();
   for (const [ref, obj] of context.enumerateIndirectObjects()) {
     if (!(obj instanceof PDFRawStream)) continue;
-    const key = streamKey(obj);
-    const first = firstByKey.get(key);
-    if (!first) {
-      firstByKey.set(key, ref);
-      continue;
+    const key = shapeKey(obj);
+    const group = byShape.get(key);
+    if (group) group.push(ref);
+    else byShape.set(key, [ref]);
+  }
+  // Only streams that look alike are read and compared.
+  const map = new Map<PDFRef, PDFRef>();
+  for (const group of byShape.values()) {
+    if (group.length < 2) continue;
+    const firstByHash = new Map<number, PDFRef>();
+    for (const ref of group) {
+      const obj = context.lookup(ref) as PDFRawStream;
+      const hash = sampleHash(obj);
+      const first = firstByHash.get(hash);
+      if (!first) {
+        firstByHash.set(hash, ref);
+        continue;
+      }
+      if (sameBytes((context.lookup(first) as PDFRawStream).getContents(), obj.getContents())) map.set(ref, first);
     }
-    const firstObj = context.lookup(first);
-    if (firstObj instanceof PDFRawStream && sameBytes(firstObj.getContents(), obj.getContents())) map.set(ref, first);
   }
   if (map.size === 0) return 0;
   for (const [, obj] of context.enumerateIndirectObjects()) remapRefs(obj, map);
@@ -365,7 +404,7 @@ function losslessCleanup(doc: PDFDocument, level: Level): { deduped: number; rem
   const deduped = dedupeStreams(doc);
   const removed = removeUnreachable(doc);
   for (const [ref, obj] of context.enumerateIndirectObjects()) {
-    if (obj instanceof PDFRawStream && !obj.dict.has(PDFName.of('Filter')) && obj.getContents().length > 256) {
+    if (obj instanceof PDFRawStream && !obj.dict.has(PDFName.of('Filter')) && obj.getContentsSize() > 256) {
       const dict = obj.dict.clone(context);
       dict.set(PDFName.of('Filter'), PDFName.of('FlateDecode'));
       dict.delete(PDFName.of('DecodeParms'));
@@ -375,35 +414,33 @@ function losslessCleanup(doc: PDFDocument, level: Level): { deduped: number; rem
   return { deduped, removed };
 }
 
-async function saveBytes(doc: PDFDocument): Promise<Uint8Array> {
-  return doc.save({ useObjectStreams: true, addDefaultPage: false, updateFieldAppearances: false });
-}
+const SAVE_OPTIONS = { useObjectStreams: true, addDefaultPage: false, updateFieldAppearances: false };
 
-function toBuffer(b: Uint8Array): ArrayBuffer {
-  return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
-}
+/** The saved size, computed without building the file. */
+const measure = (doc: PDFDocument) => measurePdf(doc, SAVE_OPTIONS);
 
 const fmt = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(2)} MB` : `${Math.round(n / 1024)} KB`);
 
 // ------------------------------------------------------------------ main
 
 export async function compressPdf(
-  fileBuffer: ArrayBuffer,
+  fileBuffer: PdfInput,
   fileName: string,
   level: Level = 'recommended',
   onProgress?: Progress,
-  targetBytes?: number
+  targetBytes?: number,
+  sink?: OutputSink
 ): Promise<ProcessedPdfResult & { note?: string }> {
   if (!fileBuffer) throw new Error('No PDF buffer provided for compression.');
-  const originalSize = fileBuffer.byteLength;
-  const originalCopy = fileBuffer.slice(0);
+  const originalSize = inputSize(fileBuffer);
+  skippedHuge.clear();
   const base = fileName.replace(/\.[^/.]+$/, '');
   const outName = `${base}_compressed.pdf`;
   const progress = onProgress ?? (() => undefined);
 
   if (level === 'custom' && (!targetBytes || targetBytes <= 0)) throw new Error('Choose a target size.');
   if (level === 'custom' && targetBytes! >= originalSize) {
-    return { fileName: outName, buffer: originalCopy, size: originalSize, note: `The file is already ${fmt(originalSize)} — under the ${fmt(targetBytes!)} target, so it's unchanged.` };
+    return { fileName: outName, ...(await emitInput(fileBuffer, sink)), note: `The file is already ${fmt(originalSize)} — under the ${fmt(targetBytes!)} target, so it's unchanged.` };
   }
 
   progress(5, 'Reading document...');
@@ -422,50 +459,48 @@ export async function compressPdf(
       chosen = await encodeAll(jobs, PRESETS[level], (i) => progress(20 + Math.round((i / Math.max(1, jobs.length)) * 65), `Recompressing image ${i + 1} of ${jobs.length}...`));
     } else {
       // Estimate the non-image weight once, then binary-search the ladder.
-      const cleaned = (await saveBytes(doc)).byteLength;
-      const other = Math.max(0, cleaned - imageTotal);
+      // Only the encodings of the best setting found so far are kept.
+      cacheEnabled = true;
+      const other = Math.max(0, (await measure(doc)) - imageTotal);
       const target = targetBytes!;
-      const results = new Map<number, Map<PDFRef, Encoded>>();
       const estimate = (m: Map<PDFRef, Encoded>) => other + jobs.reduce((n, j) => n + (m.get(j.ref)?.bytes.length ?? j.originalSize), 0);
       let passes = 0;
-      const evaluate = async (idx: number) => {
-        if (!results.has(idx)) {
-          passes++;
-          const s = LADDER[idx];
-          results.set(idx, await encodeAll(jobs, s, (i) => progress(Math.min(88, 20 + passes * 12), `Trying ${s.dpi} dpi / ${Math.round(s.quality * 100)}% quality (image ${i + 1} of ${jobs.length})...`)));
-        }
-        return results.get(idx)!;
+      const evaluate = (idx: number) => {
+        passes++;
+        const s = LADDER[idx];
+        return encodeAll(jobs, s, (i) => progress(Math.min(88, 20 + passes * 12), `Trying ${s.dpi} dpi / ${Math.round(s.quality * 100)}% quality (image ${i + 1} of ${jobs.length})...`));
       };
       let lo = 0;
       let hi = LADDER.length - 1;
       let best = -1;
-      if (other >= target) {
-        best = LADDER.length - 1;
-      } else {
+      let bestMap: Map<PDFRef, Encoded> | null = null;
+      if (other < target) {
         while (lo <= hi) {
           const mid = (lo + hi) >> 1;
-          if (estimate(await evaluate(mid)) <= target) {
+          const m = await evaluate(mid);
+          if (estimate(m) <= target) {
             best = mid;
+            bestMap = m;
             hi = mid - 1;
           } else {
             lo = mid + 1;
           }
         }
-        if (best === -1) best = LADDER.length - 1;
       }
-      chosen = await evaluate(best);
+      if (best === -1) best = LADDER.length - 1;
+      chosen = bestMap ?? (await evaluate(best));
+      bestMap = null;
       // The estimate ignores object overhead; step down while the real file is too big.
       for (;;) {
         chosen.forEach((enc, ref) => applyEncoded(doc, jobs.find((j) => j.ref === ref)!, enc));
-        const bytes = await saveBytes(doc);
-        if (bytes.byteLength <= target || best >= LADDER.length - 1) {
-          const reached = bytes.byteLength <= target;
-          note = reached
-            ? `Target ${fmt(target)} reached with images at ${LADDER[best].dpi} dpi, ${Math.round(LADDER[best].quality * 100)}% quality.`
-            : `Couldn't get down to ${fmt(target)} — this is as small as it goes without destroying legibility (${fmt(bytes.byteLength)}). Text, fonts and vector graphics can't be shrunk further.`;
+        const size = await measure(doc);
+        if (size <= target || best >= LADDER.length - 1) {
+          note =
+            size <= target
+              ? `Target ${fmt(target)} reached with images at ${LADDER[best].dpi} dpi, ${Math.round(LADDER[best].quality * 100)}% quality.`
+              : `Couldn't get down to ${fmt(target)} — this is as small as it goes without destroying legibility (${fmt(size)}). Text, fonts and vector graphics can't be shrunk further.`;
           clearCache();
-          progress(100, 'Done.');
-          return finish(bytes);
+          return finish(size);
         }
         best++;
         chosen = await evaluate(best);
@@ -476,17 +511,16 @@ export async function compressPdf(
   }
 
   chosen.forEach((enc, ref) => applyEncoded(doc, jobs.find((j) => j.ref === ref)!, enc));
-  progress(92, 'Writing optimized file...');
-  const bytes = await saveBytes(doc);
-  progress(100, 'Done.');
-  return finish(bytes);
+  return finish(await measure(doc));
 
-  function finish(bytes: Uint8Array): ProcessedPdfResult & { note?: string } {
-    if (bytes.byteLength >= originalSize) {
+  async function finish(size: number): Promise<ProcessedPdfResult & { note?: string }> {
+    if (size >= originalSize) {
+      progress(95, 'Keeping the original...');
+      const out = await emitInput(fileBuffer, sink);
+      progress(100, 'Done.');
       return {
         fileName: outName,
-        buffer: originalCopy,
-        size: originalSize,
+        ...out,
         pageCount,
         note:
           jobs.length === 0 && !canEncode()
@@ -494,12 +528,17 @@ export async function compressPdf(
             : 'Nothing in this file could be made smaller — it has no oversized images and no duplicate data. The original is returned unchanged.',
       };
     }
+    progress(92, 'Writing optimized file...');
     const parts = [
       chosen.size ? `${chosen.size} of ${jobs.length} image${jobs.length === 1 ? '' : 's'} recompressed` : jobs.length ? 'images already optimal' : '',
+      skippedHuge.size ? `${skippedHuge.size} very large image${skippedHuge.size === 1 ? '' : 's'} left as ${skippedHuge.size === 1 ? 'is' : 'they are'} to stay within this PC's memory` : '',
       deduped ? `${deduped} duplicate${deduped === 1 ? '' : 's'} merged` : '',
       removed ? `${removed} unused object${removed === 1 ? '' : 's'} dropped` : '',
     ].filter(Boolean);
-    return { fileName: outName, buffer: toBuffer(bytes), size: bytes.byteLength, pageCount, note: [note, parts.join(' · ')].filter(Boolean).join(' ') || undefined };
+    chosen = new Map(); // the encodings now live in the document
+    const out = await emitPdf(doc, sink, SAVE_OPTIONS);
+    progress(100, 'Done.');
+    return { fileName: outName, ...out, pageCount, note: [note, parts.join(' · ')].filter(Boolean).join(' ') || undefined };
   }
 }
 
@@ -509,24 +548,10 @@ if (typeof self !== 'undefined' && typeof (self as { addEventListener?: unknown 
   } catch {
     // JPEG 2000 images will simply be left alone
   }
-  self.addEventListener('message', async (event: MessageEvent<WorkerRequest<CompressPayload>>) => {
-    const { id, action, payload } = event.data;
-    if (action !== 'COMPRESS_PDF') return;
-    try {
-      const result = await compressPdf(
-        payload.fileBuffer,
-        payload.fileName,
-        payload.level,
-        (progress, stage) => {
-          const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-          self.postMessage(msg);
-        },
-        payload.targetBytes
-      );
-      (self as unknown as Worker).postMessage({ type: 'RESPONSE', payload: { id, success: true, data: result } }, [result.buffer]);
-    } catch (err) {
-      const msg: WorkerIncomingMessage = { type: 'RESPONSE', payload: { id, success: false, error: err instanceof Error ? err.message : 'Failed to compress PDF document' } };
-      self.postMessage(msg);
-    }
-  });
 }
+
+serveTask<CompressPayload, ProcessedPdfResult>(
+  'COMPRESS_PDF',
+  (p, ctx) => compressPdf(p.fileBuffer, p.fileName, p.level, ctx.progress, p.targetBytes, ctx.sink()),
+  'Failed to compress PDF document'
+);

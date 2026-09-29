@@ -10,8 +10,20 @@ const listen = (channel) => (cb) => {
 
 contextBridge.exposeInMainWorld('ihpDesktop', {
   onSaved: listen('ihp:saved'),
+  memory: {
+    info: () => ipcRenderer.invoke('ihp:mem-info'),
+    onChange: listen('ihp:mem'),
+  },
   showInFolder(file) {
     ipcRenderer.send('ihp:show-in-folder', file);
+  },
+  output: {
+    create: () => ipcRenderer.invoke('ihp:out-create'),
+    write: (handle, chunk) => ipcRenderer.invoke('ihp:out-write', handle, chunk),
+    close: (handle, discard) => ipcRenderer.invoke('ihp:out-close', handle, !!discard),
+    save: (file, name) => ipcRenderer.invoke('ihp:out-save', file, name),
+    discard: (file) => ipcRenderer.invoke('ihp:out-discard', file),
+    read: (file) => ipcRenderer.invoke('ihp:out-read', file),
   },
   share: {
     pick: (kind) => ipcRenderer.invoke('ihp:share-pick', kind),
