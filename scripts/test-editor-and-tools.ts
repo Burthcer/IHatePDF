@@ -371,6 +371,21 @@ async function main() {
     const t = await pdfText(r.buffer);
     assert(!t[0].includes('Quarterly') && t[1].includes('rotated'), 'redaction scope wrong');
   });
+  await check('Redact writes pages one at a time (asks for each render as it writes it)', async () => {
+    const jpeg = new Uint8Array(await readFile(resolve('test-fixtures/misc/photo1.jpg')));
+    const asked: number[] = [];
+    const ask = async <T,>(what: string, data: unknown): Promise<T> => {
+      assert(what === 'redacted-page', `unexpected ask ${what}`);
+      asked.push((data as { pageIndex: number }).pageIndex);
+      return { jpeg: jpeg.slice().buffer, width: 640, height: 480 } as T;
+    };
+    const r = await redactPdf({ fileBuffer: ab(complex), fileName: 'c.pdf', pages: [0, 2].map((pageIndex) => ({ pageIndex, widthPt: 612, heightPt: 792 })), stripMetadata: true }, undefined, undefined, ask);
+    assert(JSON.stringify(asked) === '[0,2]', `asked for ${JSON.stringify(asked)}`);
+    const t = await pdfText(r.buffer);
+    assert(t.length === 3 && !t[0].includes('Quarterly') && t[1].includes('rotated'), 'redaction scope wrong');
+    const d = await PDFDocument.load(new Uint8Array(r.buffer!), { throwOnInvalidObject: true });
+    assert(d.getPageCount() === 3, 'pdf-lib could not reopen the output');
+  });
   await check('PDF/A: output intent, XMP and ID present', async () => {
     const r = await convertToPdfa({ fileBuffer: ab(complex), fileName: 'c.pdf' });
     const d = await PDFDocument.load(r.buffer);

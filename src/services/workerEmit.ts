@@ -3,8 +3,8 @@
  * the app (sink given), or as one buffer (tests and small in-memory outputs).
  */
 
-import type { PDFDocument } from 'pdf-lib';
-import { saveToBuffer, saveToSink, type StreamSaveOptions } from './pdfStreamSave';
+import type { PDFDocument, PDFRef } from 'pdf-lib';
+import { saveSequential, saveToBuffer, saveToSink, type DeferredStream, type StreamSaveOptions } from './pdfStreamSave';
 import { copyInputToOutput, type OutputSink } from './workerOutput';
 import type { PdfInput, ToolOutput } from '../types/worker';
 
@@ -33,6 +33,24 @@ export async function emitBytes(bytes: Uint8Array, sink: OutputSink | undefined)
   }
   const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? (bytes.buffer as ArrayBuffer) : (bytes.slice().buffer as ArrayBuffer);
   return { buffer, size: bytes.byteLength };
+}
+
+/** Streams `doc` front to back, producing `deferred` objects as they're reached (see saveSequential). */
+export async function emitSequential(doc: PDFDocument, sink: OutputSink | undefined, deferred: Map<PDFRef, DeferredStream>): Promise<Emitted> {
+  if (sink) {
+    await saveSequential(doc, sink, deferred);
+    const output = await sink.close();
+    return { output, size: output.size };
+  }
+  const parts: Uint8Array[] = [];
+  const size = await saveSequential(doc, { write: (c) => void parts.push(c.slice()) }, deferred);
+  const bytes = new Uint8Array(size);
+  let o = 0;
+  for (const p of parts) {
+    bytes.set(p, o);
+    o += p.length;
+  }
+  return { buffer: bytes.buffer as ArrayBuffer, size };
 }
 
 /** Hands back the input file unchanged (e.g. "nothing could be made smaller"). */

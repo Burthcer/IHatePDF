@@ -4,7 +4,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useWorkerBridge } from './useWorkerBridge';
+import { useWorkerBridge, type UseWorkerBridgeOptions } from './useWorkerBridge';
 import { discardResult, saveResult, type ResultData } from '../services/toolOutput';
 import type { ToolOutput } from '../types/worker';
 
@@ -20,8 +20,8 @@ export interface RunnableResult {
 /** The result's bytes, wherever they are. */
 export const dataOf = (r: RunnableResult | null | undefined): ResultData | null => r?.output ?? r?.buffer ?? null;
 
-export function useToolRunner<R extends RunnableResult>(workerFactory: () => Worker) {
-  const bridge = useWorkerBridge<R>(workerFactory);
+export function useToolRunner<R extends RunnableResult>(workerFactory: () => Worker, options: UseWorkerBridgeOptions = {}) {
+  const bridge = useWorkerBridge<R>(workerFactory, options);
   const [result, setResultState] = useState<R | null>(null);
   const { runTask, resetState } = bridge;
   const current = useRef<R | null>(null);

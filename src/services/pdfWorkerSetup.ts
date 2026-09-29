@@ -11,6 +11,7 @@
 import './polyfills';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from './pdfjs.worker.ts?worker&url';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -48,24 +49,51 @@ class BlobRangeTransport extends pdfjsLib.PDFDataRangeTransport {
   }
 }
 
-/** Above this, pdf.js only fetches the ranges it actually needs. */
+/**
+ * Above this, pdf.js reads the file from disk in ranges, only as needed.
+ * Smaller files are simply read whole: faster, and they're small.
+ */
 const FETCH_ON_DEMAND_BYTES = 16 * 1024 * 1024;
 
 export type PdfJsSource = ArrayBuffer | Uint8Array | Blob;
 
-export function openPdfJsDocument(data: PdfJsSource, password?: string) {
-  if (data instanceof Blob) {
-    return pdfjsLib.getDocument({
+/** What the app uses of pdf.js' loading task. */
+export interface PdfJsTask {
+  promise: Promise<PDFDocumentProxy>;
+  destroy(): Promise<void>;
+}
+
+export function openPdfJsDocument(data: PdfJsSource, password?: string): PdfJsTask {
+  if (data instanceof Blob && data.size >= FETCH_ON_DEMAND_BYTES) {
+    const task = pdfjsLib.getDocument({
       ...PDFJS_DOCUMENT_OPTIONS,
       range: new BlobRangeTransport(data),
       rangeChunkSize: 256 * 1024,
-      disableAutoFetch: data.size >= FETCH_ON_DEMAND_BYTES,
+      disableAutoFetch: true,
       disableStream: true,
       password,
     });
+    return { promise: task.promise, destroy: () => task.destroy() };
+  }
+  if (data instanceof Blob) {
+    let task: ReturnType<typeof pdfjsLib.getDocument> | null = null;
+    let destroyed = false;
+    const promise = data.arrayBuffer().then((buf) => {
+      if (destroyed) throw new Error('The document was closed.');
+      task = pdfjsLib.getDocument({ ...PDFJS_DOCUMENT_OPTIONS, data: new Uint8Array(buf), password });
+      return task.promise;
+    });
+    return {
+      promise,
+      destroy: async () => {
+        destroyed = true;
+        await task?.destroy();
+      },
+    };
   }
   const bytes = data instanceof Uint8Array ? data.slice() : new Uint8Array(data.slice(0));
-  return pdfjsLib.getDocument({ ...PDFJS_DOCUMENT_OPTIONS, data: bytes, password });
+  const task = pdfjsLib.getDocument({ ...PDFJS_DOCUMENT_OPTIONS, data: bytes, password });
+  return { promise: task.promise, destroy: () => task.destroy() };
 }
 
 export { pdfjsLib };

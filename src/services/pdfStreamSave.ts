@@ -9,7 +9,7 @@
  * across in chunks without ever being loaded.
  */
 
-import { PDFDocument, PDFName, PDFNumber, PDFStreamWriter, PDFWriter, CharCodes, type PDFObject, type PDFRef } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFNumber, PDFStreamWriter, PDFWriter, CharCodes, type PDFDict, type PDFObject, type PDFRef } from 'pdf-lib';
 import { LazyRawStream } from './lazyPdf';
 
 export interface ChunkSink {
@@ -150,6 +150,81 @@ export async function saveToSink(doc: PDFDocument, sink: ChunkSink, options: Str
   await writeObject(out, plan.trailer);
   await out.flush();
   if (out.written !== plan.size) throw new Error(`PDF writer size mismatch (${out.written} ≠ ${plan.size}).`);
+  return out.written;
+}
+
+/** A stream whose bytes are produced only when the writer gets to it. */
+export interface DeferredStream {
+  /** Called once, when this object is written; returns its dictionary entries and bytes. */
+  produce(): Promise<{ dict: PDFDict; bytes: Uint8Array }>;
+}
+
+/**
+ * Writes `doc` front to back with a classic cross-reference table, so no
+ * object's size has to be known in advance: objects in `deferred` (reserved
+ * with doc.context.nextRef()) are produced one at a time as the writer reaches
+ * them, written, and dropped. Redact uses it so thousands of page images
+ * never exist at once.
+ */
+export async function saveSequential(doc: PDFDocument, sink: ChunkSink, deferred: Map<PDFRef, DeferredStream>): Promise<number> {
+  if (doc.getPageCount() === 0) doc.addPage();
+  await doc.flush();
+  const context = doc.context;
+  const out = new ChunkedOut(sink);
+  const header = new Uint8Array(context.header.sizeInBytes());
+  context.header.copyBytesInto(header, 0);
+  await out.put(header);
+  await out.put(new Uint8Array([CharCodes.Newline, CharCodes.Newline]));
+
+  const objects = new Map<number, [PDFRef, PDFObject | DeferredStream]>();
+  for (const [ref, obj] of context.enumerateIndirectObjects()) objects.set(ref.objectNumber, [ref, obj]);
+  for (const [ref, d] of deferred) objects.set(ref.objectNumber, [ref, d]);
+  const numbers = [...objects.keys()].sort((a, b) => a - b);
+  const offsets = new Map<number, { offset: number; gen: number }>();
+  let n = 0;
+  for (const num of numbers) {
+    const [ref, obj] = objects.get(num)!;
+    offsets.set(num, { offset: out.written, gen: ref.generationNumber });
+    await out.putString(`${ref.objectNumber} ${ref.generationNumber} obj\n`);
+    if (deferred.has(ref)) {
+      const { dict, bytes } = await (obj as DeferredStream).produce();
+      dict.set(PDFName.of('Length'), PDFNumber.of(bytes.length));
+      const d = new Uint8Array(dict.sizeInBytes());
+      dict.copyBytesInto(d, 0);
+      await out.put(d);
+      await out.put(STREAM_START);
+      await out.put(bytes);
+      await out.put(STREAM_END);
+    } else {
+      await writeObject(out, obj as PDFObject);
+    }
+    await out.putString('\nendobj\n\n');
+    if (++n % 500 === 0) await new Promise((r) => setTimeout(r, 0));
+  }
+
+  const size = (numbers[numbers.length - 1] ?? 0) + 1;
+  const xrefOffset = out.written;
+  let xref = `xref\n0 ${size}\n0000000000 65535 f \n`;
+  for (let i = 1; i < size; i++) {
+    const o = offsets.get(i);
+    xref += o ? `${String(o.offset).padStart(10, '0')} ${String(o.gen).padStart(5, '0')} n \n` : '0000000000 00000 f \n';
+    if (xref.length > 1 << 20) {
+      await out.putString(xref);
+      xref = '';
+    }
+  }
+  await out.putString(xref);
+  const info = context.trailerInfo;
+  const trailer = context.obj({ Size: size });
+  if (info.Root) trailer.set(PDFName.of('Root'), info.Root);
+  if (info.Info) trailer.set(PDFName.of('Info'), info.Info as PDFObject);
+  if (info.ID) trailer.set(PDFName.of('ID'), info.ID as PDFObject);
+  const t = new Uint8Array(trailer.sizeInBytes());
+  trailer.copyBytesInto(t, 0);
+  await out.putString('trailer\n');
+  await out.put(t);
+  await out.putString(`\nstartxref\n${xrefOffset}\n%%EOF`);
+  await out.flush();
   return out.written;
 }
 

@@ -1,7 +1,8 @@
 /**
  * The request/progress/response loop every tool worker shares. `run` gets a
- * progress callback and, if the tool writes a file, an output sink that
- * streams it to the page (see workerOutput.ts).
+ * progress callback, an output sink that streams its file to the page (see
+ * workerOutput.ts), and `ask`, for things only the page can do (render a
+ * page with pdf.js and a canvas) — one at a time, when the worker needs them.
  */
 
 import { openOutput, type OutputSink } from './workerOutput';
@@ -13,6 +14,21 @@ export interface TaskContext {
   progress: (progress: number, stage: string) => void;
   /** The output channel for this request (opened on first use). */
   sink: () => OutputSink;
+  /** Asks the page for something (see useWorkerBridge's onAsk) and waits for the answer. */
+  ask: <T>(what: string, data: unknown) => Promise<T>;
+}
+
+const answers = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+if (typeof self !== 'undefined' && typeof (self as { addEventListener?: unknown }).addEventListener === 'function') {
+  self.addEventListener('message', (event: MessageEvent) => {
+    const m = event.data;
+    if (m?.type !== 'ANSWER') return;
+    const waiting = answers.get(m.askId);
+    if (!waiting) return;
+    answers.delete(m.askId);
+    if (m.error) waiting.reject(new Error(m.error));
+    else waiting.resolve(m.result);
+  });
 }
 
 export function serveTask<P, R>(action: string, run: (payload: P, ctx: TaskContext) => Promise<R>, fallbackError: string) {
@@ -25,6 +41,12 @@ export function serveTask<P, R>(action: string, run: (payload: P, ctx: TaskConte
       id,
       progress: (progress, stage) => self.postMessage({ type: 'PROGRESS', payload: { id, progress, stage } }),
       sink: () => (sink ??= openOutput(id)),
+      ask: <T,>(what: string, data: unknown) =>
+        new Promise<T>((resolve, reject) => {
+          const askId = `${id}:${Math.random().toString(36).slice(2)}`;
+          answers.set(askId, { resolve: resolve as (v: unknown) => void, reject });
+          self.postMessage({ type: 'ASK', payload: { id, askId, what, data } });
+        }),
     };
     try {
       const data = await run(payload, ctx);

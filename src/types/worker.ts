@@ -387,6 +387,13 @@ export interface HtmlToPdfPayload {
   title?: string;
 }
 
+/** A redacted page rendered by the page for the Redact worker (JPEG, pixel size). */
+export interface RedactedPageRender {
+  jpeg: ArrayBuffer;
+  width: number;
+  height: number;
+}
+
 export interface RedactionBox {
   pageIndex: number; // 0-based
   /** Viewer-space box in points (origin top-left of the page as displayed). */
@@ -400,8 +407,12 @@ export interface RedactPdfPayload {
   fileBuffer: PdfInput;
   fileName: string;
   /** Pages rebuilt from redacted renders; every other page is copied untouched. */
-  /** Page renders as JPEG Blobs (disk-backed; embedded without being read into memory). */
-  pages: Array<{ pageIndex: number; jpeg: Blob | ArrayBuffer; widthPt: number; heightPt: number }>;
+  /**
+   * Pages rebuilt from redacted renders. Without `jpeg`, the worker asks the
+   * page for each render ('redacted-page') only when it writes that page, so
+   * just one exists at a time.
+   */
+  pages: Array<{ pageIndex: number; jpeg?: Blob | ArrayBuffer; widthPt: number; heightPt: number }>;
   stripMetadata: boolean;
 }
 
