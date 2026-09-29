@@ -4,7 +4,8 @@ import { GenericFileInput } from '../../components/common/GenericFileInput';
 import { ToolLayout } from '../../components/layout/ToolLayout';
 import { Field, IconButton, Notice, Segmented, cn } from '../../components/ui';
 import { useToolRunner } from '../../hooks/useToolRunner';
-import { prepareImage, type PreparedImage } from '../../services/imagePrep';
+import { assertDecodable, prepareImage, type PreparedImage } from '../../services/imagePrep';
+import { MemoryLimitError } from '../../services/memoryGuard';
 import { getTool } from '../../constants/tools';
 import type { PDFFile } from '../../types/pdf';
 import type { ImagePageMargin, ImagePageOrientation, ImagePageSize, ImagesToPdfPayload, ProcessedPdfResult } from '../../types/worker';
@@ -21,6 +22,7 @@ interface Item extends PreparedImage {
 export const ImageToPdfView: React.FC<ImageToPdfViewProps> = ({ onBack }) => {
   const [items, setItems] = useState<Item[]>([]);
   const [failed, setFailed] = useState<string[]>([]);
+  const [tooBig, setTooBig] = useState<string | null>(null);
   const [orientation, setOrientation] = useState<ImagePageOrientation>('auto');
   const [margin, setMargin] = useState<ImagePageMargin>('small');
   const [pageSize, setPageSize] = useState<ImagePageSize>('a4');
@@ -33,8 +35,9 @@ export const ImageToPdfView: React.FC<ImageToPdfViewProps> = ({ onBack }) => {
     for (const f of files) {
       try {
         ready.push({ ...(await prepareImage(f)), id: crypto.randomUUID(), name: f.name });
-      } catch {
-        bad.push(f.name);
+      } catch (err) {
+        if (err instanceof MemoryLimitError) setTooBig(`${f.name}: ${err.message}`);
+        else bad.push(f.name);
       }
     }
     setFailed(bad);
@@ -52,6 +55,18 @@ export const ImageToPdfView: React.FC<ImageToPdfViewProps> = ({ onBack }) => {
   };
 
   const execute = () => {
+    // PNGs are decoded whole to go into the PDF (the image, its alpha and the
+    // compressed copy): one that doesn't fit the memory budget is refused up front.
+    setTooBig(null);
+    for (const i of items) {
+      if (i.type !== 'png') continue;
+      try {
+        assertDecodable(i.width && i.height ? { width: i.width, height: i.height } : null, 3);
+      } catch (err) {
+        setTooBig(`${i.name}: ${err instanceof Error ? err.message : String(err)}`);
+        return;
+      }
+    }
     const images = items.map((i) => ({ bytes: i.data, type: i.type }));
     const payload: ImagesToPdfPayload = { images, orientation, margin, pageSize, fileName: items.length === 1 ? items[0].name : 'images.pdf' };
     void runner.run('IMAGES_TO_PDF', payload);
@@ -92,6 +107,7 @@ export const ImageToPdfView: React.FC<ImageToPdfViewProps> = ({ onBack }) => {
       }
     >
       {failed.length > 0 && <Notice tone="warn">Couldn’t read: {failed.join(', ')}</Notice>}
+      {tooBig && <Notice tone="warn">{tooBig}</Notice>}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-4">
         {items.map((it, i) => (
           <div
