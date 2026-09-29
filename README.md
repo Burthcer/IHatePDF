@@ -50,7 +50,7 @@
 
 ## Install on Windows
 
-1. **[Download IHatePDF-Setup.exe](https://github.com/Burthcer/IHatePDF/releases/latest/download/IHatePDF-Setup.exe)** (about 115 MB).
+1. **[Download IHatePDF-Setup.exe](https://github.com/Burthcer/IHatePDF/releases/latest/download/IHatePDF-Setup.exe)** (about 130 MB).
 2. **Run it.** Windows may say *"Windows protected your PC"*, because the installer isn't code-signed. Click **More info → Run anyway**.
 3. **Click through the setup.** Windows asks once for administrator permission: the installer adds a Windows Firewall rule so phones can download from [Share to phone](#share-to-phone) without the app ever showing a network prompt. You can choose the install folder and whether you want desktop and Start-menu shortcuts.
 4. **Open IHatePDF** from the desktop or the Start menu.
@@ -130,7 +130,7 @@ Password-protected PDFs work in every tool: you type the password once when you 
 |---|---|---|
 | Watermark a 500 MB PDF | 5.2 GB RAM | 0.9 GB RAM |
 | Rotate a 500 MB PDF | 4.7 GB RAM | 1.6 GB RAM |
-| Redact 5,000 pages | 8.3 GB RAM | REDACT_RAM |
+| Redact 5,000 pages | 8.3 GB RAM | 1.2 GB RAM |
 | Merge two 5,000-page PDFs | 13 s | 3.6 s |
 
 **Memory fail-safe.** The app gives itself a memory budget based on the PC's RAM and leaves the rest for Windows: 1 GB on a 4 GB PC, 4 GB on 8 GB, 8 GB on 16 GB, never more than 16 GB. Near the budget, tools work in smaller pieces. A job that would go over it stops with *"Stopped to protect this PC"* and the app stays usable; a window stuck using too much memory is restarted before Windows runs short.
