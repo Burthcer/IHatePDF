@@ -32,6 +32,11 @@ const native = (name) => (natives[name] ??= require(`./${name}.cjs`));
 
 const DIST = path.join(__dirname, '..', 'dist');
 const HOST = 'app://ihatepdf';
+
+// Memory fail-safe: lets the page and workers collect garbage on demand when a
+// job nears its budget (big results pass through the page in chunks that would
+// otherwise linger until the engine gets round to them).
+app.commandLine.appendSwitch('js-flags', '--expose-gc');
 const DEBUG = !!process.env.IHP_DEBUG;
 
 protocol.registerSchemesAsPrivileged([

@@ -44,11 +44,25 @@ export function onMemoryPressure(relieve: () => void): () => void {
 /** Longest a job waits at one checkpoint; the watchdog decides if it's stuck over the budget. */
 const MAX_WAIT_MS = 30_000;
 
+let lastCollect = 0;
+/** Frees garbage now (the desktop app exposes gc()), at most once a second. */
+function collectGarbage(): void {
+  const gc = (globalThis as { gc?: () => void }).gc;
+  if (!gc || Date.now() - lastCollect < 1000) return;
+  lastCollect = Date.now();
+  try {
+    gc();
+  } catch {
+    /* not available */
+  }
+}
+
 /**
  * Between pieces of work: returns at once normally; while memory is over the
  * budget, frees what it can and waits until it's back under.
  */
 export function memoryCheckpoint(): Promise<void> | void {
+  if (level === 'high') collectGarbage();
   if (level !== 'over') return;
   relievers.forEach((r) => {
     try {
@@ -57,13 +71,16 @@ export function memoryCheckpoint(): Promise<void> | void {
       /* a cache that can't be dropped just stays */
     }
   });
+  collectGarbage();
   return new Promise<void>((resolve) => {
     const done = () => {
       clearTimeout(timer);
+      clearInterval(sweep);
       waiters.delete(done);
       resolve();
     };
     const timer = setTimeout(done, MAX_WAIT_MS);
+    const sweep = setInterval(collectGarbage, 1000);
     waiters.add(done);
   });
 }

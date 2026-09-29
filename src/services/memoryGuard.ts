@@ -63,6 +63,22 @@ function configMessage() {
 
 const notify = () => listeners.forEach((l) => l(state));
 
+let lastCollect = 0;
+/**
+ * Frees memory nothing uses any more, now rather than when the engine gets
+ * round to it (the desktop app exposes gc() for this), at most once a second.
+ */
+export function collectGarbage(): void {
+  const gc = (globalThis as { gc?: () => void }).gc;
+  if (!gc || Date.now() - lastCollect < 1000) return;
+  lastCollect = Date.now();
+  try {
+    gc();
+  } catch {
+    /* not available */
+  }
+}
+
 function jobsChanged() {
   desktop()?.jobs?.(jobs.size);
   notify();
@@ -86,6 +102,8 @@ function update(next: MemoryState) {
     });
     desktop()?.jobs?.(0);
   }
+  // Near or over the budget, garbage (e.g. result chunks already written to disk) goes first.
+  if (next.level !== 'normal') collectGarbage();
   notify();
   // Answering shows the watchdog this page isn't stuck: it has paused or stopped its jobs.
   if (next.level === 'over' || next.level === 'critical') desktop()?.ack?.();
@@ -126,13 +144,16 @@ export function registerJob(cancel: (err: MemoryLimitError) => void): () => void
 }
 
 /** Resolves once memory is no longer over the budget (or after `maxMs`, when the watchdog decides). */
-function whileOver(maxMs = 30_000): Promise<void> {
+export function whileOver(maxMs = 30_000): Promise<void> {
   if (state.level !== 'over') return Promise.resolve();
   return new Promise((resolve) => {
     const timer = setTimeout(done, maxMs);
+    const sweep = setInterval(collectGarbage, 1000);
+    collectGarbage();
     const unsubscribe = subscribeMemory((s) => s.level !== 'over' && done());
     function done() {
       clearTimeout(timer);
+      clearInterval(sweep);
       unsubscribe();
       resolve();
     }
