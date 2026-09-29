@@ -33,7 +33,23 @@ The memory fail-safe now slows down instead of stopping. On a 4 GB lab PC, 1.3.0
 
 ## Measured
 
-MEASURED_TABLE
+Real 300 dpi scans (JPEG, ~3.6 MB a page) in the desktop app, with the budget forced to that of a 4 GB PC (1 GB) and, to allow for Windows' higher idle memory, 400 MB less (624 MB):
+
+| Tool | 10 / 50 / 150 / 500 MB scan, 624 MB budget | 500 MB scan, 1 GB budget |
+|---|---|---|
+| Compress | all finished (4 s / 12 s / 32 s / 107 s) | finished, 100 s |
+| Watermark | all finished (1–5 s) | finished, 5 s |
+| Merge (+ a 20-page journal) | all finished (0–4 s) | finished, 4 s |
+| Rotate | all finished (0–4 s) | finished, 4 s |
+| Page numbers | all finished (1–4 s) | finished, 4 s |
+| PDF → Word | all finished; the 500 MB scan slowed down and paused, 123 s | finished, 110 s |
+
+- **Every tool** finished a 50 MB scan or a 10–20 page journal at both a 624 MB and a 1 GB budget (60 of 60).
+- **Stopped only when it had to:**
+  - A single 300-megapixel image is refused before anything starts.
+  - When Windows reports almost no free memory, the running job stops in 3 s with *"Windows is almost out of memory"*.
+  - A window stuck grabbing memory is restarted in 1.5 s.
+  - After each of these, the app carried on working normally.
 
 ## Known limits
 
