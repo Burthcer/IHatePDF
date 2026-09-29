@@ -372,12 +372,13 @@ async function main() {
     assert(!t[0].includes('Quarterly') && t[1].includes('rotated'), 'redaction scope wrong');
   });
   await check('Redact writes pages one at a time (asks for each render as it writes it)', async () => {
-    const jpeg = new Uint8Array(await readFile(resolve('test-fixtures/misc/photo1.jpg')));
+    // A 1×1 JPEG stands in for the page renders.
+    const jpeg = new Uint8Array(Buffer.from('/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=', 'base64'));
     const asked: number[] = [];
     const ask = async <T,>(what: string, data: unknown): Promise<T> => {
       assert(what === 'redacted-page', `unexpected ask ${what}`);
       asked.push((data as { pageIndex: number }).pageIndex);
-      return { jpeg: jpeg.slice().buffer, width: 640, height: 480 } as T;
+      return { jpeg: jpeg.slice().buffer, width: 1, height: 1 } as T;
     };
     const r = await redactPdf({ fileBuffer: ab(complex), fileName: 'c.pdf', pages: [0, 2].map((pageIndex) => ({ pageIndex, widthPt: 612, heightPt: 792 })), stripMetadata: true }, undefined, undefined, ask);
     assert(JSON.stringify(asked) === '[0,2]', `asked for ${JSON.stringify(asked)}`);
