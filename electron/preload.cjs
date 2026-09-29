@@ -1,6 +1,6 @@
 // Minimal bridge for the page: where saved files landed, "Show in folder", and
 // "Share to phone" (QR over Wi-Fi / this PC's hotspot, or Bluetooth).
-const { contextBridge, ipcRenderer, webUtils } = require('electron');
+const { contextBridge, ipcRenderer, webFrame, webUtils } = require('electron');
 
 const listen = (channel) => (cb) => {
   const handler = (_event, value) => cb(value);
@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('ihpDesktop', {
     ack: () => ipcRenderer.send('ihp:mem-ack'),
     /** How many jobs are running: the watchdog measures their growth, not the app's own memory. */
     jobs: (n) => ipcRenderer.send('ihp:mem-jobs', n),
+    /** Frees images and caches the page no longer uses (native memory JS garbage collection can't reach). */
+    relieve: () => webFrame.clearCache(),
   },
   showInFolder(file) {
     ipcRenderer.send('ihp:show-in-folder', file);
