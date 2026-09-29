@@ -13,6 +13,10 @@ import { openPdf, PdfPasswordError } from '../../services/pdfLoader';
 import { analyzePage, applyPageEdits, pageHasEdits, type PageEdits } from './engine/rewrite';
 import { userToViewer } from './engine/geometry';
 import type { TextBlock } from './engine/layout';
+import type { PdfInput } from '../../types/worker';
+import { emitPdf } from '../../services/workerEmit';
+import { openOutput } from '../../services/workerOutput';
+import { friendlyError } from '../../services/friendlyErrors';
 
 export interface EditorPageInfo {
   width: number;
@@ -49,7 +53,8 @@ export interface EditorPageAnalysis {
 }
 
 interface Session {
-  bytes: Uint8Array;
+  /** The picked file (read from disk on demand) or its bytes. */
+  source: PdfInput;
   doc: PDFDocument;
   password?: string;
 }
@@ -60,12 +65,12 @@ function toTransferable(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-async function handle(action: string, payload: any, progress: (p: number, s: string) => void): Promise<{ data: unknown; transfer?: Transferable[] }> {
+async function handle(id: string, action: string, payload: any, progress: (p: number, s: string) => void): Promise<{ data: unknown; transfer?: Transferable[] }> {
   switch (action) {
     case 'OPEN': {
-      const bytes = new Uint8Array(payload.buffer as ArrayBuffer);
-      const doc = await openPdf(bytes, { password: payload.password });
-      session = { bytes, doc, password: payload.password };
+      const source = (payload.source ?? payload.buffer) as PdfInput;
+      const doc = await openPdf(source, { password: payload.password });
+      session = { source, doc, password: payload.password };
       const pages: EditorPageInfo[] = doc.getPages().map((p) => {
         const { width, height } = userToViewer(p);
         return { width, height };
@@ -117,20 +122,23 @@ async function handle(action: string, payload: any, progress: (p: number, s: str
       if (!session) throw new Error('No document open.');
       const all = (payload.edits as PageEdits[]).filter(pageHasEdits);
       progress(5, 'Loading a clean copy of the document...');
-      const doc = await openPdf(session.bytes, { password: session.password });
+      const doc = await openPdf(session.source, { password: session.password });
       for (let i = 0; i < all.length; i++) {
         progress(10 + Math.round((i / Math.max(1, all.length)) * 75), `Applying edits to page ${all[i].pageIndex + 1}...`);
         await applyPageEdits(doc, doc.getPage(all[i].pageIndex), all[i]);
       }
       progress(90, 'Saving PDF...');
-      const saved = await doc.save({ useObjectStreams: true });
-      const buffer = toTransferable(saved);
+      const sink = openOutput(id);
+      let out;
+      try {
+        out = await emitPdf(doc, sink, { useObjectStreams: true });
+      } catch (err) {
+        sink.abort();
+        throw err;
+      }
       const base = String(payload.fileName || 'document').replace(/\.[^/.]+$/, '');
       progress(100, 'Done.');
-      return {
-        data: { fileName: `${base}_edited.pdf`, buffer, size: buffer.byteLength, pageCount: doc.getPageCount() },
-        transfer: [buffer],
-      };
+      return { data: { fileName: `${base}_edited.pdf`, ...out, pageCount: doc.getPageCount() } };
     }
     default:
       throw new Error(`Unknown action ${action}`);
@@ -138,15 +146,17 @@ async function handle(action: string, payload: any, progress: (p: number, s: str
 }
 
 self.addEventListener('message', async (event: MessageEvent<{ id: string; action: string; payload: unknown }>) => {
-  const { id, action, payload } = event.data;
+  const { id, action, payload } = event.data ?? {};
+  if (!action) return; // output acknowledgements (workerOutput.ts)
   const progress = (p: number, stage: string) =>
     self.postMessage({ type: 'PROGRESS', payload: { id, progress: p, stage } });
   try {
-    const { data, transfer } = await handle(action, payload, progress);
+    const { data, transfer } = await handle(id, action, payload, progress);
     (self as unknown as Worker).postMessage({ type: 'RESPONSE', payload: { id, success: true, data } }, transfer ?? []);
   } catch (err) {
     const code = err instanceof PdfPasswordError ? err.code : undefined;
-    const message = err instanceof Error ? err.message : String(err);
+    const raw = err instanceof Error ? err.message : String(err);
+    const message = code ? raw : friendlyError(raw, { fileName: (payload as { fileName?: string } | undefined)?.fileName });
     self.postMessage({ type: 'RESPONSE', payload: { id, success: false, error: message, code } });
   }
 });

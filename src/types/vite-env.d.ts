@@ -32,6 +32,22 @@ interface IhpDesktopBridge {
   /** Called whenever a download finishes; returns an unsubscribe function. */
   onSaved(cb: (info: { name: string; path: string }) => void): () => void;
   showInFolder(path: string): void;
+  /** Memory fail-safe (see src/services/memoryGuard.ts). */
+  memory: {
+    info(): Promise<import('../services/memoryGuard').MemoryState>;
+    onChange(cb: (state: import('../services/memoryGuard').MemoryState) => void): () => void;
+    ack?(): void;
+  };
+  /** Tool results streamed to temp files (see src/services/toolOutput.ts). */
+  output: {
+    create(): Promise<string>;
+    write(handle: string, chunk: Uint8Array): Promise<void>;
+    close(handle: string, discard?: boolean): Promise<{ path: string; size: number }>;
+    /** Copies a result into Downloads/IHatePDF under `name`; resolves to the saved path. */
+    save(path: string, name: string): Promise<string>;
+    discard(path: string): Promise<void>;
+    read(path: string): Promise<Uint8Array>;
+  };
   /** "Share to phone" (electron/share.cjs, hotspot.cjs, bluetooth.cjs). */
   share: {
     /** Native picker; resolves to the chosen paths ([] if cancelled). */
@@ -61,6 +77,8 @@ interface ShareItem {
   isDir: boolean;
   size: number;
   count: number;
+  /** Inside a folder: what couldn't be read and was left out (no permission, locked, link loop). */
+  skipped: Array<{ name: string; reason: string }>;
 }
 interface ShareInfo {
   expiresAt: number;

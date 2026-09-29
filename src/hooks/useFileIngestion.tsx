@@ -9,10 +9,11 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { Lock } from 'lucide-react';
 import { Button, Field, Modal, Notice } from '../components/ui';
-import { readFileAsArrayBuffer, validatePdfHeader } from '../services/fileValidator';
+import { validatePdfHeader } from '../services/fileValidator';
 import { memoryManager } from '../services/memoryManager';
 import { WorkerClient, WorkerCallError } from '../services/workerClient';
 import type { PDFFile } from '../types/pdf';
+import type { ProcessedPdfResult } from '../types/worker';
 
 export interface IngestOptions {
   /** Leave encrypted files encrypted (for tools that deal with encryption themselves). */
@@ -25,14 +26,26 @@ interface PasswordRequest {
   resolve: (password: string | null) => void;
 }
 
-async function countPages(buffer: ArrayBuffer, password?: string): Promise<number> {
+const COUNT_TIMEOUT_MS = 30_000;
+
+async function countPages(data: Blob, password?: string): Promise<number> {
   // pdf.js is loaded on first use so the home screen starts without it.
   const { openPdfJsDocument } = await import('../services/pdfWorkerSetup');
-  const task = openPdfJsDocument(buffer, password);
-  const doc = await task.promise;
-  const n = doc.numPages;
-  await memoryManager.destroyPdfDocument(doc);
-  return n;
+  const task = openPdfJsDocument(data, password);
+  let timer = 0;
+  try {
+    // A badly damaged file can take pdf.js very long to read; the tools (Repair included) don't need the count.
+    const tooSlow = new Promise<never>((_, reject) => (timer = window.setTimeout(() => reject(new Error('Invalid PDF structure: counting pages took too long.')), COUNT_TIMEOUT_MS)));
+    const doc = await Promise.race([task.promise, tooSlow]);
+    const n = doc.numPages;
+    await memoryManager.destroyPdfDocument(doc);
+    return n;
+  } catch (err) {
+    void task.destroy();
+    throw err;
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 function isPasswordError(err: unknown): boolean {
@@ -41,16 +54,19 @@ function isPasswordError(err: unknown): boolean {
 
 let decryptClient: WorkerClient | null = null;
 function decryptor(): WorkerClient {
+  // The decrypted copy is what every tool then reads, so it's kept as a Blob.
   decryptClient ??= new WorkerClient(
-    () => new Worker(new URL('../features/unlock/unlock.worker.ts', import.meta.url), { type: 'module' })
+    () => new Worker(new URL('../features/unlock/unlock.worker.ts', import.meta.url), { type: 'module' }),
+    true
   );
   return decryptClient;
 }
 
-async function decrypt(buffer: ArrayBuffer, fileName: string, password: string): Promise<ArrayBuffer> {
-  const copy = buffer.slice(0);
-  const res = await decryptor().call<{ buffer: ArrayBuffer }>('UNLOCK_PDF', { fileBuffer: copy, fileName, password }, [copy]);
-  return res.buffer;
+async function decrypt(data: Blob, fileName: string, password: string): Promise<Blob> {
+  const res = await decryptor().call<ProcessedPdfResult>('UNLOCK_PDF', { fileBuffer: data, fileName, password });
+  if (res.output?.kind === 'blob') return res.output.blob;
+  if (res.buffer) return new Blob([res.buffer], { type: 'application/pdf' });
+  throw new Error('The decrypted copy could not be stored.');
 }
 
 export function useFileIngestion(options: IngestOptions = {}) {
@@ -80,23 +96,18 @@ export function useFileIngestion(options: IngestOptions = {}) {
           bad.push(`${file.name} (not a PDF)`);
           continue;
         }
-        let buffer: ArrayBuffer;
-        try {
-          buffer = await readFileAsArrayBuffer(file);
-        } catch {
-          bad.push(`${file.name} (couldn’t be read)`);
-          continue;
-        }
+        // The File stays a handle to the file on disk; nothing is read into memory here.
+        const data: Blob = file;
         const entry: PDFFile = {
           id: `file_${crypto.randomUUID()}`,
           name: file.name,
           size: file.size,
           pageCount: 0,
-          rawBuffer: buffer,
+          data,
           previewUrls: [],
         };
         try {
-          entry.pageCount = await countPages(buffer);
+          entry.pageCount = await countPages(data);
         } catch (err) {
           if (!isPasswordError(err)) {
             // pdf.js couldn't parse it; let the tool try (Repair may recover it).
@@ -114,7 +125,7 @@ export function useFileIngestion(options: IngestOptions = {}) {
             const pw = await askPassword(file.name, error);
             if (pw === null) break;
             try {
-              entry.pageCount = await countPages(buffer, pw);
+              entry.pageCount = await countPages(data, pw);
             } catch (e) {
               if (isPasswordError(e)) {
                 error = 'That password didn’t work. Try again.';
@@ -122,8 +133,8 @@ export function useFileIngestion(options: IngestOptions = {}) {
               }
             }
             try {
-              entry.rawBuffer = await decrypt(buffer, file.name, pw);
-              entry.size = entry.rawBuffer.byteLength;
+              entry.data = await decrypt(data, file.name, pw);
+              entry.size = entry.data.size;
               entry.wasProtected = true;
               unlocked = true;
             } catch (e) {

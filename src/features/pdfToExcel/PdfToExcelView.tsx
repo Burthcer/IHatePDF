@@ -44,7 +44,7 @@ export const PdfToExcelView: React.FC<PdfToExcelViewProps> = ({ initialFiles = [
   const [layout, setLayout] = useState<'perPage' | 'single'>('perPage');
   const [scope, setScope] = useState<'tables' | 'all'>('all');
   const file = files[0];
-  const analysis = useLayoutAnalysis(file?.rawBuffer);
+  const analysis = useLayoutAnalysis(file?.data);
   const runner = useToolRunner<OfficeConversionResult>(() => new Worker(new URL('./pdfToXlsx.worker.ts', import.meta.url), { type: 'module' }));
 
   const pages = useMemo(() => (analysis.pages ?? []).map((p) => ({ pageNumber: p.pageNumber, rows: pageRows(p, scope === 'tables') })), [analysis.pages, scope]);

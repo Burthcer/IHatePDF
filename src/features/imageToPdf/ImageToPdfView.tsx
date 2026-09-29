@@ -52,13 +52,13 @@ export const ImageToPdfView: React.FC<ImageToPdfViewProps> = ({ onBack }) => {
   };
 
   const execute = () => {
-    const images = items.map((i) => ({ bytes: i.bytes.slice(0), type: i.type }));
+    const images = items.map((i) => ({ bytes: i.data, type: i.type }));
     const payload: ImagesToPdfPayload = { images, orientation, margin, pageSize, fileName: items.length === 1 ? items[0].name : 'images.pdf' };
-    void runner.run('IMAGES_TO_PDF', payload, images.map((i) => i.bytes));
+    void runner.run('IMAGES_TO_PDF', payload);
   };
 
   // ToolLayout keys its two-pane mode off `files`; images aren't PDFFiles, so adapt them.
-  const asFiles: PDFFile[] = items.map((i) => ({ id: i.id, name: i.name, size: i.bytes.byteLength, pageCount: 1, rawBuffer: i.bytes, previewUrls: [i.url] }));
+  const asFiles: PDFFile[] = items.map((i) => ({ id: i.id, name: i.name, size: i.data.size, pageCount: 1, data: i.data, previewUrls: [i.url] }));
 
   return (
     <ToolLayout

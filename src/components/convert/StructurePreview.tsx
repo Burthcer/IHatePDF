@@ -66,6 +66,18 @@ export const StructurePreview: React.FC<{ pages: PageLayout[]; maxPages?: number
                   </tbody>
                 </table>
               );
+            case 'image':
+              return (
+                <div
+                  key={i}
+                  className="flex items-center justify-center bg-[#f6f5f1] border border-dashed border-[#d7d3c8] text-[11px] font-sans text-[#9a968c]"
+                  style={{ width: Math.min(100, ((b.box.x1 - b.box.x0) / p.width) * 100) + '%', aspectRatio: `${b.box.x1 - b.box.x0} / ${b.box.y1 - b.box.y0}`, maxHeight: 240 }}
+                >
+                  Picture
+                </div>
+              );
+            default:
+              return null;
           }
         })}
       </section>

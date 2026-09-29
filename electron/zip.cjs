@@ -11,14 +11,53 @@ const zlib = require('zlib');
 
 const MAX32 = 0xffffffff;
 
-/** Every file and empty folder under `items` (absolute paths), with names as they'll appear in the zip. */
-function collect(items) {
+const SKIP_REASONS = {
+  EACCES: 'no permission',
+  EPERM: 'no permission',
+  EBUSY: 'in use by another program',
+  ELOOP: 'link loop',
+  ENOENT: 'no longer there',
+  ENOTDIR: 'no longer there',
+};
+
+/**
+ * Every file and empty folder under `items` (absolute paths), with names as
+ * they'll appear in the zip. What can't be read — folders without permission,
+ * files locked by another program, broken links, folders that link back into
+ * themselves (Windows junction loops) — is skipped and listed in `skipped`
+ * instead of failing the whole share.
+ */
+function collect(items, skipped = []) {
   const entries = [];
+  const seenDirs = new Set();
+  const skip = (name, err) => skipped.push({ name, reason: SKIP_REASONS[err?.code] ?? 'unreadable' });
   const walk = (abs, name) => {
-    const st = fs.statSync(abs);
-    if (st.isFile()) return entries.push({ abs, name, size: st.size, mtime: st.mtime, dir: false });
+    let st;
+    try {
+      st = fs.statSync(abs);
+    } catch (err) {
+      return skip(name, err);
+    }
+    if (st.isFile()) {
+      try {
+        fs.closeSync(fs.openSync(abs, 'r')); // readable now (not locked, allowed)?
+      } catch (err) {
+        return skip(name, err);
+      }
+      return entries.push({ abs, name, size: st.size, mtime: st.mtime, dir: false });
+    }
     if (!st.isDirectory()) return;
-    const children = fs.readdirSync(abs);
+    let real;
+    let children;
+    try {
+      real = fs.realpathSync.native(abs);
+      children = fs.readdirSync(abs);
+    } catch (err) {
+      return skip(`${name}/`, err);
+    }
+    // A link to a folder we're already inside (or have already added) would repeat forever.
+    if (seenDirs.has(real)) return skip(`${name}/`, { code: 'ELOOP' });
+    seenDirs.add(real);
     if (!children.length) entries.push({ abs, name: `${name}/`, size: 0, mtime: st.mtime, dir: true });
     for (const child of children) walk(path.join(abs, child), `${name}/${child}`);
   };

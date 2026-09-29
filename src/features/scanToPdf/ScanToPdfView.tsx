@@ -183,7 +183,7 @@ export const ScanToPdfView: React.FC<ScanToPdfViewProps> = ({ onBack }) => {
   };
 
   const editingShot = shots.find((s) => s.id === editing);
-  const pseudo: PDFFile[] = shots.map((s, i) => ({ id: s.id, name: `Page ${i + 1}`, size: s.bytes.byteLength, pageCount: 1, rawBuffer: s.bytes, previewUrls: [s.url] }));
+  const pseudo: PDFFile[] = shots.map((s, i) => ({ id: s.id, name: `Page ${i + 1}`, size: s.bytes.byteLength, pageCount: 1, data: new Blob([s.bytes]), previewUrls: [s.url] }));
 
   const cameraPanel = (
     <Panel className="p-4 space-y-3">

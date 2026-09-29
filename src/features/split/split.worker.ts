@@ -10,19 +10,37 @@
  */
 
 import { PDFDocument } from 'pdf-lib';
-import { createZip } from '../../services/zipWriter';
+import { ZipStreamWriter } from '../../services/zipWriter';
 import { openPdf } from '../../services/pdfLoader';
-import type { WorkerRequest, SplitPayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
+import { appendPages } from '../../services/pageTree';
+import { saveToSink, type ChunkSink } from '../../services/pdfStreamSave';
+import { emitPdf } from '../../services/workerEmit';
+import { serveTask } from '../../services/workerTask';
+import type { OutputSink } from '../../services/workerOutput';
+import type { SplitPayload, ProcessedPdfResult, PdfInput } from '../../types/worker';
 
-async function buildDoc(source: PDFDocument, indices: number[]): Promise<Uint8Array> {
+async function buildDoc(source: PDFDocument, indices: number[]): Promise<PDFDocument> {
   const doc = await PDFDocument.create();
   const copied = await doc.copyPages(source, indices);
-  copied.forEach((p) => doc.addPage(p));
-  return doc.save({ useObjectStreams: true });
+  appendPages(doc, copied);
+  return doc;
 }
 
-function toBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+/** Collects streamed bytes (for the in-memory, sink-less path). */
+function memorySink(): ChunkSink & { bytes(): Uint8Array } {
+  const parts: Uint8Array[] = [];
+  return {
+    write: (c) => void parts.push(c.slice()),
+    bytes() {
+      const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+      let o = 0;
+      for (const p of parts) {
+        out.set(p, o);
+        o += p.length;
+      }
+      return out;
+    },
+  };
 }
 
 function label(indices: number[]): string {
@@ -32,11 +50,11 @@ function label(indices: number[]): string {
 }
 
 export async function splitPdf(
-  fileBuffer: ArrayBuffer,
+  fileBuffer: PdfInput,
   fileName: string,
   ranges: SplitPayload['ranges'],
   onProgress?: (progress: number, stage: string) => void,
-  options: { groups?: number[][] } = {}
+  options: { groups?: number[][]; sink?: OutputSink } = {}
 ): Promise<ProcessedPdfResult> {
   if (!fileBuffer) throw new Error('No PDF buffer supplied for splitting.');
 
@@ -53,26 +71,28 @@ export async function splitPdf(
     if (valid.length === 0) throw new Error('No valid pages selected.');
     if (valid.length === 1) {
       onProgress?.(60, 'Extracting pages...');
-      const bytes = await buildDoc(sourceDoc, valid[0]);
-      const buffer = toBuffer(bytes);
+      const out = await emitPdf(await buildDoc(sourceDoc, valid[0]), options.sink);
       onProgress?.(100, 'Done.');
-      return { fileName: `${base}_${label(valid[0])}.pdf`, buffer, size: buffer.byteLength, pageCount: valid[0].length };
+      return { fileName: `${base}_${label(valid[0])}.pdf`, ...out, pageCount: valid[0].length };
     }
-    const entries: { name: string; data: Uint8Array }[] = [];
+    // Each part is written straight into the ZIP as it's made.
+    const mem = options.sink ? null : memorySink();
+    const zip = new ZipStreamWriter(options.sink ?? mem!);
     const pad = String(valid.length).length;
     for (let i = 0; i < valid.length; i++) {
-      onProgress?.(10 + Math.round((i / valid.length) * 80), `Writing file ${i + 1} of ${valid.length}...`);
-      entries.push({ name: `${base}_${String(i + 1).padStart(pad, '0')}_${label(valid[i])}.pdf`, data: await buildDoc(sourceDoc, valid[i]) });
+      onProgress?.(10 + Math.round((i / valid.length) * 85), `Writing file ${i + 1} of ${valid.length}...`);
+      const part = await buildDoc(sourceDoc, valid[i]);
+      await zip.addEntry(`${base}_${String(i + 1).padStart(pad, '0')}_${label(valid[i])}.pdf`, (s) => saveToSink(part, s).then(() => undefined));
     }
-    onProgress?.(92, `Packing ${valid.length} files into a ZIP...`);
-    const buffer = toBuffer(createZip(entries));
+    await zip.finish();
     onProgress?.(100, 'Done.');
-    return {
-      fileName: `${base}_split.zip`,
-      buffer,
-      size: buffer.byteLength,
-      pageCount: valid.reduce((n, g) => n + g.length, 0),
-    };
+    const pageCount = valid.reduce((n, g) => n + g.length, 0);
+    if (options.sink) {
+      const output = await options.sink.close();
+      return { fileName: `${base}_split.zip`, output, size: output.size, pageCount };
+    }
+    const bytes = mem!.bytes();
+    return { fileName: `${base}_split.zip`, buffer: bytes.buffer as ArrayBuffer, size: bytes.byteLength, pageCount };
   }
 
   // One output file from the given ranges
@@ -87,31 +107,13 @@ export async function splitPdf(
   if (indices.length === 0) throw new Error('No valid pages selected to extract.');
 
   onProgress?.(60, `Extracting ${indices.length} pages...`);
-  const buffer = toBuffer(await buildDoc(sourceDoc, indices));
+  const out = await emitPdf(await buildDoc(sourceDoc, indices), options.sink);
   onProgress?.(100, 'Split operation complete.');
-  return { fileName: `${base}_split.pdf`, buffer, size: buffer.byteLength, pageCount: indices.length };
+  return { fileName: `${base}_split.pdf`, ...out, pageCount: indices.length };
 }
 
-if (typeof self !== 'undefined') self.addEventListener('message', async (event: MessageEvent<WorkerRequest<SplitPayload>>) => {
-  const { id, action, payload } = event.data;
-  if (action !== 'SPLIT_PDF') return;
-
-  try {
-    const result = await splitPdf(
-      payload.fileBuffer,
-      payload.fileName,
-      payload.ranges,
-      (progress, stage) => {
-        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-        self.postMessage(msg);
-      },
-      { groups: payload.groups }
-    );
-    const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = { type: 'RESPONSE', payload: { id, success: true, data: result } };
-    (self as any).postMessage(responseMsg, [result.buffer]);
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : 'Failed to split PDF document';
-    const responseMsg: WorkerIncomingMessage = { type: 'RESPONSE', payload: { id, success: false, error: errorMsg } };
-    self.postMessage(responseMsg);
-  }
-});
+serveTask<SplitPayload, ProcessedPdfResult>(
+  'SPLIT_PDF',
+  (p, ctx) => splitPdf(p.fileBuffer, p.fileName, p.ranges, ctx.progress, { groups: p.groups, sink: ctx.sink() }),
+  'Failed to split PDF document'
+);

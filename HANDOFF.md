@@ -11,6 +11,7 @@ There is no backend. No tool makes a network request, and the app works offline.
 
 - **Never load PDFs with `PDFDocument.load` directly.** Use `openPdf()` from `src/services/pdfLoader.ts` (details below).
 - **Never open pdf.js documents directly.** Use `openPdfJsDocument()` from `src/services/pdfWorkerSetup.ts` (legacy build, local CMaps/fonts/WASM).
+- **Never read a whole input into memory.** `PDFFile.data` is a `Blob` (the picked `File`, so it stays on disk). Workers get it as a `PdfInput`; `openPdf()` loads inputs of 1 MB or more lazily, and results go out through the task's sink (`emitPdf` / `emitBytes` / `emitSequential` in `services/workerEmit.ts`), never as one big buffer.
 - **Heavy work goes in a worker.**
   - One-shot tools use `useToolRunner` (on top of `useWorkerBridge`) and spread `runner.layout` into `<ToolLayout>`.
   - Workers that need concurrent calls use `WorkerClient`.
@@ -51,9 +52,19 @@ docs/                          release notes, test report, publishing guide, scr
 
 The main thread sends `{ id, action, payload }` (`WorkerRequest`). The worker replies with any number of `{ type: 'PROGRESS', payload: { id, progress, stage } }` messages, then one `{ type: 'RESPONSE', payload: { id, success, data | error } }`.
 
-`ArrayBuffer`s are transferred, never copied: slice before sending if the caller still needs its copy. Results are `{ fileName, buffer, size, pageCount?, note?, mimeType? }`. `note` is shown under the result.
+`ArrayBuffer`s are transferred, never copied: slice before sending if the caller still needs its copy. Results are `{ fileName, buffer | output, size, pageCount?, note?, mimeType? }`. `note` is shown under the result.
+
+Workers are written with `serveTask(action, (payload, ctx) => …)` (`services/workerTask.ts`), which handles the envelope, progress and friendly errors (`services/friendlyErrors.ts`). Besides PROGRESS and RESPONSE:
+- **Output** (`services/workerOutput.ts`): `ctx.sink()` streams the result as `OUTPUT` chunks (batched to ~4 MB, at most 2 in flight, each acknowledged with `OUTPUT_ACK`). The page's `OutputCollector` (`services/toolOutput.ts`) writes them to a temp file on the desktop, or to a Blob in a browser; the result then carries `output` instead of `buffer`.
+- **Questions** (`ctx.ask(what, data)`): the worker asks the page for something only it can make (Redact asks for each redacted page's image, one at a time, while `saveSequential` writes the file front to back). The page answers through `useWorkerBridge`'s `onAsk`.
 
 ## Memory
+
+**Budget (the fail-safe).** `electron/memoryGuard.cjs` sets a budget from the PC's RAM: max(1 GB, min(50%, RAM − 3 GB, 16 GB)), overridable with `IHP_MEMORY_BUDGET_MB`. Twice a second it sums the app's processes (`app.getAppMetrics()`) and sends `ihp:mem` with `ok` / `high` / `critical`: *high* above 80% of the budget, *critical* above the budget or when Windows is nearly out of memory while the app holds over half its budget. On *critical*, `services/memoryGuard.ts` cancels running jobs (`MemoryLimitError`, "Stopped to protect this PC"); the page answers (`ihp:mem-ack`) once its jobs are stopped. If usage stays over, main restarts the page: after 1 s if it isn't answering and usage is past 1.5× the budget or Windows is nearly out, 3 s if it isn't answering, and 3 s / 6 s for an answering page with `?recovered=memory`. Workers get the budget in `MEM_CONFIG` and read it through `services/workerMemory.ts` (caches and image decoding size themselves to it). Page-side loops call `startJob()` and check it between steps.
+
+**Crashes.** `render-process-gone` reloads the window with `?recovered=crash`; `components/common/SystemNotice.tsx` explains what happened. Three crashes within a minute show an error and quit.
+
+**Big files.** `services/byteSource.ts` + `lazyPdf.ts` let pdf-lib parse a PDF while reading stream contents from the Blob only when they're written out; `pdfStreamSave.ts` writes a document in chunks (`saveToSink`, or `saveSequential` for objects produced on demand). pdf.js reads Blobs of 16 MB or more by range (`openPdfJsDocument`). Thumbnails render only when on screen (`usePageThumbnails` + `VirtualGrid`).
 
 `services/memoryManager.ts` owns object URLs (revoked after download), a canvas pool (canvases are zeroed on release), and pdf.js document destruction (`destroyPdfDocument`; pdf.js 6 has no `doc.destroy()`, it goes through the loading task).
 
@@ -72,7 +83,7 @@ The main thread sends `{ id, action, payload }` (`WorkerRequest`). The worker re
 - `geometry.ts` — matrices and the viewer-space transform identical to pdf.js's `PageViewport` (all editor/overlay coordinates are "as displayed": rotation and CropBox applied)
 - The editor UI (`EditPdfView.tsx`, `editor/*`) keeps a `DocEdits` document with undo/redo; the worker session renders a one-page preview PDF of every change.
 
-**Shared services** — `fonts.ts` (standard fonts or bundled Liberation Sans via fontkit for non-WinAnsi text), `pageOverlay.ts` (draw in "as displayed" coordinates on rotated/cropped pages), `textLayout.ts` (structure recovery for PDF→Word/Markdown/Excel), `pageRanges.ts`, `imagePrep.ts`.
+**Shared services** — `fonts.ts` (standard fonts, or bundled fonts via fontkit for other text: Liberation Sans for Latin/Greek/Cyrillic, Noto Sans Devanagari, Noto Sans SC for Chinese/Japanese; `faceFor(text)` picks one. Devanagari is shaped per script run, and the shaped glyph positions are written as `TJ` adjustments. `patchSubsetter` works around a fontkit bug that dropped glyphs from Noto Sans SC subsets), `pageOverlay.ts` (draw in "as displayed" coordinates on rotated/cropped pages), `textLayout.ts` (structure recovery for PDF→Word/Markdown/Excel), `pageRanges.ts`, `imagePrep.ts`.
 
 **UI** — design tokens in `src/index.css` / `tailwind.config.js`, primitives in `src/components/ui/`, every tool uses `ToolLayout` (workspace + options panel + run/result). Tool catalog metadata lives only in `src/constants/tools.ts`. Routing is hash-based (`#/merge`), tool views are lazy-loaded.
 
@@ -134,7 +145,8 @@ npm install                 # also copies pdf.js assets to public/pdfjs/
 npm run dev                 # dev server
 npm run build               # type-check + production build into dist/
 npm run lint                # oxlint (warnings only)
-npx tsx scripts/generateTestFixtures.ts && npm test      # 17 + 28 automated checks
+npx tsx scripts/generateTestFixtures.ts && npm test      # 17 + 33 automated checks
+npx tsx scripts/test-streaming-tools.ts <file.pdf>      # every streaming tool on a big file, with peak memory
 npx vite preview --port 4173 & node scripts/e2e/all-tools.mjs   # all 28 tools in Chromium
 node scripts/e2e/screenshots.mjs   # regenerate docs/screenshots (needs the preview server + big fixtures)
 npm run build:exe           # FinalApp/IHatePDF-Setup.exe (Linux needs wine64 + wine32)

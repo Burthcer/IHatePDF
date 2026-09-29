@@ -5,6 +5,8 @@ import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
 import { Button, IconButton, Notice, Section, Spinner, Toggle } from '../../components/ui';
 import { useToolRunner } from '../../hooks/useToolRunner';
+import type { AskAnswer } from '../../hooks/useWorkerBridge';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { usePageThumbnails } from '../../hooks/usePageThumbnails';
 import { usePdfRenderer } from '../../hooks/usePdfRenderer';
 import { openPdfJsDocument, pdfjsLib } from '../../services/pdfWorkerSetup';
@@ -31,8 +33,8 @@ function escapeRe(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-async function findMatches(buffer: ArrayBuffer, patterns: RegExp[]): Promise<RedactionBox[]> {
-  const doc = await openPdfJsDocument(buffer).promise;
+async function findMatches(data: Blob, patterns: RegExp[]): Promise<RedactionBox[]> {
+  const doc = await openPdfJsDocument(data).promise;
   const boxes: RedactionBox[] = [];
   try {
     for (let p = 1; p <= doc.numPages; p++) {
@@ -87,12 +89,15 @@ export const RedactView: React.FC<RedactViewProps> = ({ initialFiles = [], onBac
   const [lastFound, setLastFound] = useState<number | null>(null);
   const [stripMeta, setStripMeta] = useState(true);
   const [preparing, setPreparing] = useState(false);
+  const [prepError, setPrepError] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const file = files[0];
-  const { pages } = usePageThumbnails(file?.rawBuffer, 40);
+  const { pages } = usePageThumbnails(file?.data, 40, 0); // sizes only
   const { renderThumbnail } = usePdfRenderer();
-  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./redact.worker.ts', import.meta.url), { type: 'module' }));
+  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./redact.worker.ts', import.meta.url), { type: 'module' }), {
+    onAsk: (what, data) => renderRedacted(what, data),
+  });
   const page = pages[pageIndex];
   const scale = page ? PAGE_W / page.width : 1;
 
@@ -100,7 +105,7 @@ export const RedactView: React.FC<RedactViewProps> = ({ initialFiles = [], onBac
     if (!file || !page) return;
     let cancelled = false;
     setPreview(null);
-    renderThumbnail(file.rawBuffer, pageIndex + 1, PAGE_W * Math.min(2, window.devicePixelRatio || 1))
+    renderThumbnail(file.data, pageIndex + 1, PAGE_W * Math.min(2, window.devicePixelRatio || 1))
       .then((u) => !cancelled && setPreview(u))
       .catch(() => undefined);
     return () => {
@@ -120,7 +125,7 @@ export const RedactView: React.FC<RedactViewProps> = ({ initialFiles = [], onBac
     if (!patterns.length) return;
     setSearching(true);
     try {
-      const found = await findMatches(file.rawBuffer, patterns);
+      const found = await findMatches(file.data, patterns);
       setBoxes((b) => [...b, ...found]);
       setLastFound(found.length);
       runner.reset();
@@ -129,37 +134,59 @@ export const RedactView: React.FC<RedactViewProps> = ({ initialFiles = [], onBac
     }
   };
 
+  // The worker asks for each redacted page only when it writes it (one render at a time).
+  const renderDoc = useRef<PDFDocumentProxy | null>(null);
+  const boxesRef = useRef(boxes);
+  boxesRef.current = boxes;
+
+  const renderRedacted = async (what: string, data: unknown): Promise<AskAnswer> => {
+    const doc = renderDoc.current;
+    if (what !== 'redacted-page' || !doc) throw new Error('Nothing to render.');
+    const idx = (data as { pageIndex: number }).pageIndex;
+    const pg = await doc.getPage(idx + 1);
+    const vp = pg.getViewport({ scale: RENDER_SCALE });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(vp.width);
+    canvas.height = Math.ceil(vp.height);
+    const ctx = canvas.getContext('2d', { alpha: false })!;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await pg.render({ canvasContext: ctx, viewport: vp, canvas }).promise;
+    // The boxes are burned into the pixels: nothing underneath survives.
+    ctx.fillStyle = '#000';
+    boxesRef.current.filter((b) => b.pageIndex === idx).forEach((b) => ctx.fillRect(b.x * RENDER_SCALE, b.y * RENDER_SCALE, b.width * RENDER_SCALE, b.height * RENDER_SCALE));
+    const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', 0.9));
+    const size = { width: canvas.width, height: canvas.height };
+    canvas.width = 0;
+    canvas.height = 0;
+    pg.cleanup();
+    if (!blob) throw new Error('Could not render a page.');
+    const jpeg = await blob.arrayBuffer();
+    return { result: { jpeg, ...size }, transfer: [jpeg] };
+  };
+
   const execute = async () => {
     setPreparing(true);
+    setPrepError(null);
     try {
-      const doc = await openPdfJsDocument(file.rawBuffer).promise;
-      const pagesOut: RedactPdfPayload['pages'] = [];
+      const doc = await openPdfJsDocument(file.data).promise;
+      renderDoc.current = doc;
       const indices = [...new Set(boxes.map((b) => b.pageIndex))].sort((a, b) => a - b);
+      const pagesOut: RedactPdfPayload['pages'] = [];
       for (const idx of indices) {
-        const pg = await doc.getPage(idx + 1);
-        const vp = pg.getViewport({ scale: RENDER_SCALE });
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.ceil(vp.width);
-        canvas.height = Math.ceil(vp.height);
-        const ctx = canvas.getContext('2d', { alpha: false })!;
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        await pg.render({ canvasContext: ctx, viewport: vp, canvas }).promise;
-        ctx.fillStyle = '#000';
-        boxes.filter((b) => b.pageIndex === idx).forEach((b) => ctx.fillRect(b.x * RENDER_SCALE, b.y * RENDER_SCALE, b.width * RENDER_SCALE, b.height * RENDER_SCALE));
-        const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', 0.9));
-        canvas.width = 0;
-        canvas.height = 0;
-        if (!blob) throw new Error('Could not render a page.');
-        const base = pg.getViewport({ scale: 1 });
-        pagesOut.push({ pageIndex: idx, jpeg: await blob.arrayBuffer(), widthPt: base.width, heightPt: base.height });
+        const base = (await doc.getPage(idx + 1)).getViewport({ scale: 1 });
+        pagesOut.push({ pageIndex: idx, widthPt: base.width, heightPt: base.height });
       }
-      await memoryManager.destroyPdfDocument(doc);
-      const buffer = file.rawBuffer.slice(0);
-      const payload: RedactPdfPayload = { fileBuffer: buffer, fileName: file.name, pages: pagesOut, stripMetadata: stripMeta };
-      await runner.run('REDACT_PDF', payload, [buffer, ...pagesOut.map((p) => p.jpeg)]);
+      setPreparing(false);
+      const payload: RedactPdfPayload = { fileBuffer: file.data, fileName: file.name, pages: pagesOut, stripMetadata: stripMeta };
+      await runner.run('REDACT_PDF', payload);
+    } catch (err) {
+      setPrepError(err instanceof Error ? err.message : String(err));
     } finally {
       setPreparing(false);
+      const doc = renderDoc.current;
+      renderDoc.current = null;
+      if (doc) await memoryManager.destroyPdfDocument(doc);
     }
   };
 
@@ -176,6 +203,7 @@ export const RedactView: React.FC<RedactViewProps> = ({ initialFiles = [], onBac
       {...runner.layout}
       isProcessing={runner.layout.isProcessing || preparing}
       stage={preparing ? 'Rendering redacted pages…' : runner.layout.stage}
+      error={prepError ?? runner.layout.error}
       resultNote={runner.result?.note}
       actionButtonLabel={boxes.length ? `Redact ${boxes.length} area${boxes.length === 1 ? '' : 's'}` : 'Mark areas to redact'}
       onExecuteAction={() => void execute()}

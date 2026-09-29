@@ -3,16 +3,16 @@
  * IHatePDF - 100% Client-Side Architecture
  *
  * Embeds each image as its own page via pdf-lib, scaled to fit within the
- * chosen page size and margins while preserving aspect ratio.
+ * chosen page size and margins while preserving aspect ratio. JPEGs are
+ * copied from the picked files as the PDF is written, never held in memory.
  */
 
 import { PDFDocument } from 'pdf-lib';
-import type {
-  WorkerRequest,
-  ImagesToPdfPayload,
-  ProcessedPdfResult,
-  WorkerIncomingMessage,
-} from '../../types/worker';
+import type { ImagesToPdfPayload, ProcessedPdfResult } from '../../types/worker';
+import { drawImageAt, embedJpegSource, type EmbeddedImage } from '../../services/lazyImage';
+import { emitPdf } from '../../services/workerEmit';
+import { serveTask } from '../../services/workerTask';
+import type { OutputSink } from '../../services/workerOutput';
 
 const A4 = { width: 595.28, height: 841.89 };
 const LETTER = { width: 612, height: 792 };
@@ -20,7 +20,8 @@ const MARGINS = { none: 0, small: 18, big: 54 };
 
 export async function imagesToPdf(
   payload: ImagesToPdfPayload,
-  onProgress?: (progress: number, stage: string) => void
+  onProgress?: (progress: number, stage: string) => void,
+  sink?: OutputSink
 ): Promise<ProcessedPdfResult> {
   const { images, orientation, margin, pageSize, fileName } = payload;
   if (!images || images.length === 0) throw new Error('No images provided.');
@@ -31,7 +32,13 @@ export async function imagesToPdf(
 
   for (let i = 0; i < images.length; i++) {
     const { bytes, type } = images[i];
-    const embedded = type === 'jpg' ? await pdfDoc.embedJpg(bytes) : await pdfDoc.embedPng(bytes);
+    let embedded: EmbeddedImage;
+    if (type === 'jpg') {
+      embedded = await embedJpegSource(pdfDoc, bytes);
+    } else {
+      const png = await pdfDoc.embedPng(new Uint8Array(bytes instanceof Blob ? await bytes.arrayBuffer() : bytes));
+      embedded = { ref: png.ref, width: png.width, height: png.height };
+    }
     const imgIsLandscape = embedded.width > embedded.height;
 
     let baseSize: { width: number; height: number };
@@ -55,52 +62,20 @@ export async function imagesToPdf(
     const x = (baseSize.width - drawW) / 2;
     const y = (baseSize.height - drawH) / 2;
 
-    page.drawImage(embedded, { x, y, width: drawW, height: drawH });
+    drawImageAt(page, embedded, x, y, drawW, drawH);
     onProgress?.(10 + Math.round(((i + 1) / images.length) * 75), `Adding image ${i + 1}/${images.length}...`);
   }
 
   onProgress?.(90, 'Saving PDF...');
-  const pdfBytes = await pdfDoc.save();
-  const resultBuffer = pdfBytes.buffer.slice(
-    pdfBytes.byteOffset,
-    pdfBytes.byteOffset + pdfBytes.byteLength
-  ) as ArrayBuffer;
+  const out = await emitPdf(pdfDoc, sink);
 
   onProgress?.(100, 'PDF ready.');
   const cleanBaseName = fileName.replace(/\.[^/.]+$/, '') || 'images';
   return {
     fileName: `${cleanBaseName}.pdf`,
-    buffer: resultBuffer,
-    size: resultBuffer.byteLength,
+    ...out,
     pageCount: images.length,
   };
 }
 
-if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
-  (self as any).addEventListener('message', async (event: MessageEvent<WorkerRequest<ImagesToPdfPayload>>) => {
-    const { id, action, payload } = event.data;
-
-    if (action !== 'IMAGES_TO_PDF') return;
-
-    try {
-      const result = await imagesToPdf(payload, (progress, stage) => {
-        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-        (self as any).postMessage(msg);
-      });
-
-      const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = {
-        type: 'RESPONSE',
-        payload: { id, success: true, data: result },
-      };
-      (self as any).postMessage(responseMsg, [result.buffer]);
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to build PDF from images';
-      const responseMsg: WorkerIncomingMessage = {
-        type: 'RESPONSE',
-        payload: { id, success: false, error: errorMsg },
-      };
-      (self as any).postMessage(responseMsg);
-    }
-  });
-}
-
+serveTask<ImagesToPdfPayload, ProcessedPdfResult>('IMAGES_TO_PDF', (p, ctx) => imagesToPdf(p, ctx.progress, ctx.sink()), 'Failed to build PDF from images');

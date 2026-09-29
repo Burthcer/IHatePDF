@@ -7,7 +7,7 @@
 
 import { openPdf } from '../../services/pdfLoader';
 import { analyzePage, applyPageEdits } from '../editPdf/engine/rewrite';
-import type { PptTextBox } from '../../types/worker';
+import type { PdfInput, PptTextBox } from '../../types/worker';
 
 function familyFace(fontName: string, family: 'sans' | 'serif' | 'mono'): string {
   const base = fontName.split(/[-,+]/)[0].replace(/(MT|PS|Std|Pro)$/, '').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
@@ -15,8 +15,8 @@ function familyFace(fontName: string, family: 'sans' | 'serif' | 'mono'): string
   return family === 'serif' ? 'Times New Roman' : family === 'mono' ? 'Courier New' : 'Arial';
 }
 
-self.addEventListener('message', async (event: MessageEvent<{ id: string; action: string; payload: { buffer: ArrayBuffer } }>) => {
-  const { id, action, payload } = event.data;
+self.addEventListener('message', async (event: MessageEvent<{ id: string; action: string; payload: { buffer: PdfInput } }>) => {
+  const { id, action, payload } = event.data ?? {};
   if (action !== 'EXTRACT_FOR_PPT') return;
   const progress = (p: number, stage: string) => self.postMessage({ type: 'PROGRESS', payload: { id, progress: p, stage } });
   try {

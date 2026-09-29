@@ -86,7 +86,7 @@ export const HtmlToPdfView: React.FC<HtmlToPdfViewProps> = ({ onBack }) => {
     }
   };
 
-  const pseudoFiles: PDFFile[] = [{ id: 'html', name: `${fileName}.html`, size: new Blob([html]).size, pageCount: 0, rawBuffer: new ArrayBuffer(0), previewUrls: [] }];
+  const pseudoFiles: PDFFile[] = [{ id: 'html', name: `${fileName}.html`, size: new Blob([html]).size, pageCount: 0, data: new Blob([]), previewUrls: [] }];
 
   return (
     <ToolLayout

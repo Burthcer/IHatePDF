@@ -12,15 +12,10 @@
 import { PDFCheckBox, PDFDocument, PDFDropdown, PDFOptionList, PDFRadioGroup, PDFTextField, PDFName, PDFRef } from 'pdf-lib';
 import { openPdf } from '../../services/pdfLoader';
 import { fontForText } from '../../services/fonts';
-import type {
-  WorkerRequest,
-  GetFormFieldsPayload,
-  GetFormFieldsResult,
-  FillFormPayload,
-  FormFieldInfo,
-  ProcessedPdfResult,
-  WorkerIncomingMessage,
-} from '../../types/worker';
+import type { GetFormFieldsPayload, GetFormFieldsResult, FillFormPayload, FormFieldInfo, ProcessedPdfResult } from '../../types/worker';
+import { emitPdf } from '../../services/workerEmit';
+import { serveTask } from '../../services/workerTask';
+import type { OutputSink } from '../../services/workerOutput';
 
 function hasXfa(doc: PDFDocument): boolean {
   const acro = doc.catalog.lookup(PDFName.of('AcroForm'));
@@ -60,7 +55,7 @@ export function describeFields(pdfDoc: PDFDocument): FormFieldInfo[] {
   return out.sort((a, b) => (a.page ?? 0) - (b.page ?? 0));
 }
 
-export async function fillForm(payload: FillFormPayload, onProgress?: (p: number, s: string) => void): Promise<ProcessedPdfResult> {
+export async function fillForm(payload: FillFormPayload, onProgress?: (p: number, s: string) => void, sink?: OutputSink): Promise<ProcessedPdfResult> {
   const { fileBuffer, fileName, values, flatten } = payload;
   onProgress?.(20, 'Loading document...');
   const pdfDoc = await openPdf(fileBuffer);
@@ -110,38 +105,23 @@ export async function fillForm(payload: FillFormPayload, onProgress?: (p: number
   }
 
   onProgress?.(90, 'Saving PDF...');
-  const bytes = await pdfDoc.save({ useObjectStreams: true });
-  const resultBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const out = await emitPdf(pdfDoc, sink, { useObjectStreams: true });
   onProgress?.(100, 'Done.');
   return {
     fileName: `${fileName.replace(/\.[^/.]+$/, '')}_filled.pdf`,
-    buffer: resultBuffer,
-    size: resultBuffer.byteLength,
+    ...out,
     pageCount: pdfDoc.getPageCount(),
     note: failed.length ? `Couldn't set: ${failed.join(', ')}` : undefined,
   };
 }
 
-if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
-  self.addEventListener('message', async (event: MessageEvent<WorkerRequest<unknown>>) => {
-    const { id, action, payload } = event.data;
-    const progress = (p: number, stage: string) => {
-      const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress: p, stage } };
-      self.postMessage(msg);
-    };
-    try {
-      if (action === 'GET_FORM_FIELDS') {
-        const { fileBuffer } = payload as GetFormFieldsPayload;
-        progress(30, 'Detecting form fields...');
-        const doc = await openPdf(fileBuffer);
-        const result: GetFormFieldsResult = { fields: describeFields(doc), hadXfa: hasXfa(doc) };
-        self.postMessage({ type: 'RESPONSE', payload: { id, success: true, data: result } });
-      } else if (action === 'FILL_FORM') {
-        const result = await fillForm(payload as FillFormPayload, progress);
-        (self as any).postMessage({ type: 'RESPONSE', payload: { id, success: true, data: result } }, [result.buffer]);
-      }
-    } catch (err) {
-      self.postMessage({ type: 'RESPONSE', payload: { id, success: false, error: err instanceof Error ? err.message : 'Form operation failed' } });
-    }
-  });
-}
+serveTask<GetFormFieldsPayload, GetFormFieldsResult>(
+  'GET_FORM_FIELDS',
+  async ({ fileBuffer }, ctx) => {
+    ctx.progress(30, 'Detecting form fields...');
+    const doc = await openPdf(fileBuffer);
+    return { fields: describeFields(doc), hadXfa: hasXfa(doc) };
+  },
+  'Form operation failed'
+);
+serveTask<FillFormPayload, ProcessedPdfResult>('FILL_FORM', (p, ctx) => fillForm(p, ctx.progress, ctx.sink()), 'Form operation failed');

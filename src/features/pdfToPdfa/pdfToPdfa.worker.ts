@@ -16,7 +16,10 @@
 
 import { PDFArray, PDFDict, PDFHexString, PDFName, PDFStream, PDFString, PDFHeader, type PDFDocument } from 'pdf-lib';
 import { openPdf } from '../../services/pdfLoader';
-import type { WorkerRequest, PdfToPdfaPayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
+import type { PdfToPdfaPayload, ProcessedPdfResult } from '../../types/worker';
+import { emitPdf } from '../../services/workerEmit';
+import { serveTask } from '../../services/workerTask';
+import type { OutputSink } from '../../services/workerOutput';
 
 // ------------------------------------------------------------ ICC profile
 
@@ -202,7 +205,7 @@ function stripActions(doc: PDFDocument): number {
   return removed;
 }
 
-export async function convertToPdfa(payload: PdfToPdfaPayload, onProgress?: (p: number, s: string) => void): Promise<ProcessedPdfResult> {
+export async function convertToPdfa(payload: PdfToPdfaPayload, onProgress?: (p: number, s: string) => void, sink?: OutputSink): Promise<ProcessedPdfResult> {
   const { fileBuffer, fileName } = payload;
   onProgress?.(15, 'Loading document...');
   const pdfDoc = await openPdf(fileBuffer);
@@ -259,28 +262,13 @@ export async function convertToPdfa(payload: PdfToPdfaPayload, onProgress?: (p: 
   const unembedded = findUnembeddedFonts(pdfDoc);
 
   onProgress?.(85, 'Saving PDF...');
-  const bytes = await pdfDoc.save({ useObjectStreams: false });
-  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const out = await emitPdf(pdfDoc, sink, { useObjectStreams: false });
   onProgress?.(100, 'Done.');
 
   const notes: string[] = [];
   if (removedActions) notes.push(`Removed ${removedActions} script/action/attachment entr${removedActions === 1 ? 'y' : 'ies'}.`);
   if (unembedded.length) notes.push(`Not fully compliant: ${unembedded.length} font${unembedded.length === 1 ? ' isn’t' : 's aren’t'} embedded (${unembedded.slice(0, 4).join(', ')}${unembedded.length > 4 ? '…' : ''}). Re-export from the source application with fonts embedded.`);
-  return { fileName: `${base}_pdfa.pdf`, buffer, size: buffer.byteLength, pageCount: pdfDoc.getPageCount(), note: notes.join(' ') || 'PDF/A-2b structure written.' };
+  return { fileName: `${base}_pdfa.pdf`, ...out, pageCount: pdfDoc.getPageCount(), note: notes.join(' ') || 'PDF/A-2b structure written.' };
 }
 
-if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
-  self.addEventListener('message', async (event: MessageEvent<WorkerRequest<PdfToPdfaPayload>>) => {
-    const { id, action, payload } = event.data;
-    if (action !== 'PDF_TO_PDFA') return;
-    try {
-      const result = await convertToPdfa(payload, (progress, stage) => {
-        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-        self.postMessage(msg);
-      });
-      (self as any).postMessage({ type: 'RESPONSE', payload: { id, success: true, data: result } }, [result.buffer]);
-    } catch (err) {
-      self.postMessage({ type: 'RESPONSE', payload: { id, success: false, error: err instanceof Error ? err.message : 'Failed to convert to PDF/A' } });
-    }
-  });
-}
+serveTask<PdfToPdfaPayload, ProcessedPdfResult>('PDF_TO_PDFA', (p, ctx) => convertToPdfa(p, ctx.progress, ctx.sink()), 'Failed to convert to PDF/A');

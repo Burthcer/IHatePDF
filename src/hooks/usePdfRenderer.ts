@@ -8,9 +8,9 @@ import { memoryManager } from '../services/memoryManager';
 
 export function usePdfRenderer() {
   /** Renders page `pageNumber` (1-based) at `targetWidth` pixels wide and returns a JPEG data URL. */
-  const renderThumbnail = useCallback(async (pdfBuffer: ArrayBuffer, pageNumber: number, targetWidth = 200): Promise<string> => {
+  const renderThumbnail = useCallback(async (pdf: Blob | ArrayBuffer, pageNumber: number, targetWidth = 200): Promise<string> => {
     const { openPdfJsDocument } = await import('../services/pdfWorkerSetup'); // loaded on first use
-    const doc = await openPdfJsDocument(pdfBuffer).promise;
+    const doc = await openPdfJsDocument(pdf).promise;
     try {
       const page = await doc.getPage(pageNumber);
       const viewport = page.getViewport({ scale: targetWidth / page.getViewport({ scale: 1 }).width });

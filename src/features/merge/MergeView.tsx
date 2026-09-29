@@ -28,7 +28,7 @@ export const MergeView: React.FC<MergeViewProps> = ({ initialFiles = [], onBack 
     for (const f of files) {
       if (requested.current.has(f.id)) continue;
       requested.current.add(f.id);
-      renderThumbnail(f.rawBuffer, 1, 96)
+      renderThumbnail(f.data, 1, 96)
         .then((url) => setCovers((prev) => ({ ...prev, [f.id]: url })))
         .catch(() => undefined);
     }
@@ -50,8 +50,8 @@ export const MergeView: React.FC<MergeViewProps> = ({ initialFiles = [], onBack 
   const totalPages = files.reduce((n, f) => n + f.pageCount, 0);
 
   const execute = () => {
-    const payload: MergePayload = { files: files.map((f) => ({ name: f.name, buffer: f.rawBuffer.slice(0) })), outputName };
-    void runner.run('MERGE_PDFS', payload, payload.files.map((f) => f.buffer));
+    const payload: MergePayload = { files: files.map((f) => ({ name: f.name, buffer: f.data })), outputName };
+    void runner.run('MERGE_PDFS', payload);
   };
 
   return (

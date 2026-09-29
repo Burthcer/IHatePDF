@@ -19,12 +19,14 @@
 
 import {
   PDFArray,
+  PDFContext,
   PDFDict,
   PDFDocument,
   PDFHexString,
   PDFName,
   PDFNumber,
   PDFObject,
+  PDFObjectParser,
   PDFObjectStreamParser,
   PDFParser,
   PDFRawStream,
@@ -35,6 +37,8 @@ import {
   decodePDFRawStream,
 } from 'pdf-lib';
 import { createSecurityHandler, firstFileId, type SecurityHandler } from './pdfSecurity';
+import { BlobSource, BufferSource, canReadBlobsSync, type ByteSource } from './byteSource';
+import { loadLazyPdf } from './lazyPdf';
 import { bytesToHex } from './pdfCrypto';
 
 export class PdfPasswordError extends Error {
@@ -243,9 +247,48 @@ async function loadEncrypted(bytes: Uint8Array, password: string | undefined): P
 
 const openedInfo = new WeakMap<PDFDocument, OpenedPdfInfo>();
 
+// pdf-lib copies every stream's bytes out of the file buffer while parsing;
+// views into the buffer are enough (it stays alive with the document).
+{
+  const proto = Object.getPrototypeOf((PDFObjectParser.forBytes(new Uint8Array(1), PDFContext.create()) as unknown as { bytes: object }).bytes) as {
+    slice(start: number, end: number): Uint8Array;
+    bytes?: Uint8Array;
+  };
+  proto.slice = function (this: { bytes: Uint8Array }, start: number, end: number) {
+    return this.bytes.subarray(start, end);
+  };
+}
+
+/** PDFs this big or bigger are opened as an index, their data read from disk on demand. */
+const LAZY_MIN_BYTES = 1024 * 1024;
+
+export type PdfSourceInput = ArrayBuffer | Uint8Array | Blob;
+
+/** Reads a whole input into memory (small files, encrypted or damaged files). */
+export function readAllBytes(input: PdfSourceInput): Uint8Array | Promise<Uint8Array> {
+  if (!(input instanceof Blob)) return toBytes(input);
+  if (canReadBlobsSync()) return new BlobSource(input).read(0, input.size).slice();
+  return input.arrayBuffer().then((b) => new Uint8Array(b));
+}
+
+/** A random-access view of the input without loading it (Blobs need a worker). */
+export function sourceOf(input: PdfSourceInput): ByteSource | null {
+  if (input instanceof Blob) return canReadBlobsSync() ? new BlobSource(input) : null;
+  return new BufferSource(toBytes(input));
+}
+
 /** Loads any PDF — plain, owner-restricted, or password-protected — as a plain, editable PDFDocument. */
-export async function openPdf(input: ArrayBuffer | Uint8Array, options: OpenPdfOptions = {}): Promise<PDFDocument> {
-  const bytes = toBytes(input);
+export async function openPdf(input: PdfSourceInput, options: OpenPdfOptions = {}): Promise<PDFDocument> {
+  const size = input instanceof Blob ? input.size : input.byteLength;
+  if (size >= LAZY_MIN_BYTES || (globalThis as { __ihpForceLazy?: boolean }).__ihpForceLazy) {
+    const src = sourceOf(input);
+    const lazy = src ? loadLazyPdf(src) : null;
+    if (lazy) {
+      openedInfo.set(lazy, { wasEncrypted: false });
+      return lazy;
+    }
+  }
+  const bytes = await readAllBytes(input);
   if (!containsEncryptToken(bytes)) {
     const doc = await PDFDocument.load(bytes, LOAD_OPTIONS);
     openedInfo.set(doc, { wasEncrypted: false });
