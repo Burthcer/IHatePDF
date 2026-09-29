@@ -70,13 +70,13 @@ export type WorkerIncomingMessage<T = unknown> = WorkerProgressMessage | WorkerR
 export interface MergePayload {
   files: Array<{
     name: string;
-    buffer: ArrayBuffer;
+    buffer: PdfInput;
   }>;
   outputName?: string;
 }
 
 export interface SplitPayload {
-  fileBuffer: ArrayBuffer;
+  fileBuffer: PdfInput;
   fileName: string;
   ranges: Array<{ from: number; to: number }> | 'all';
   /** One output file per group of 0-based page indices (ZIP when more than one). */
@@ -84,14 +84,14 @@ export interface SplitPayload {
 }
 
 export interface RotatePayload {
-  fileBuffer: ArrayBuffer;
+  fileBuffer: PdfInput;
   fileName: string;
   rotations: Array<{ pageIndex: number; degrees: number }>; // degrees: 90, 180, 270
   globalDegrees?: number;
 }
 
 export interface OrganizePayload {
-  fileBuffer: ArrayBuffer;
+  fileBuffer: PdfInput;
   fileName: string;
   pageOrder: number[]; // 0-based page indices in new desired order; -1 = blank page
   deletedPages?: number[];
@@ -99,7 +99,7 @@ export interface OrganizePayload {
 }
 
 export interface CompressPayload {
-  fileBuffer: ArrayBuffer;
+  fileBuffer: PdfInput;
   fileName: string;
   level: 'low' | 'recommended' | 'extreme' | 'custom';
   /** For level 'custom': the size the output should fit in, in bytes. */
@@ -107,7 +107,7 @@ export interface CompressPayload {
 }
 
 export interface ProtectPayload {
-  fileBuffer: ArrayBuffer;
+  fileBuffer: PdfInput;
   fileName: string;
   userPassword?: string;
   ownerPassword?: string;
@@ -120,7 +120,7 @@ export interface ProtectPayload {
 }
 
 export interface UnlockPayload {
-  fileBuffer: ArrayBuffer;
+  fileBuffer: PdfInput;
   fileName: string;
   password?: string;
 }
@@ -133,7 +133,7 @@ export interface CropMarginsMm {
 }
 
 export interface CropPayload {
-  fileBuffer: ArrayBuffer;
+  fileBuffer: PdfInput;
   fileName: string;
   margins: CropMarginsMm;
   pageIndices?: number[]; // 0-based; omit/undefined = apply to every page
@@ -145,7 +145,7 @@ export type WatermarkPosition =
   | 'bottom-left' | 'bottom-center' | 'bottom-right';
 
 export interface WatermarkPayload {
-  fileBuffer: ArrayBuffer;
+  fileBuffer: PdfInput;
   fileName: string;
   mode: 'text' | 'image';
   text?: string;
@@ -170,7 +170,7 @@ export interface WatermarkPayload {
 export type PageNumberFormat = 'n' | 'n_of_total' | 'roman';
 
 export interface PageNumbersPayload {
-  fileBuffer: ArrayBuffer;
+  fileBuffer: PdfInput;
   fileName: string;
   format: PageNumberFormat;
   position: WatermarkPosition;
@@ -279,7 +279,7 @@ export interface RenderedPageImage {
 }
 
 export interface BuildJpgZipPayload {
-  images: Array<RenderedPageImage | { pageNumber: number; bytes: ArrayBuffer; dataUrl?: undefined }>;
+  images: Array<RenderedPageImage | { pageNumber: number; bytes: Blob | ArrayBuffer; dataUrl?: undefined }>;
   fileName: string;
   /** File extension for the images (default jpg). */
   ext?: 'jpg' | 'png';
@@ -290,7 +290,7 @@ export type ImagePageMargin = 'none' | 'small' | 'big';
 export type ImagePageSize = 'a4' | 'letter' | 'fit';
 
 export interface ImagesToPdfPayload {
-  images: Array<{ bytes: ArrayBuffer; type: 'png' | 'jpg' }>;
+  images: Array<{ bytes: Blob | ArrayBuffer; type: 'png' | 'jpg' }>;
   orientation: ImagePageOrientation;
   margin: ImagePageMargin;
   pageSize: ImagePageSize;
@@ -298,10 +298,10 @@ export interface ImagesToPdfPayload {
 }
 
 export interface RepairPayload {
-  fileBuffer: ArrayBuffer;
+  fileBuffer: PdfInput;
   fileName: string;
   /** Fallback: rebuild from pages pdf.js could still render. */
-  renderedPages?: Array<{ jpeg: ArrayBuffer; widthPt: number; heightPt: number }>;
+  renderedPages?: Array<{ jpeg: Blob | ArrayBuffer; widthPt: number; heightPt: number }>;
 }
 
 /** One extracted table row (cells) for PDF -> Excel. */
@@ -317,7 +317,7 @@ export interface XlsxToPdfPayload {
 }
 
 export interface PdfToPdfaPayload {
-  fileBuffer: ArrayBuffer;
+  fileBuffer: PdfInput;
   fileName: string;
 }
 
@@ -336,7 +336,7 @@ export interface FormFieldInfo {
 }
 
 export interface GetFormFieldsPayload {
-  fileBuffer: ArrayBuffer;
+  fileBuffer: PdfInput;
 }
 
 export interface GetFormFieldsResult {
@@ -345,7 +345,7 @@ export interface GetFormFieldsResult {
 }
 
 export interface FillFormPayload {
-  fileBuffer: ArrayBuffer;
+  fileBuffer: PdfInput;
   fileName: string;
   values: Record<string, string | boolean>;
   flatten: boolean;
@@ -361,7 +361,7 @@ export interface SignaturePlacement {
 }
 
 export interface StampSignaturePayload {
-  fileBuffer: ArrayBuffer;
+  fileBuffer: PdfInput;
   fileName: string;
   signatureImageBytes: ArrayBuffer;
   placements: SignaturePlacement[];
@@ -387,6 +387,13 @@ export interface HtmlToPdfPayload {
   title?: string;
 }
 
+/** A redacted page rendered by the page for the Redact worker (JPEG, pixel size). */
+export interface RedactedPageRender {
+  jpeg: ArrayBuffer;
+  width: number;
+  height: number;
+}
+
 export interface RedactionBox {
   pageIndex: number; // 0-based
   /** Viewer-space box in points (origin top-left of the page as displayed). */
@@ -397,16 +404,37 @@ export interface RedactionBox {
 }
 
 export interface RedactPdfPayload {
-  fileBuffer: ArrayBuffer;
+  fileBuffer: PdfInput;
   fileName: string;
   /** Pages rebuilt from redacted renders; every other page is copied untouched. */
-  pages: Array<{ pageIndex: number; jpeg: ArrayBuffer; widthPt: number; heightPt: number }>;
+  /**
+   * Pages rebuilt from redacted renders. Without `jpeg`, the worker asks the
+   * page for each render ('redacted-page') only when it writes that page, so
+   * just one exists at a time.
+   */
+  pages: Array<{ pageIndex: number; jpeg?: Blob | ArrayBuffer; widthPt: number; heightPt: number }>;
   stripMetadata: boolean;
 }
 
+/**
+ * A tool's output file. Big outputs are streamed out of the worker as they're
+ * written ('stream', resolved by the page into 'file' — a temp file on disk
+ * in the desktop app — or 'blob' in a browser), so they never sit in memory whole.
+ */
+export type ToolOutput =
+  | { kind: 'stream'; id: string; size: number }
+  | { kind: 'file'; path: string; size: number }
+  | { kind: 'blob'; blob: Blob; size: number };
+
+/** A PDF handed to a worker: a (disk-backed) Blob, or bytes. */
+export type PdfInput = ArrayBuffer | Blob;
+
 export interface ProcessedPdfResult {
   fileName: string;
-  buffer: ArrayBuffer;
+  /** In-memory result (small outputs, tests). */
+  buffer?: ArrayBuffer;
+  /** Streamed result (the app). */
+  output?: ToolOutput;
   size: number;
   pageCount?: number;
   /** Human-readable summary of what the tool did (shown with the result). */

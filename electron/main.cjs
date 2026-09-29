@@ -11,6 +11,9 @@
  *   a numbered name when one already exists; the page is told where.
  * - "Share to phone": a QR download page over Wi-Fi or this PC's own hotspot
  *   (share.cjs, hotspot.cjs), or Bluetooth (bluetooth.cjs).
+ * - Memory fail-safe (memoryGuard.cjs): a RAM budget sized to this PC; jobs
+ *   that would go over it are stopped cleanly instead of freezing Windows.
+ * - If the page's process dies, the window reloads and says what happened.
  */
 
 const { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, net, protocol, shell } = require('electron');
@@ -20,6 +23,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const share = require('./share.cjs');
 const { createZip } = require('./zip.cjs');
+const memoryGuard = require('./memoryGuard.cjs');
 
 // Hotspot and Bluetooth call Windows through a native FFI; load them only when used.
 const natives = {};
@@ -153,11 +157,88 @@ function createWindow() {
     });
   });
 
+  // The page's process can die (a crash, or ended by the memory fail-safe):
+  // reload it with a note saying what happened instead of leaving a blank window.
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    if (details.reason === 'clean-exit' || !mainWindow || mainWindow.isDestroyed()) return;
+    const now = Date.now();
+    recentCrashes = recentCrashes.filter((t) => now - t < 60_000).concat(now);
+    if (recentCrashes.length > 3) {
+      dialog.showErrorBox('IHatePDF stopped', 'IHatePDF closed unexpectedly several times in a row. Please restart it.');
+      app.quit();
+      return;
+    }
+    const why = endedForMemory || details.reason === 'oom' ? 'memory' : 'crash';
+    endedForMemory = false;
+    mainWindow.loadURL(`${HOST}/index.html?recovered=${why}`);
+  });
+
   mainWindow.loadURL(`${HOST}/index.html`);
 }
 
+let recentCrashes = [];
+let endedForMemory = false;
+let watchdog = null;
+
+ipcMain.handle('ihp:mem-info', () => (watchdog ? watchdog.state() : memoryGuard.info()));
+ipcMain.on('ihp:mem-ack', () => watchdog?.ack());
+
 ipcMain.on('ihp:show-in-folder', (event, file) => {
   if (typeof file === 'string' && path.normalize(file).startsWith(saveDir())) shell.showItemInFolder(file);
+});
+
+// ---- Tool output files ----
+// Big results are streamed from the page into temp files here (never held in
+// memory whole); "Save" copies the temp file into Downloads/IHatePDF.
+
+const WORK_DIR = path.join(os.tmpdir(), 'IHatePDF-work');
+const outputs = new Map(); // handle -> { fd, path, size }
+const inWorkDir = (p) => typeof p === 'string' && path.normalize(p).startsWith(WORK_DIR + path.sep);
+
+function cleanWorkDir() {
+  try {
+    fs.rmSync(WORK_DIR, { recursive: true, force: true });
+  } catch {
+    // files still open elsewhere; they'll be removed next time
+  }
+}
+
+ipcMain.handle('ihp:out-create', () => {
+  fs.mkdirSync(WORK_DIR, { recursive: true });
+  const handle = require('crypto').randomUUID();
+  const file = path.join(WORK_DIR, `${handle}.tmp`);
+  outputs.set(handle, { fd: fs.openSync(file, 'w'), path: file, size: 0 });
+  return handle;
+});
+ipcMain.handle('ihp:out-write', (event, handle, chunk) => {
+  const o = outputs.get(handle);
+  if (!o) throw new Error('Unknown output.');
+  const buf = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+  let written = 0;
+  while (written < buf.length) written += fs.writeSync(o.fd, buf, written, buf.length - written);
+  o.size += buf.length;
+});
+ipcMain.handle('ihp:out-close', (event, handle, discard) => {
+  const o = outputs.get(handle);
+  if (!o) throw new Error('Unknown output.');
+  outputs.delete(handle);
+  fs.closeSync(o.fd);
+  if (discard) fs.rmSync(o.path, { force: true });
+  return { path: o.path, size: o.size };
+});
+ipcMain.handle('ihp:out-save', (event, file, name) => {
+  if (!inWorkDir(file)) throw new Error('Not an output file.');
+  const target = uniquePath(saveDir(), String(name));
+  fs.copyFileSync(file, target);
+  if (!event.sender.isDestroyed()) event.sender.send('ihp:saved', { name: path.basename(target), path: target });
+  return target;
+});
+ipcMain.handle('ihp:out-discard', (event, file) => {
+  if (inWorkDir(file)) fs.rmSync(file, { force: true });
+});
+ipcMain.handle('ihp:out-read', (event, file) => {
+  if (!inWorkDir(file)) throw new Error('Not an output file.');
+  return new Uint8Array(fs.readFileSync(file));
 });
 
 // ---- Share to phone ----
@@ -228,9 +309,16 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(() => {
+  cleanWorkDir();
   Menu.setApplicationMenu(null);
   serveApp();
   createWindow();
+  // Last resort of the memory fail-safe: the page didn't free memory itself.
+  watchdog = memoryGuard.startWatchdog(app, () => mainWindow?.webContents ?? null, () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    endedForMemory = true;
+    mainWindow.webContents.forcefullyCrashRenderer();
+  });
 });
 
 // Quit on every platform when the window closes.
@@ -238,6 +326,14 @@ app.on('window-all-closed', () => app.quit());
 
 // Last resort: if something keeps the process alive after quitting, end it.
 app.on('will-quit', () => {
+  for (const o of outputs.values()) {
+    try {
+      fs.closeSync(o.fd);
+    } catch {
+      // already closed
+    }
+  }
+  cleanWorkDir();
   share.stop();
   natives.bluetooth?.cancel();
   void stopHotspot();

@@ -3,20 +3,37 @@
  * of useWorkerBridge. Spread `layout` into <ToolLayout>.
  */
 
-import { useCallback, useState } from 'react';
-import { useWorkerBridge } from './useWorkerBridge';
-import { memoryManager } from '../services/memoryManager';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useWorkerBridge, type UseWorkerBridgeOptions } from './useWorkerBridge';
+import { discardResult, saveResult, type ResultData } from '../services/toolOutput';
+import type { ToolOutput } from '../types/worker';
 
 export interface RunnableResult {
-  buffer: ArrayBuffer;
+  /** In-memory result (small outputs). */
+  buffer?: ArrayBuffer;
+  /** Streamed result, stored in a temp file (desktop) or Blob. */
+  output?: ToolOutput;
   fileName: string;
   mimeType?: string;
 }
 
-export function useToolRunner<R extends RunnableResult>(workerFactory: () => Worker) {
-  const bridge = useWorkerBridge<R>(workerFactory);
-  const [result, setResult] = useState<R | null>(null);
+/** The result's bytes, wherever they are. */
+export const dataOf = (r: RunnableResult | null | undefined): ResultData | null => r?.output ?? r?.buffer ?? null;
+
+export function useToolRunner<R extends RunnableResult>(workerFactory: () => Worker, options: UseWorkerBridgeOptions = {}) {
+  const bridge = useWorkerBridge<R>(workerFactory, options);
+  const [result, setResultState] = useState<R | null>(null);
   const { runTask, resetState } = bridge;
+  const current = useRef<R | null>(null);
+
+  // Replacing or clearing a result frees its temp file.
+  const setResult = useCallback((next: R | null) => {
+    if (current.current && current.current !== next) discardResult(dataOf(current.current));
+    current.current = next;
+    setResultState(next);
+  }, []);
+
+  useEffect(() => () => discardResult(dataOf(current.current)), []);
 
   const run = useCallback(
     async <P>(action: string, payload: P, transfer: Transferable[] = []): Promise<R | null> => {
@@ -30,17 +47,21 @@ export function useToolRunner<R extends RunnableResult>(workerFactory: () => Wor
         return null;
       }
     },
-    [runTask]
+    [runTask, setResult]
   );
 
   const reset = useCallback(() => {
     setResult(null);
     resetState();
-  }, [resetState]);
+  }, [resetState, setResult]);
 
   const download = useCallback(
     (fileName?: string) => {
-      if (result) memoryManager.downloadBuffer(result.buffer, fileName || result.fileName, result.mimeType ?? guessMime(result.fileName));
+      const data = dataOf(result);
+      if (!result || !data) return;
+      saveResult(data, fileName || result.fileName, result.mimeType ?? guessMime(result.fileName)).catch((err) =>
+        console.error('Saving the result failed', err)
+      );
     },
     [result]
   );
@@ -57,7 +78,7 @@ export function useToolRunner<R extends RunnableResult>(workerFactory: () => Wor
       progress: bridge.progress,
       stage: bridge.stage,
       error: bridge.error,
-      resultBuffer: result?.buffer ?? null,
+      resultData: dataOf(result),
       resultFileName: result?.fileName,
       onDownloadResult: download,
       onReset: reset,

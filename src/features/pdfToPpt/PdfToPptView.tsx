@@ -3,8 +3,9 @@ import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
 import { Field, Panel, Segmented } from '../../components/ui';
 import { useToolRunner } from '../../hooks/useToolRunner';
-import { openPdfJsDocument } from '../../services/pdfWorkerSetup';
+import { openPdfJsDocument, type PdfJsSource } from '../../services/pdfWorkerSetup';
 import { memoryManager } from '../../services/memoryManager';
+import { startJob } from '../../services/memoryGuard';
 import { WorkerClient } from '../../services/workerClient';
 import { getTool } from '../../constants/tools';
 import type { PDFFile } from '../../types/pdf';
@@ -15,11 +16,13 @@ interface PdfToPptViewProps {
   onBack: () => void;
 }
 
-async function renderSlides(buffer: ArrayBuffer, width: number, onPage: (i: number, n: number) => void): Promise<PptxSlideImage[]> {
-  const doc = await openPdfJsDocument(buffer).promise;
+async function renderSlides(source: PdfJsSource, width: number, onPage: (i: number, n: number) => void): Promise<PptxSlideImage[]> {
+  const doc = await openPdfJsDocument(source).promise;
   const slides: PptxSlideImage[] = [];
+  const job = startJob();
   try {
     for (let i = 1; i <= doc.numPages; i++) {
+      job.check();
       onPage(i, doc.numPages);
       const page = await doc.getPage(i);
       const base = page.getViewport({ scale: 1 });
@@ -36,6 +39,7 @@ async function renderSlides(buffer: ArrayBuffer, width: number, onPage: (i: numb
       page.cleanup();
     }
   } finally {
+    job.end();
     await memoryManager.destroyPdfDocument(doc);
   }
   return slides;
@@ -53,12 +57,11 @@ export const PdfToPptView: React.FC<PdfToPptViewProps> = ({ initialFiles = [], o
     setPrepError(null);
     let client: WorkerClient | null = null;
     try {
-      let source = file.rawBuffer;
+      let source: PdfJsSource = file.data;
       let textBoxes: PptTextBox[][] | undefined;
       if (mode === 'editable') {
         client = new WorkerClient(() => new Worker(new URL('./extract.worker.ts', import.meta.url), { type: 'module' }));
-        const copy = file.rawBuffer.slice(0);
-        const res = await client.call<{ background: ArrayBuffer; pages: Array<{ boxes: PptTextBox[] }> }>('EXTRACT_FOR_PPT', { buffer: copy }, [copy], (p, stage) =>
+        const res = await client.call<{ background: ArrayBuffer; pages: Array<{ boxes: PptTextBox[] }> }>('EXTRACT_FOR_PPT', { buffer: file.data }, [], (p, stage) =>
           setPrep({ progress: p * 0.4, stage })
         );
         source = res.background;

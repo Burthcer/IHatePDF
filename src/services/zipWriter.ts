@@ -124,3 +124,90 @@ export function createZip(entries: ZipEntryInput[]): Uint8Array {
 
   return out;
 }
+
+// ------------------------------------------------------------------ streaming
+
+interface ByteSink {
+  write(chunk: Uint8Array): void | Promise<void>;
+}
+
+/**
+ * Writes a STORED ZIP entry by entry to a sink, with each entry's data also
+ * streamed (CRC and sizes follow the data in a descriptor), so neither the
+ * archive nor any single entry has to be held in memory.
+ */
+export class ZipStreamWriter {
+  private readonly central: Uint8Array[] = [];
+  private offset = 0;
+  private count = 0;
+  private readonly encoder = new TextEncoder();
+  private readonly stamp = dosDateTime();
+
+  constructor(private readonly sink: ByteSink) {}
+
+  private async put(b: Uint8Array) {
+    this.offset += b.length;
+    if (this.offset > 0xffffffff) throw new Error('This ZIP would be larger than 4 GB. Split into fewer, smaller groups.');
+    await this.sink.write(b);
+  }
+
+  /** Adds an entry whose data is produced by `writeData` through the given sink. */
+  async addEntry(name: string, writeData: (sink: ByteSink) => Promise<void>) {
+    const nameBytes = this.encoder.encode(name);
+    const start = this.offset;
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034b50, true);
+    local.setUint16(4, 20, true);
+    local.setUint16(6, 0x0808, true); // data descriptor + UTF-8 names
+    local.setUint16(8, 0, true);
+    local.setUint16(10, this.stamp.time, true);
+    local.setUint16(12, this.stamp.date, true);
+    local.setUint16(26, nameBytes.length, true);
+    await this.put(new Uint8Array(local.buffer));
+    // A copy: sinks may take ownership of what they're given, and the name is needed again below.
+    await this.put(nameBytes.slice());
+    const table = getCrcTable();
+    let crc = 0xffffffff;
+    let size = 0;
+    await writeData({
+      write: async (chunk) => {
+        for (let i = 0; i < chunk.length; i++) crc = table[(crc ^ chunk[i]) & 0xff] ^ (crc >>> 8);
+        size += chunk.length;
+        await this.put(chunk);
+      },
+    });
+    crc = (crc ^ 0xffffffff) >>> 0;
+    const desc = new DataView(new ArrayBuffer(16));
+    desc.setUint32(0, 0x08074b50, true);
+    desc.setUint32(4, crc, true);
+    desc.setUint32(8, size, true);
+    desc.setUint32(12, size, true);
+    await this.put(new Uint8Array(desc.buffer));
+    const c = new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true);
+    c.setUint16(4, 20, true);
+    c.setUint16(6, 20, true);
+    c.setUint16(8, 0x0808, true);
+    c.setUint16(12, this.stamp.time, true);
+    c.setUint16(14, this.stamp.date, true);
+    c.setUint32(16, crc, true);
+    c.setUint32(20, size, true);
+    c.setUint32(24, size, true);
+    c.setUint16(28, nameBytes.length, true);
+    c.setUint32(42, start, true);
+    this.central.push(new Uint8Array(c.buffer), nameBytes);
+    this.count++;
+  }
+
+  async finish() {
+    const cdStart = this.offset;
+    for (const part of this.central) await this.put(part);
+    const e = new DataView(new ArrayBuffer(22));
+    e.setUint32(0, 0x06054b50, true);
+    e.setUint16(8, Math.min(this.count, 0xffff), true);
+    e.setUint16(10, Math.min(this.count, 0xffff), true);
+    e.setUint32(12, this.offset - cdStart, true);
+    e.setUint32(16, cdStart, true);
+    await this.put(new Uint8Array(e.buffer));
+  }
+}

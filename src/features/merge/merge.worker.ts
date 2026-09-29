@@ -12,12 +12,17 @@
 
 import { PDFDocument } from 'pdf-lib';
 import { openPdf } from '../../services/pdfLoader';
-import type { WorkerRequest, MergePayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
+import type { MergePayload, ProcessedPdfResult } from '../../types/worker';
+import { emitPdf } from '../../services/workerEmit';
+import { appendPages } from '../../services/pageTree';
+import { serveTask } from '../../services/workerTask';
+import type { OutputSink } from '../../services/workerOutput';
 
 export async function mergePdfs(
   files: MergePayload['files'],
   onProgress?: (progress: number, stage: string) => void,
-  outputName = 'merged.pdf'
+  outputName = 'merged.pdf',
+  sink?: OutputSink
 ): Promise<ProcessedPdfResult> {
   if (!files || files.length < 2) {
     throw new Error('At least two PDF files are required for merging.');
@@ -43,51 +48,24 @@ export async function mergePdfs(
     const pageIndices = sourceDoc.getPageIndices();
     const copiedPages = await mergedDoc.copyPages(sourceDoc, pageIndices);
 
-    for (const page of copiedPages) {
-      mergedDoc.addPage(page);
-    }
+    appendPages(mergedDoc, copiedPages);
 
     totalPagesMerged += pageIndices.length;
   }
 
-  onProgress?.(95, 'Assembling and serializing merged PDF...');
-  const mergedBytes = await mergedDoc.save();
-  const resultBuffer = mergedBytes.buffer.slice(
-    mergedBytes.byteOffset,
-    mergedBytes.byteOffset + mergedBytes.byteLength
-  ) as ArrayBuffer;
-
+  onProgress?.(95, 'Writing the merged PDF...');
+  const out = await emitPdf(mergedDoc, sink);
   onProgress?.(100, 'Merge completed successfully.');
 
   return {
     fileName: outputName.toLowerCase().endsWith('.pdf') ? outputName : `${outputName}.pdf`,
-    buffer: resultBuffer,
-    size: resultBuffer.byteLength,
+    ...out,
     pageCount: totalPagesMerged,
   };
 }
 
-if (typeof self !== 'undefined') self.addEventListener('message', async (event: MessageEvent<WorkerRequest<MergePayload>>) => {
-  const { id, action, payload } = event.data;
-  if (action !== 'MERGE_PDFS') return;
-
-  try {
-    const result = await mergePdfs(
-      payload.files,
-      (progress, stage) => {
-        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-        self.postMessage(msg);
-      },
-      payload.outputName || 'merged.pdf'
-    );
-    const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = {
-      type: 'RESPONSE',
-      payload: { id, success: true, data: result },
-    };
-    (self as any).postMessage(responseMsg, [result.buffer]);
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : 'Failed to merge PDF documents';
-    const responseMsg: WorkerIncomingMessage = { type: 'RESPONSE', payload: { id, success: false, error: errorMsg } };
-    self.postMessage(responseMsg);
-  }
-});
+serveTask<MergePayload, ProcessedPdfResult>(
+  'MERGE_PDFS',
+  (payload, ctx) => mergePdfs(payload.files, ctx.progress, payload.outputName || 'merged.pdf', ctx.sink()),
+  'Failed to merge PDF documents'
+);

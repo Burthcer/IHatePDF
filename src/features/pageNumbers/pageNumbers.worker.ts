@@ -13,7 +13,10 @@ import { openPdf } from '../../services/pdfLoader';
 import { fontForText } from '../../services/fonts';
 import { withViewerFrame } from '../../services/pageOverlay';
 import { hexToRgb01, computeAnchor, toRoman } from '../../services/pdfStampPosition';
-import type { WorkerRequest, PageNumbersPayload, ProcessedPdfResult, WorkerIncomingMessage, WatermarkPosition } from '../../types/worker';
+import type { PageNumbersPayload, ProcessedPdfResult, WatermarkPosition } from '../../types/worker';
+import { emitPdf } from '../../services/workerEmit';
+import { serveTask } from '../../services/workerTask';
+import type { OutputSink } from '../../services/workerOutput';
 
 const MM_TO_PT = 72 / 25.4;
 
@@ -34,7 +37,8 @@ function mirrored(position: WatermarkPosition): WatermarkPosition {
 
 export async function addPageNumbers(
   payload: PageNumbersPayload,
-  onProgress?: (progress: number, stage: string) => void
+  onProgress?: (progress: number, stage: string) => void,
+  sink?: OutputSink
 ): Promise<ProcessedPdfResult> {
   const { fileBuffer, fileName, position, fontSize, color, marginMm, startPage, endPage, startingNumber } = payload;
   if (!fileBuffer) throw new Error('No PDF buffer provided.');
@@ -67,29 +71,13 @@ export async function addPageNumbers(
   }
 
   onProgress?.(90, 'Saving document...');
-  const outBytes = await pdfDoc.save({ useObjectStreams: true });
-  const resultBuffer = outBytes.buffer.slice(outBytes.byteOffset, outBytes.byteOffset + outBytes.byteLength) as ArrayBuffer;
+  const out = await emitPdf(pdfDoc, sink, { useObjectStreams: true });
   onProgress?.(100, 'Page numbers added.');
   return {
     fileName: `${fileName.replace(/\.[^/.]+$/, '')}_numbered.pdf`,
-    buffer: resultBuffer,
-    size: resultBuffer.byteLength,
+    ...out,
     pageCount: totalPages,
   };
 }
 
-if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
-  (self as any).addEventListener('message', async (event: MessageEvent<WorkerRequest<PageNumbersPayload>>) => {
-    const { id, action, payload } = event.data;
-    if (action !== 'ADD_PAGE_NUMBERS') return;
-    try {
-      const result = await addPageNumbers(payload, (progress, stage) => {
-        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-        (self as any).postMessage(msg);
-      });
-      (self as any).postMessage({ type: 'RESPONSE', payload: { id, success: true, data: result } }, [result.buffer]);
-    } catch (err) {
-      (self as any).postMessage({ type: 'RESPONSE', payload: { id, success: false, error: err instanceof Error ? err.message : 'Failed to add page numbers' } });
-    }
-  });
-}
+serveTask<PageNumbersPayload, ProcessedPdfResult>('ADD_PAGE_NUMBERS', (p, ctx) => addPageNumbers(p, ctx.progress, ctx.sink()), 'Failed to add page numbers');

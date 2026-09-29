@@ -11,6 +11,7 @@
 import './polyfills';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from './pdfjs.worker.ts?worker&url';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -30,9 +31,92 @@ export const PDFJS_DOCUMENT_OPTIONS = {
   isEvalSupported: false,
 };
 
-export function openPdfJsDocument(data: ArrayBuffer | Uint8Array, password?: string) {
+/**
+ * Feeds pdf.js from a (disk-backed) Blob on demand, so a large PDF is never
+ * read into memory whole — only the parts needed for what's rendered.
+ */
+class BlobRangeTransport extends pdfjsLib.PDFDataRangeTransport {
+  constructor(private readonly blob: Blob) {
+    super(blob.size, null);
+  }
+
+  override requestDataRange(begin: number, end: number) {
+    this.blob
+      .slice(begin, end)
+      .arrayBuffer()
+      .then((buf) => this.onDataRange(begin, new Uint8Array(buf)))
+      .catch((err) => console.warn('PDF range read failed (document closed?)', err));
+  }
+}
+
+/**
+ * Above this, pdf.js reads the file from disk in ranges, only as needed.
+ * Smaller files are simply read whole: faster, and they're small.
+ */
+const FETCH_ON_DEMAND_BYTES = 16 * 1024 * 1024;
+
+export type PdfJsSource = ArrayBuffer | Uint8Array | Blob;
+
+/** What the app uses of pdf.js' loading task. */
+export interface PdfJsTask {
+  promise: Promise<PDFDocumentProxy>;
+  destroy(): Promise<void>;
+}
+
+/**
+ * A PDF ends with `startxref … %%EOF`. Without it (a cut-off download), pdf.js
+ * rebuilds the file's index by scanning all of it, and reading on demand it
+ * restarts that scan for every missing piece: hours for a large file.
+ */
+async function looksComplete(blob: Blob): Promise<boolean> {
+  const tail = await blob.slice(Math.max(0, blob.size - 2048)).text();
+  return tail.includes('startxref') && tail.includes('%%EOF');
+}
+
+export function openPdfJsDocument(data: PdfJsSource, password?: string): PdfJsTask {
+  if (data instanceof Blob && data.size >= FETCH_ON_DEMAND_BYTES) {
+    let task: ReturnType<typeof pdfjsLib.getDocument> | null = null;
+    let destroyed = false;
+    const promise = looksComplete(data).then((ok) => {
+      if (!ok) throw new Error('Invalid PDF structure: the end of the file is missing (startxref).');
+      if (destroyed) throw new Error('The document was closed.');
+      task = pdfjsLib.getDocument({
+        ...PDFJS_DOCUMENT_OPTIONS,
+        range: new BlobRangeTransport(data),
+        rangeChunkSize: 256 * 1024,
+        disableAutoFetch: true,
+        disableStream: true,
+        password,
+      });
+      return task.promise;
+    });
+    return {
+      promise,
+      destroy: async () => {
+        destroyed = true;
+        await task?.destroy();
+      },
+    };
+  }
+  if (data instanceof Blob) {
+    let task: ReturnType<typeof pdfjsLib.getDocument> | null = null;
+    let destroyed = false;
+    const promise = data.arrayBuffer().then((buf) => {
+      if (destroyed) throw new Error('The document was closed.');
+      task = pdfjsLib.getDocument({ ...PDFJS_DOCUMENT_OPTIONS, data: new Uint8Array(buf), password });
+      return task.promise;
+    });
+    return {
+      promise,
+      destroy: async () => {
+        destroyed = true;
+        await task?.destroy();
+      },
+    };
+  }
   const bytes = data instanceof Uint8Array ? data.slice() : new Uint8Array(data.slice(0));
-  return pdfjsLib.getDocument({ ...PDFJS_DOCUMENT_OPTIONS, data: bytes, password });
+  const task = pdfjsLib.getDocument({ ...PDFJS_DOCUMENT_OPTIONS, data: bytes, password });
+  return { promise: task.promise, destroy: () => task.destroy() };
 }
 
 export { pdfjsLib };

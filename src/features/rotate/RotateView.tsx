@@ -3,6 +3,7 @@ import { RotateCcw, RotateCw } from 'lucide-react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
 import { PageThumb } from '../../components/common/PageThumb';
+import { VirtualGrid } from '../../components/common/VirtualGrid';
 import { Button, IconButton, Section, Spinner } from '../../components/ui';
 import { useToolRunner } from '../../hooks/useToolRunner';
 import { usePageThumbnails } from '../../hooks/usePageThumbnails';
@@ -20,7 +21,7 @@ export const RotateView: React.FC<RotateViewProps> = ({ initialFiles = [], onBac
   const [turns, setTurns] = useState<Record<number, number>>({});
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const file = files[0];
-  const { pages } = usePageThumbnails(file?.rawBuffer);
+  const { pages, thumbRef } = usePageThumbnails(file?.data);
   const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./rotate.worker.ts', import.meta.url), { type: 'module' }));
 
   const rotate = (indices: number[], delta: number) => {
@@ -35,13 +36,12 @@ export const RotateView: React.FC<RotateViewProps> = ({ initialFiles = [], onBac
   const changed = Object.entries(turns).filter(([, d]) => ((d % 360) + 360) % 360 !== 0);
 
   const execute = () => {
-    const buffer = file.rawBuffer.slice(0);
     const payload: RotatePayload = {
-      fileBuffer: buffer,
+      fileBuffer: file.data,
       fileName: file.name,
       rotations: changed.map(([i, d]) => ({ pageIndex: Number(i), degrees: ((d % 360) + 360) % 360 })),
     };
-    void runner.run('ROTATE_PAGES', payload, [buffer]);
+    void runner.run('ROTATE_PAGES', payload);
   };
 
   return (
@@ -93,11 +93,14 @@ export const RotateView: React.FC<RotateViewProps> = ({ initialFiles = [], onBac
           <Spinner /> Loading pages…
         </div>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-x-4 gap-y-6">
-          {pages.map((p, i) => (
+        <VirtualGrid count={pages.length} minColWidth={140} rowHeight={196}>
+          {(i) => {
+            const p = pages[i];
+            return (
             <PageThumb
               key={i}
               src={p.url}
+              viewRef={thumbRef(i)}
               aspect={p.width / p.height}
               rotate={turns[i] ?? 0}
               selected={selected.has(i)}
@@ -120,8 +123,9 @@ export const RotateView: React.FC<RotateViewProps> = ({ initialFiles = [], onBac
                 </IconButton>
               </div>
             </PageThumb>
-          ))}
-        </div>
+            );
+          }}
+        </VirtualGrid>
       )}
     </ToolLayout>
   );

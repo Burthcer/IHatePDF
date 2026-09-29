@@ -39,6 +39,7 @@ import {
   bytesToHex,
   encryptBytesAESV3,
 } from './pdfCrypto';
+import { isLazyStream, type StreamTransform } from './lazyPdf';
 
 export interface PermissionFlags {
   printing: boolean;
@@ -110,8 +111,12 @@ function isNeverEncryptedStream(dict: PDFDict): boolean {
   return type === PDFName.of('ObjStm') || type === PDFName.of('XRef');
 }
 
-/** Walks every indirect object in the document, transforming string/stream bytes in place. */
-async function walkAndTransform(context: PDFContext, transform: ByteTransform): Promise<void> {
+/**
+ * Walks every indirect object in the document, transforming string/stream
+ * bytes in place. Streams still in the source file (LazyRawStream) are given
+ * `lazyStream` to apply as they're written instead of being loaded now.
+ */
+async function walkAndTransform(context: PDFContext, transform: ByteTransform, lazyStream?: StreamTransform): Promise<void> {
   const encryptRef = resolveEncryptRef(context);
 
   for (const [ref, obj] of context.enumerateIndirectObjects()) {
@@ -120,6 +125,10 @@ async function walkAndTransform(context: PDFContext, transform: ByteTransform): 
     if (obj instanceof PDFStream) {
       if (isNeverEncryptedStream(obj.dict)) continue;
       await transformValue(obj.dict, transform);
+      if (lazyStream && isLazyStream(obj) && !obj.transform) {
+        obj.transform = lazyStream;
+        continue;
+      }
       const transformedContents = await transform(obj.getContents());
       context.assign(ref, PDFRawStream.of(obj.dict, transformedContents));
     } else if (obj instanceof PDFDict || obj instanceof PDFArray) {
@@ -169,8 +178,9 @@ export interface EncryptDocumentOptions {
 /**
  * Encrypts every string/stream in `pdfDoc` in place (AES-256 / R6) and sets
  * the trailer's /Encrypt dictionary. Caller is responsible for serializing
- * afterward via `serializeWithoutObjectStreams` (never `pdfDoc.save()`,
- * which would re-flush and could register new, unencrypted objects).
+ * afterward via `serializeWithoutObjectStreams` or `saveToSink(..., { prepared:
+ * true, useObjectStreams: false })` (never `pdfDoc.save()`, which would
+ * re-flush and could register new, unencrypted objects).
  */
 export async function encryptPdfDocument(
   pdfDoc: PDFDocument,
@@ -184,7 +194,9 @@ export async function encryptPdfDocument(
     true
   );
 
-  await walkAndTransform(pdfDoc.context, (bytes) => encryptBytesAESV3(material.fileKey, bytes));
+  const encrypt = (bytes: Uint8Array) => encryptBytesAESV3(material.fileKey, bytes);
+  // AES-CBC with a 16-byte IV and PKCS#7 padding: the size is known up front.
+  await walkAndTransform(pdfDoc.context, encrypt, { size: (n) => 16 + (Math.floor(n / 16) + 1) * 16, apply: encrypt });
 
   const encryptDict = buildStandardSecurityDict(pdfDoc.context, material, permissionsP, true);
   pdfDoc.context.trailerInfo.Encrypt = encryptDict;

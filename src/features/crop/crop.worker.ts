@@ -10,11 +10,14 @@
 
 import { openPdf } from '../../services/pdfLoader';
 import { visibleBox, pageRotation } from '../editPdf/engine/geometry';
-import type { WorkerRequest, CropPayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
+import type { CropPayload, ProcessedPdfResult } from '../../types/worker';
+import { emitPdf } from '../../services/workerEmit';
+import { serveTask } from '../../services/workerTask';
+import type { OutputSink } from '../../services/workerOutput';
 
 const MM_TO_PT = 72 / 25.4;
 
-export async function cropPdf(payload: CropPayload, onProgress?: (p: number, s: string) => void): Promise<ProcessedPdfResult> {
+export async function cropPdf(payload: CropPayload, onProgress?: (p: number, s: string) => void, sink?: OutputSink): Promise<ProcessedPdfResult> {
   const { fileBuffer, fileName, margins, pageIndices } = payload;
   if (!fileBuffer) throw new Error('No PDF buffer provided for cropping.');
 
@@ -45,24 +48,9 @@ export async function cropPdf(payload: CropPayload, onProgress?: (p: number, s: 
   });
 
   onProgress?.(80, 'Saving cropped document...');
-  const bytes = await pdfDoc.save({ useObjectStreams: true });
-  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const out = await emitPdf(pdfDoc, sink, { useObjectStreams: true });
   onProgress?.(100, 'Crop applied.');
-  return { fileName: `${fileName.replace(/\.[^/.]+$/, '')}_cropped.pdf`, buffer, size: buffer.byteLength, pageCount: pages.length };
+  return { fileName: `${fileName.replace(/\.[^/.]+$/, '')}_cropped.pdf`, ...out, pageCount: pages.length };
 }
 
-if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
-  self.addEventListener('message', async (event: MessageEvent<WorkerRequest<CropPayload>>) => {
-    const { id, action, payload } = event.data;
-    if (action !== 'CROP_PAGES') return;
-    try {
-      const result = await cropPdf(payload, (progress, stage) => {
-        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-        self.postMessage(msg);
-      });
-      (self as any).postMessage({ type: 'RESPONSE', payload: { id, success: true, data: result } }, [result.buffer]);
-    } catch (err) {
-      self.postMessage({ type: 'RESPONSE', payload: { id, success: false, error: err instanceof Error ? err.message : 'Failed to crop PDF document' } });
-    }
-  });
-}
+serveTask<CropPayload, ProcessedPdfResult>('CROP_PAGES', (p, ctx) => cropPdf(p, ctx.progress, ctx.sink()), 'Failed to crop PDF document');

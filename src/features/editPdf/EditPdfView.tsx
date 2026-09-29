@@ -27,12 +27,16 @@ import {
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { Dropzone } from '../../components/common/Dropzone';
 import { AutoSave } from '../../components/common/AutoSave';
+import { VirtualGrid } from '../../components/common/VirtualGrid';
 import { resultKey } from '../../services/fileNames';
 import { Button, IconButton, Kbd, Notice, ProgressLine, Spinner, cn } from '../../components/ui';
 import { openPdfJsDocument } from '../../services/pdfWorkerSetup';
 import { memoryManager } from '../../services/memoryManager';
 import { WorkerClient } from '../../services/workerClient';
+import { discardResult, saveResult, type ResultData } from '../../services/toolOutput';
+import { usePageThumbnails } from '../../hooks/usePageThumbnails';
 import type { PDFFile } from '../../types/pdf';
+import type { ProcessedPdfResult } from '../../types/worker';
 import type { EditorPageAnalysis, EditorPageInfo } from './editPdf.worker';
 import { PageCanvas } from './editor/PageCanvas';
 import { Inspector } from './editor/Inspector';
@@ -130,13 +134,22 @@ export const EditPdfView: React.FC<EditPdfViewProps> = ({ initialFiles = [], onB
   const [selection, setSelection] = useState<Selection>(null);
   const [editing, setEditing] = useState<Selection>(null);
   const [showBoxes, setShowBoxes] = useState(false);
-  const [thumbs, setThumbs] = useState<string[]>([]);
+  // Sidebar thumbnails: drawn as they scroll into view.
+  const { pages: thumbPages, thumbRef } = usePageThumbnails(file?.data, 112);
   const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null);
   const [renderedSig, setRenderedSig] = useState<string | null>(null);
   const [rendering, setRendering] = useState(false);
   const [exporting, setExporting] = useState<{ progress: number; stage: string } | null>(null);
   // The last export, tied to the edits it was made from (hidden once they change).
-  const [exported, setExported] = useState<{ buffer: ArrayBuffer; fileName: string; edits: typeof edits } | null>(null);
+  const [exported, setExportedState] = useState<{ data: ResultData; fileName: string; edits: typeof edits } | null>(null);
+  const exportedRef = useRef<typeof exported>(null);
+  const setExported = useCallback((next: typeof exported) => {
+    // A replaced export's temp file is freed.
+    if (exportedRef.current && exportedRef.current.data !== next?.data) discardResult(exportedRef.current.data);
+    exportedRef.current = next;
+    setExportedState(next);
+  }, []);
+  useEffect(() => () => discardResult(exportedRef.current?.data), []);
   const [exportError, setExportError] = useState<string | null>(null);
   const [lastTextStyle, setLastTextStyle] = useState<EditStyle>(DEFAULT_TEXT_STYLE);
 
@@ -161,7 +174,6 @@ export const EditPdfView: React.FC<EditPdfViewProps> = ({ initialFiles = [], onB
     clientRef.current = client;
     setPages([]);
     setAnalyses({});
-    setThumbs([]);
     setOpenError(null);
     setHistory({ past: [], present: EMPTY_EDITS, future: [], lastTime: 0 });
     setSelection(null);
@@ -170,10 +182,9 @@ export const EditPdfView: React.FC<EditPdfViewProps> = ({ initialFiles = [], onB
 
     (async () => {
       try {
-        const buffer = file.rawBuffer.slice(0);
         const [{ pages: info }, doc] = await Promise.all([
-          client.call<{ pages: EditorPageInfo[] }>('OPEN', { buffer }, [buffer]),
-          openPdfJsDocument(file.rawBuffer).promise,
+          client.call<{ pages: EditorPageInfo[] }>('OPEN', { source: file.data }),
+          openPdfJsDocument(file.data).promise,
         ]);
         if (cancelled) {
           void memoryManager.destroyPdfDocument(doc);
@@ -181,20 +192,6 @@ export const EditPdfView: React.FC<EditPdfViewProps> = ({ initialFiles = [], onB
         }
         originalDocRef.current = doc;
         setPages(info);
-        // thumbnails, in the background
-        for (let i = 0; i < doc.numPages && !cancelled; i++) {
-          const page = await doc.getPage(i + 1);
-          const vp = page.getViewport({ scale: 1 });
-          const c = await renderPageCanvas(doc, i + 1, 128 / vp.width);
-          const url = c.toDataURL('image/jpeg', 0.7);
-          releaseCanvas(c);
-          if (cancelled) break;
-          setThumbs((prev) => {
-            const next = prev.slice();
-            next[i] = url;
-            return next;
-          });
-        }
       } catch (err) {
         if (!cancelled) setOpenError(err instanceof Error ? err.message : String(err));
       }
@@ -464,10 +461,12 @@ export const EditPdfView: React.FC<EditPdfViewProps> = ({ initialFiles = [], onB
       Object.values(edits.images).forEach((b) => pageIndices.add(b.pageIndex));
       [...edits.texts, ...edits.addedImages, ...edits.shapes].forEach((b) => pageIndices.add(b.pageIndex));
       const all = [...pageIndices].sort((a, b) => a - b).map((i) => editsForPage(edits, i));
-      const result = await client.call<{ fileName: string; buffer: ArrayBuffer }>('EXPORT', { edits: all, fileName: file.name }, [], (progress, stage) =>
+      const result = await client.call<ProcessedPdfResult>('EXPORT', { edits: all, fileName: file.name }, [], (progress, stage) =>
         setExporting({ progress, stage })
       );
-      setExported({ buffer: result.buffer, fileName: result.fileName, edits });
+      const data = result.output ?? result.buffer;
+      if (!data) throw new Error('The edited PDF could not be stored.');
+      setExported({ data, fileName: result.fileName, edits });
     } catch (err) {
       setExportError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -622,8 +621,10 @@ export const EditPdfView: React.FC<EditPdfViewProps> = ({ initialFiles = [], onB
 
       <div className="flex flex-1 min-h-0">
         {/* thumbnails */}
-        <aside className="hidden md:flex flex-col w-[152px] shrink-0 border-r border-line bg-panel overflow-y-auto scroll-thin py-3 gap-3 items-center">
-          {pages.map((p, i) => {
+        <aside className="hidden md:block w-[152px] shrink-0 border-r border-line bg-panel overflow-y-auto scroll-thin py-3 px-2">
+          <VirtualGrid count={pages.length} minColWidth={120} rowHeight={pages[0] ? Math.min(220, Math.ceil((112 * pages[0].height) / pages[0].width) + 22) : 180} gapY={12}>
+          {(i) => {
+            const p = pages[i];
             const count = pageEditCount(edits, i);
             return (
               <button
@@ -635,13 +636,16 @@ export const EditPdfView: React.FC<EditPdfViewProps> = ({ initialFiles = [], onB
                   className={cn('relative bg-white border', i === pageIndex ? 'border-accent outline outline-1 outline-accent' : 'border-line group-hover:border-line-strong')}
                   style={{ width: 112, height: (112 * p.height) / p.width }}
                 >
-                  {thumbs[i] && <img src={thumbs[i]} alt="" className="w-full h-full object-contain" />}
+                  <div ref={thumbRef(i)} className="absolute inset-0">
+                    {thumbPages[i]?.url && <img src={thumbPages[i].url} alt="" className="w-full h-full object-contain" />}
+                  </div>
                   {count > 0 && <span className="absolute -top-1.5 -right-1.5 min-w-4 h-4 px-1 rounded-full bg-accent text-accent-ink font-mono text-[10px] leading-4 text-center">{count}</span>}
                 </div>
                 <span className="font-mono text-2xs">{i + 1}</span>
               </button>
             );
-          })}
+          }}
+          </VirtualGrid>
         </aside>
 
         {/* page */}
@@ -710,9 +714,9 @@ export const EditPdfView: React.FC<EditPdfViewProps> = ({ initialFiles = [], onB
               </IconButton>
             </div>
             <AutoSave
-              key={resultKey(exported.buffer)}
+              key={resultKey(exported.data)}
               fileName={exported.fileName}
-              onSave={(name) => memoryManager.downloadBuffer(exported.buffer, name)}
+              onSave={(name) => void saveResult(exported.data, name).catch((err) => setExportError(err instanceof Error ? err.message : String(err)))}
             />
           </div>
         )}

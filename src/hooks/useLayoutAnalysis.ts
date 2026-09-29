@@ -4,7 +4,7 @@ import { memoryManager } from '../services/memoryManager';
 import { analyzeDocumentLayout, type PageLayout } from '../services/textLayout';
 
 /** Runs the structure analysis for a PDF (in the background) and exposes progress. */
-export function useLayoutAnalysis(buffer: ArrayBuffer | null | undefined) {
+export function useLayoutAnalysis(buffer: Blob | ArrayBuffer | null | undefined) {
   const [pages, setPages] = useState<PageLayout[] | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);

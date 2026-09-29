@@ -5,9 +5,15 @@ import { ToolLayout } from '../../components/layout/ToolLayout';
 import { Button, Notice, ProgressLine, Toggle } from '../../components/ui';
 import { useLayoutAnalysis } from '../../hooks/useLayoutAnalysis';
 import { layoutToMarkdown } from '../../services/layoutToMarkdown';
-import { memoryManager } from '../../services/memoryManager';
+import { saveResult } from '../../services/toolOutput';
 import { getTool } from '../../constants/tools';
 import type { PDFFile } from '../../types/pdf';
+
+/**
+ * Laying out megabytes of text on screen takes gigabytes of memory (a
+ * 5,000-page file is ~9 MB of Markdown), so the preview shows the start.
+ */
+const PREVIEW_CHARS = 200_000;
 
 interface PdfToMarkdownViewProps {
   initialFiles?: PDFFile[];
@@ -20,7 +26,7 @@ export const PdfToMarkdownView: React.FC<PdfToMarkdownViewProps> = ({ initialFil
   const [emphasis, setEmphasis] = useState(true);
   const [copied, setCopied] = useState(false);
   const file = files[0];
-  const analysis = useLayoutAnalysis(file?.rawBuffer);
+  const analysis = useLayoutAnalysis(file?.data);
   const markdown = useMemo(() => (analysis.pages ? layoutToMarkdown(analysis.pages, { pageHeadings: pageMarkers, emphasis }) : ''), [analysis.pages, pageMarkers, emphasis]);
   const buffer = useMemo(() => (markdown ? (new TextEncoder().encode(markdown).buffer as ArrayBuffer) : null), [markdown]);
   const outName = `${(file?.name ?? 'document').replace(/\.[^/.]+$/, '')}.md`;
@@ -36,9 +42,9 @@ export const PdfToMarkdownView: React.FC<PdfToMarkdownViewProps> = ({ initialFil
       progress={analysis.progress ? (analysis.progress.done / analysis.progress.total) * 100 : 0}
       stage={analysis.progress ? `Reading page ${analysis.progress.done} of ${analysis.progress.total}…` : 'Reading document…'}
       error={analysis.error}
-      resultBuffer={analysis.pages && analysis.hasText ? buffer : null}
+      resultData={analysis.pages && analysis.hasText ? buffer : null}
       resultFileName={outName}
-      onDownloadResult={(name) => buffer && memoryManager.downloadBuffer(buffer, name || outName, 'text/markdown')}
+      onDownloadResult={(name) => buffer && void saveResult(buffer, name || outName, 'text/markdown')}
       resultNote={
         <div className="space-y-3 mt-2">
           <Toggle checked={emphasis} onChange={setEmphasis} label="Keep bold and italic" />
@@ -74,7 +80,14 @@ export const PdfToMarkdownView: React.FC<PdfToMarkdownViewProps> = ({ initialFil
           >
             {copied ? 'Copied' : 'Copy'}
           </Button>
-          <pre className="bg-panel border border-line rounded-md p-4 pr-24 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words max-h-[70vh] overflow-auto scroll-thin">{markdown}</pre>
+          <pre className="bg-panel border border-line rounded-md p-4 pr-24 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words max-h-[70vh] overflow-auto scroll-thin">
+            {markdown.length > PREVIEW_CHARS ? markdown.slice(0, PREVIEW_CHARS) : markdown}
+          </pre>
+          {markdown.length > PREVIEW_CHARS && (
+            <p className="text-xs text-muted mt-2">
+              Showing the first {Math.round(PREVIEW_CHARS / 1000)}k of {Math.round(markdown.length / 1000).toLocaleString()}k characters. The saved file and Copy include everything.
+            </p>
+          )}
         </div>
       )}
     </ToolLayout>

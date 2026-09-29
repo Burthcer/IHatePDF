@@ -35,14 +35,23 @@ function lanAddresses() {
 
 /** What the user picked, as shown in the app and on the phone. */
 function describe(paths) {
-  return paths.map((p) => {
-    const st = fs.statSync(p);
-    if (st.isDirectory()) {
-      const files = collect([p]).filter((e) => !e.dir);
-      return { path: p, name: path.basename(p), isDir: true, size: files.reduce((n, f) => n + f.size, 0), count: files.length };
+  const out = [];
+  for (const p of paths) {
+    let st;
+    try {
+      st = fs.statSync(p);
+    } catch {
+      continue; // gone since it was picked
     }
-    return { path: p, name: path.basename(p), isDir: false, size: st.size, count: 1 };
-  });
+    if (st.isDirectory()) {
+      const skipped = [];
+      const files = collect([p], skipped).filter((e) => !e.dir);
+      out.push({ path: p, name: path.basename(p), isDir: true, size: files.reduce((n, f) => n + f.size, 0), count: files.length, skipped });
+    } else {
+      out.push({ path: p, name: path.basename(p), isDir: false, size: st.size, count: 1, skipped: [] });
+    }
+  }
+  return out;
 }
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
