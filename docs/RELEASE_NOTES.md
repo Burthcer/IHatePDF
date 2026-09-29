@@ -18,7 +18,9 @@ Files are no longer read into memory whole. Tools read the parts of a PDF they n
 |---|---|---|
 | Watermark a 500 MB PDF | 5.2 GB | 0.9 GB |
 | Rotate a 500 MB PDF | 4.7 GB | 1.6 GB |
-| Redact 5,000 pages | 8.3 GB | about 1 GB |
+| Redact 5,000 pages | 8.3 GB | 1.2 GB |
+| Compress a 2 GB PDF | — | 1.1 GB |
+| Excel→PDF, 100,000 rows | 4.3 GB | 1.9 GB |
 | Merge two 5,000-page PDFs | 13 s | 3.6 s |
 
 - **Thumbnails** are drawn only for the pages on screen, so a 5,000-page file opens straight away in Organize, Rotate, Split, PDF→JPG and the editor.
@@ -58,6 +60,8 @@ Edit PDF, Watermark, Page numbers, Fill forms, and Word, Excel, PowerPoint and H
 
 - Password-protected PDFs are decrypted into memory when opened, so they need about twice their size in RAM.
 - On a 4 GB PC, very large jobs (a 1 GB+ image PDF) may be stopped by the fail-safe. Nothing crashes; the job just doesn't run.
+- Repairing a large damaged file reads it whole, so it needs several times the file's size in RAM (a 450 MB file: about 3 GB).
+- One piece of text that mixes Hindi/Marathi with Chinese/Japanese (for example a single watermark with both) shows only the first script's characters. Each script on its own, or mixed with English, works; Edit PDF handles any mix.
 - Scanned pages have no text to edit or convert (there's no OCR).
 - Signing adds a visible signature, not a certificate-based digital signature.
 
