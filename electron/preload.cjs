@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('ihpDesktop', {
   memory: {
     info: () => ipcRenderer.invoke('ihp:mem-info'),
     onChange: listen('ihp:mem'),
+    /** Tells the watchdog the page is responding (and has stopped its jobs). */
+    ack: () => ipcRenderer.send('ihp:mem-ack'),
   },
   showInFolder(file) {
     ipcRenderer.send('ihp:show-in-folder', file);

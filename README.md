@@ -14,6 +14,8 @@
 ![Tests](https://img.shields.io/badge/tests-74_passing-247a48?style=flat-square)
 [![License: MIT](https://img.shields.io/badge/license-MIT-171612?style=flat-square)](LICENSE)
 
+**New in 1.3.0:** big files use up to 6× less memory, a built-in memory fail-safe protects the PC, and Hindi, Marathi, Chinese and Japanese text works in every tool that writes text. [What changed](#whats-new-in-130)
+
 <br>
 
 <picture>
@@ -53,8 +55,17 @@
 3. **Click through the setup.** Windows asks once for administrator permission: the installer adds a Windows Firewall rule so phones can download from [Share to phone](#share-to-phone) without the app ever showing a network prompt. You can choose the install folder and whether you want desktop and Start-menu shortcuts.
 4. **Open IHatePDF** from the desktop or the Start menu.
 
-**Updating:** download the new setup and run it. It replaces the old version in place, and your saved files are never touched.
+**Updating:** download the new setup and run it. It replaces the old version in place (1.1.0 and 1.2.0 included), and your saved files are never touched. The one exception: a 1.1.0 installed under a *different* Windows account stays in that account's *Settings → Apps*; uninstall it there.
 **Uninstalling:** *Settings → Apps → IHatePDF → Uninstall*.
+
+### System requirements
+
+| | |
+|---|---|
+| **Windows** | Windows 10 or 11, 64-bit |
+| **Memory** | 4 GB RAM works; 8 GB or more for PDFs over 500 MB |
+| **Disk** | About 400 MB for the app, plus free space about the size of the file you're working on |
+| **Install** | Administrator permission, once, during setup |
 
 Need nothing but a browser? The same app runs as a web page. See [Run it in a browser instead](#run-it-in-a-browser-instead).
 
@@ -111,6 +122,33 @@ Password-protected PDFs work in every tool: you type the password once when you 
 
 ---
 
+## What's new in 1.3.0
+
+**Much less memory for big files.** Tools read only the parts of a PDF they need from disk and write the result straight to disk, so memory stays about the same for a 5 MB or a 2 GB file.
+
+| Job (desktop app) | 1.2.0 | 1.3.0 |
+|---|---|---|
+| Watermark a 500 MB PDF | 5.2 GB RAM | 0.9 GB RAM |
+| Rotate a 500 MB PDF | 4.7 GB RAM | 1.6 GB RAM |
+| Redact 5,000 pages | 8.3 GB RAM | REDACT_RAM |
+| Merge two 5,000-page PDFs | 13 s | 3.6 s |
+
+**Memory fail-safe.** The app gives itself a memory budget based on the PC's RAM and leaves the rest for Windows: 1 GB on a 4 GB PC, 4 GB on 8 GB, 8 GB on 16 GB, never more than 16 GB. Near the budget, tools work in smaller pieces. A job that would go over it stops with *"Stopped to protect this PC"* and the app stays usable; a window stuck using too much memory is restarted before Windows runs short.
+
+**Fixes:**
+- **Hindi, Marathi, Chinese and Japanese** text now works in Edit PDF, Watermark, Page numbers, Fill forms and the Word, Excel, PowerPoint and HTML to PDF tools. The fonts ship with the app.
+- **PDF→Word keeps pictures** where they were on the page.
+- **Tables** are detected more reliably in PDF→Word and PDF→Excel.
+- **5,000-page files open straight away:** thumbnails are drawn only for the pages on screen.
+- **Compare** and **Redact** no longer need memory for every page at once.
+- **Crashes** reload the window with a short note instead of leaving it blank.
+- **Damaged files** get a plain explanation and a pointer to Repair PDF, instead of a technical error.
+- **Share to phone** skips unreadable files in a folder (in use, no permission) instead of failing, and lists them.
+
+Full details and known limits: [release notes](docs/RELEASE_NOTES.md).
+
+---
+
 ## How it works
 
 Everything runs on your machine:
@@ -144,7 +182,7 @@ npm run dev          # then open the localhost link it prints
 
 ## More
 
-- [What's new in 1.2.0](docs/RELEASE_NOTES.md): Share to phone
+- [Release notes for 1.3.0](docs/RELEASE_NOTES.md)
 - [Test results](docs/TEST_REPORT.md)
 - [For developers](HANDOFF.md): how the code is organized, building the installer, and releasing.
 

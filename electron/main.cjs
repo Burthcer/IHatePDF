@@ -181,6 +181,7 @@ let endedForMemory = false;
 let watchdog = null;
 
 ipcMain.handle('ihp:mem-info', () => (watchdog ? watchdog.state() : memoryGuard.info()));
+ipcMain.on('ihp:mem-ack', () => watchdog?.ack());
 
 ipcMain.on('ihp:show-in-folder', (event, file) => {
   if (typeof file === 'string' && path.normalize(file).startsWith(saveDir())) shell.showItemInFolder(file);

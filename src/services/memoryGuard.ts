@@ -65,6 +65,8 @@ function update(next: MemoryState) {
     });
   }
   listeners.forEach((l) => l(state));
+  // Answering shows the watchdog this page isn't stuck, so it gets time to free memory.
+  if (next.level === 'critical') window.ihpDesktop?.memory?.ack?.();
 }
 
 if (typeof window !== 'undefined' && window.ihpDesktop?.memory) {
