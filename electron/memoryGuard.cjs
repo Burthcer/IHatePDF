@@ -29,6 +29,7 @@
  * can't free its memory, after a few seconds.
  */
 
+const fs = require('fs');
 const os = require('os');
 
 const MB = 1024 * 1024;
@@ -61,7 +62,25 @@ function appMemory(app) {
   return app.getAppMetrics().reduce((n, m) => n + (m.memory?.workingSetSize ?? 0) * 1024, 0);
 }
 
-function systemLow(free = os.freemem()) {
+/**
+ * Memory Windows has available. For tests only, IHP_SIMULATE_FREE_FILE names a
+ * file holding a number of MB to report instead (to stage "Windows is nearly
+ * out of memory" without starving the test machine).
+ */
+function freeMemory() {
+  const file = process.env.IHP_SIMULATE_FREE_FILE;
+  if (file) {
+    try {
+      const mb = Number(fs.readFileSync(file, 'utf8'));
+      if (mb > 0) return mb * MB;
+    } catch {
+      /* no override right now */
+    }
+  }
+  return os.freemem();
+}
+
+function systemLow(free = freeMemory()) {
   return free < Math.max(400 * MB, TOTAL * 0.05);
 }
 
@@ -84,7 +103,7 @@ function info(extra = {}) {
     jobMB: 0,
     budgetMB: Math.round(BUDGET / MB),
     totalMB: Math.round(TOTAL / MB),
-    availableMB: Math.round(os.freemem() / MB),
+    availableMB: Math.round(freeMemory() / MB),
     ...extra,
   };
 }
@@ -98,6 +117,8 @@ function startWatchdog(app, getContents, onEscalate) {
   let jobs = 0;
   let jobBase = null;
   let loadedAt = Date.now();
+  /** App memory when the page loaded: the reference until idle samples exist. */
+  let loadBase = null;
   /** [time, bytes] samples taken while no job ran. */
   let idle = [];
   let overSince = 0;
@@ -110,13 +131,15 @@ function startWatchdog(app, getContents, onEscalate) {
     if (!contents || contents.isDestroyed()) return;
     const now = Date.now();
     const used = appMemory(app);
-    const free = os.freemem();
+    const free = freeMemory();
     const low = systemLow(free);
+    loadBase ??= used;
     let base = jobBase;
     if (jobs === 0) {
       if (now - loadedAt >= WARMUP_MS) idle.push([now, used]);
       idle = idle.filter(([t]) => now - t <= IDLE_WINDOW_MS);
-      base = idle.length ? Math.min(...idle.map(([, b]) => b)) : null;
+      // Settling after a (re)load: measure from when it loaded, so a runaway right away is caught too.
+      base = idle.length ? Math.min(...idle.map(([, b]) => b)) : loadBase;
     }
     if (base === null) {
       // Still starting up: nothing to measure against yet.
@@ -126,7 +149,9 @@ function startWatchdog(app, getContents, onEscalate) {
     const growth = Math.max(0, used - base);
     if (growth > BUDGET) overSince ||= now;
     else overSince = 0;
-    const next = levelFor({ growth, low, overFor: overSince ? now - overSince : 0 });
+    // With no job there's nothing to stop: previews pause while over, and only a
+    // runaway, Windows running low or a page that stops answering count.
+    const next = levelFor({ growth, low, overFor: overSince && jobs > 0 ? now - overSince : 0 });
     last = info({ ...next, usedMB: Math.round(used / MB), jobMB: Math.round(growth / MB), availableMB: Math.round(free / MB) });
     // Tell the page on every change, and keep reminding it while over or critical.
     if (next.level !== level || next.level === 'over' || next.level === 'critical') contents.send('ihp:mem', last);
@@ -161,6 +186,7 @@ function startWatchdog(app, getContents, onEscalate) {
     /** The page (re)loaded: start measuring afresh. */
     pageLoaded: () => {
       loadedAt = Date.now();
+      loadBase = null;
       idle = [];
       jobs = 0;
       jobBase = null;

@@ -6,6 +6,10 @@ import { Field, IconButton, Notice, Segmented, cn } from '../../components/ui';
 import { useToolRunner } from '../../hooks/useToolRunner';
 import { assertDecodable, prepareImage, type PreparedImage } from '../../services/imagePrep';
 import { MemoryLimitError } from '../../services/memoryGuard';
+
+/** Above this, an image isn't shown: the browser would decode all of it just to draw a small preview. */
+const PREVIEW_MAX_PIXELS = 40_000_000;
+const tooBigToPreview = (i: { width?: number; height?: number }) => !!i.width && !!i.height && i.width * i.height > PREVIEW_MAX_PIXELS;
 import { getTool } from '../../constants/tools';
 import type { PDFFile } from '../../types/pdf';
 import type { ImagePageMargin, ImagePageOrientation, ImagePageSize, ImagesToPdfPayload, ProcessedPdfResult } from '../../types/worker';
@@ -73,7 +77,7 @@ export const ImageToPdfView: React.FC<ImageToPdfViewProps> = ({ onBack }) => {
   };
 
   // ToolLayout keys its two-pane mode off `files`; images aren't PDFFiles, so adapt them.
-  const asFiles: PDFFile[] = items.map((i) => ({ id: i.id, name: i.name, size: i.data.size, pageCount: 1, data: i.data, previewUrls: [i.url] }));
+  const asFiles: PDFFile[] = items.map((i) => ({ id: i.id, name: i.name, size: i.data.size, pageCount: 1, data: i.data, previewUrls: tooBigToPreview(i) ? [] : [i.url] }));
 
   return (
     <ToolLayout
@@ -123,7 +127,12 @@ export const ImageToPdfView: React.FC<ImageToPdfViewProps> = ({ onBack }) => {
             className={cn('group relative bg-panel border border-line rounded p-2 cursor-grab', dragIndex === i && 'opacity-40')}
           >
             <div className="aspect-[3/4] flex items-center justify-center bg-sunken overflow-hidden">
-              <img src={it.url} alt="" className="max-w-full max-h-full object-contain" draggable={false} />
+              {tooBigToPreview(it) ? (
+                // Showing it would decode every pixel (over a gigabyte for a 300-megapixel image).
+                <span className="text-2xs text-muted text-center px-2">{Math.round((it.width! * it.height!) / 1e6)} MP image — too large to preview</span>
+              ) : (
+                <img src={it.url} alt="" className="max-w-full max-h-full object-contain" draggable={false} />
+              )}
             </div>
             <div className="flex items-center gap-1 mt-1.5">
               <GripVertical className="w-3 h-3 text-faint shrink-0" />
