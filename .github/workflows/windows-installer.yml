@@ -38,7 +38,8 @@ jobs:
       # main (and v* tags) publish the GitHub Release v<package.json version> with the
       # installer attached; the README's download button links to its asset.
       # Bump "version" in package.json to cut a new release; later pushes of the same
-      # version refresh that release's installer.
+      # version refresh that release's installer. A version with a suffix (1.3.1-beta),
+      # published by pushing its v* tag, becomes a pre-release and is not marked latest.
       - if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
@@ -47,4 +48,5 @@ jobs:
           name: IHatePDF v${{ steps.ver.outputs.version }}
           body_path: docs/RELEASE_NOTES.md
           files: FinalApp/IHatePDF-Setup.exe
-          make_latest: true
+          prerelease: ${{ contains(steps.ver.outputs.version, '-') }}
+          make_latest: ${{ !contains(steps.ver.outputs.version, '-') }}

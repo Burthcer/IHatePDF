@@ -28,7 +28,7 @@ import type { CompressPayload, ProcessedPdfResult, PdfInput } from '../../types/
 import { measurePdf } from '../../services/pdfStreamSave';
 import { emitInput, emitPdf, inputSize } from '../../services/workerEmit';
 import { serveTask } from '../../services/workerTask';
-import { memoryBudget, memoryTight } from '../../services/workerMemory';
+import { memoryBudget, memoryCheckpoint, memoryTight, onMemoryPressure } from '../../services/workerMemory';
 import type { OutputSink } from '../../services/workerOutput';
 
 type Level = CompressPayload['level'];
@@ -242,6 +242,8 @@ async function encodeAll(jobs: ImageJob[], s: Setting, report: (i: number) => vo
   const out = new Map<PDFRef, Encoded>();
   for (let i = 0; i < jobs.length; i++) {
     report(i);
+    // One image at a time: pause here while memory is over the budget.
+    await memoryCheckpoint();
     const job = jobs[i];
     if (tooBigToDecode(job)) {
       skippedHuge.add(job.ref);
@@ -281,6 +283,11 @@ function clearCache() {
   cacheBytes = 0;
   cacheEnabled = false;
 }
+// Under memory pressure the cache goes (images are decoded again when needed).
+onMemoryPressure(() => {
+  decodeCache.clear();
+  cacheBytes = 0;
+});
 
 // ------------------------------------------------------------------ structure
 

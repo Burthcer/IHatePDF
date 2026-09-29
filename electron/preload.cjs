@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('ihpDesktop', {
     onChange: listen('ihp:mem'),
     /** Tells the watchdog the page is responding (and has stopped its jobs). */
     ack: () => ipcRenderer.send('ihp:mem-ack'),
+    /** How many jobs are running: the watchdog measures their growth, not the app's own memory. */
+    jobs: (n) => ipcRenderer.send('ihp:mem-jobs', n),
   },
   showInFolder(file) {
     ipcRenderer.send('ihp:show-in-folder', file);
