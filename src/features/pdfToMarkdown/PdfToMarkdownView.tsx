@@ -9,6 +9,12 @@ import { saveResult } from '../../services/toolOutput';
 import { getTool } from '../../constants/tools';
 import type { PDFFile } from '../../types/pdf';
 
+/**
+ * Laying out megabytes of text on screen takes gigabytes of memory (a
+ * 5,000-page file is ~9 MB of Markdown), so the preview shows the start.
+ */
+const PREVIEW_CHARS = 200_000;
+
 interface PdfToMarkdownViewProps {
   initialFiles?: PDFFile[];
   onBack: () => void;
@@ -74,7 +80,14 @@ export const PdfToMarkdownView: React.FC<PdfToMarkdownViewProps> = ({ initialFil
           >
             {copied ? 'Copied' : 'Copy'}
           </Button>
-          <pre className="bg-panel border border-line rounded-md p-4 pr-24 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words max-h-[70vh] overflow-auto scroll-thin">{markdown}</pre>
+          <pre className="bg-panel border border-line rounded-md p-4 pr-24 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words max-h-[70vh] overflow-auto scroll-thin">
+            {markdown.length > PREVIEW_CHARS ? markdown.slice(0, PREVIEW_CHARS) : markdown}
+          </pre>
+          {markdown.length > PREVIEW_CHARS && (
+            <p className="text-xs text-muted mt-2">
+              Showing the first {Math.round(PREVIEW_CHARS / 1000)}k of {Math.round(markdown.length / 1000).toLocaleString()}k characters. The saved file and Copy include everything.
+            </p>
+          )}
         </div>
       )}
     </ToolLayout>

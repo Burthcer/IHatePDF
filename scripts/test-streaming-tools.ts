@@ -183,6 +183,19 @@ async function runTool(tool: string, input: string, out: string) {
       );
       break;
     }
+    case 'redact-all': {
+      // Every page redacted, renders asked for one at a time (photos stand in for renders).
+      const { redactPdf } = await import('../src/features/redact/redact.worker');
+      const { openPdf } = await import('../src/services/pdfLoader');
+      const n = (await openPdf(blob)).getPageCount();
+      const files = readdirSync(photos).sort();
+      const ask = async <T,>(_what: string, data: unknown): Promise<T> => {
+        const f = join(photos, files[(data as { pageIndex: number }).pageIndex % files.length]);
+        return { jpeg: jpg(f).readSync(), width: 2000, height: 1500 } as T;
+      };
+      r = await redactPdf({ fileBuffer: blob, fileName: name, stripMetadata: true, pages: Array.from({ length: n }, (_, i) => ({ pageIndex: i, widthPt: 595, heightPt: 842 })) }, progress, sink, ask);
+      break;
+    }
     case 'repair': {
       const { repairPdf } = await import('../src/features/repair/repair.worker');
       r = await repairPdf({ fileBuffer: blob, fileName: name }, progress, sink);

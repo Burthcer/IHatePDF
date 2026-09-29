@@ -18,8 +18,16 @@ import type {
 import { OutputCollector } from '../services/toolOutput';
 import { attachWorker, registerJob } from '../services/memoryGuard';
 
+/** What the page gives back to a worker's `ask` (see workerTask.ts). */
+export interface AskAnswer {
+  result: unknown;
+  transfer?: Transferable[];
+}
+
 export interface UseWorkerBridgeOptions {
   timeoutMs?: number;
+  /** Answers a worker's request for something only the page can do (e.g. render a page). */
+  onAsk?: (what: string, data: unknown) => Promise<AskAnswer>;
 }
 
 export interface WorkerBridgeState {
@@ -39,6 +47,8 @@ export function useWorkerBridge<TResult = unknown>(
   const [error, setError] = useState<string | null>(null);
 
   const workerRef = useRef<Worker | null>(null);
+  const onAskRef = useRef(options.onAsk);
+  onAskRef.current = options.onAsk;
   const outputsRef = useRef<OutputCollector | null>(null);
   const detachMemoryRef = useRef<(() => void) | null>(null);
   const endJobRef = useRef<(() => void) | null>(null);
@@ -156,6 +166,16 @@ export function useWorkerBridge<TResult = unknown>(
           const message = event.data;
           if (!message) return;
           if (outputs.handle(message as { type?: string })) return;
+          const asked = message as unknown as { type?: string; payload?: { id: string; askId: string; what: string; data: unknown } };
+          if (asked.type === 'ASK' && asked.payload?.id === requestId) {
+            const { askId, what, data } = asked.payload;
+            const answer = onAskRef.current ? onAskRef.current(what, data) : Promise.reject(new Error(`Nothing on this page answers "${what}".`));
+            answer.then(
+              ({ result, transfer }) => worker.postMessage({ type: 'ANSWER', askId, result }, transfer ?? []),
+              (err) => worker.postMessage({ type: 'ANSWER', askId, error: err instanceof Error ? err.message : String(err) })
+            );
+            return;
+          }
 
           if (message.type === 'PROGRESS') {
             if (message.payload.id === requestId) {
