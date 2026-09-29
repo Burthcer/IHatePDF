@@ -11,6 +11,7 @@
 import * as XLSX from 'xlsx';
 import { PDFDocument, rgb } from 'pdf-lib';
 import { collectText, fontCollection } from '../../services/fonts';
+import { sealPage } from '../../services/pageTree';
 import type {
   WorkerRequest,
   XlsxToPdfPayload,
@@ -136,6 +137,7 @@ export async function convertXlsxToPdf(
           y -= rowH;
         });
         page.drawText(`${pageNo} / ${totalPages}`, { x: PAGE_WIDTH - MARGIN - 40, y: MARGIN - 14, size: 8, font: fonts.regular, color: rgb(0.5, 0.5, 0.5) });
+        sealPage(page);
       });
     });
 
