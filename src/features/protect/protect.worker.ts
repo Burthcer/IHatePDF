@@ -9,17 +9,16 @@
  */
 
 import { openPdf } from '../../services/pdfLoader';
-import { encryptPdfDocument, serializeWithoutObjectStreams } from '../../services/pdfEncryptDocument';
-import type {
-  WorkerRequest,
-  ProtectPayload,
-  ProcessedPdfResult,
-  WorkerIncomingMessage,
-} from '../../types/worker';
+import { encryptPdfDocument } from '../../services/pdfEncryptDocument';
+import type { ProtectPayload, ProcessedPdfResult } from '../../types/worker';
+import { emitPdf } from '../../services/workerEmit';
+import { serveTask } from '../../services/workerTask';
+import type { OutputSink } from '../../services/workerOutput';
 
 export async function protectPdf(
   payload: ProtectPayload,
-  onProgress?: (progress: number, stage: string) => void
+  onProgress?: (progress: number, stage: string) => void,
+  sink?: OutputSink
 ): Promise<ProcessedPdfResult> {
   const { fileBuffer, fileName, userPassword, ownerPassword, permissions } = payload;
   if (!fileBuffer) {
@@ -51,53 +50,18 @@ export async function protectPdf(
       : undefined,
   });
 
-  onProgress?.(85, 'Serializing encrypted document...');
-  const protectedBytes = await serializeWithoutObjectStreams(pdfDoc);
-  const resultBuffer = protectedBytes.buffer.slice(
-    protectedBytes.byteOffset,
-    protectedBytes.byteOffset + protectedBytes.byteLength
-  ) as ArrayBuffer;
+  onProgress?.(85, 'Writing encrypted document...');
+  // Object streams stay off: the classic writer never adds unencrypted objects.
+  const out = await emitPdf(pdfDoc, sink, { useObjectStreams: false, prepared: true });
 
   onProgress?.(100, 'Document encryption completed.');
 
   const cleanBaseName = fileName.replace(/\.[^/.]+$/, '');
   return {
     fileName: `${cleanBaseName}_protected.pdf`,
-    buffer: resultBuffer,
-    size: resultBuffer.byteLength,
+    ...out,
     pageCount,
   };
 }
 
-if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
-  (self as any).addEventListener(
-    'message',
-    async (event: MessageEvent<WorkerRequest<ProtectPayload>>) => {
-      const { id, action, payload } = event.data;
-      if (action !== 'PROTECT_PDF') return;
-
-      try {
-        const result = await protectPdf(payload, (progress, stage) => {
-          const msg: WorkerIncomingMessage = {
-            type: 'PROGRESS',
-            payload: { id, progress, stage },
-          };
-          (self as any).postMessage(msg);
-        });
-
-        const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = {
-          type: 'RESPONSE',
-          payload: { id, success: true, data: result },
-        };
-        (self as any).postMessage(responseMsg, [result.buffer]);
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : 'Failed to protect PDF document';
-        const responseMsg: WorkerIncomingMessage = {
-          type: 'RESPONSE',
-          payload: { id, success: false, error: errorMsg },
-        };
-        (self as any).postMessage(responseMsg);
-      }
-    }
-  );
-}
+serveTask<ProtectPayload, ProcessedPdfResult>('PROTECT_PDF', (p, ctx) => protectPdf(p, ctx.progress, ctx.sink()), 'Failed to protect PDF document');

@@ -53,13 +53,13 @@ export const WatermarkView: React.FC<WatermarkViewProps> = ({ initialFiles = [],
   const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./watermark.worker.ts', import.meta.url), { type: 'module' }));
   const { renderThumbnail } = usePdfRenderer();
   const file = files[0];
-  const { pages } = usePageThumbnails(file?.rawBuffer, 40);
+  const { pages } = usePageThumbnails(file?.data, 40, 0); // sizes only
   const first = pages[0];
 
   useEffect(() => {
     if (!file) return;
     let cancelled = false;
-    renderThumbnail(file.rawBuffer, 1, PREVIEW_W * 2)
+    renderThumbnail(file.data, 1, PREVIEW_W * 2)
       .then((u) => !cancelled && setPreview(u))
       .catch(() => undefined);
     return () => {
@@ -73,9 +73,8 @@ export const WatermarkView: React.FC<WatermarkViewProps> = ({ initialFiles = [],
   };
 
   const execute = () => {
-    const buffer = file.rawBuffer.slice(0);
     const payload: WatermarkPayload = {
-      fileBuffer: buffer,
+      fileBuffer: file.data,
       fileName: file.name,
       mode,
       text,
@@ -93,9 +92,7 @@ export const WatermarkView: React.FC<WatermarkViewProps> = ({ initialFiles = [],
       bold: true,
       imageScale,
     };
-    const transfer: Transferable[] = [buffer];
-    if (payload.imageBytes) transfer.push(payload.imageBytes);
-    void runner.run('WATERMARK_PDF', payload, transfer);
+    void runner.run('WATERMARK_PDF', payload, payload.imageBytes ? [payload.imageBytes] : []);
   };
 
   // --- CSS preview of a single stamp (tiles shown as a pattern)

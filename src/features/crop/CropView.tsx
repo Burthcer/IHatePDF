@@ -31,7 +31,7 @@ export const CropView: React.FC<CropViewProps> = ({ initialFiles = [], onBack })
   const [detecting, setDetecting] = useState(false);
   const drag = useRef<{ side: Side; startX: number; startY: number; start: number } | null>(null);
   const file = files[0];
-  const { pages } = usePageThumbnails(file?.rawBuffer, 60);
+  const { pages } = usePageThumbnails(file?.data, 60, 0); // sizes only
   const { renderThumbnail } = usePdfRenderer();
   const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./crop.worker.ts', import.meta.url), { type: 'module' }));
 
@@ -42,7 +42,7 @@ export const CropView: React.FC<CropViewProps> = ({ initialFiles = [], onBack })
   useEffect(() => {
     if (!file || !page) return;
     let cancelled = false;
-    renderThumbnail(file.rawBuffer, pageIndex + 1, PREVIEW_W * Math.min(2, window.devicePixelRatio || 1))
+    renderThumbnail(file.data, pageIndex + 1, PREVIEW_W * Math.min(2, window.devicePixelRatio || 1))
       .then((url) => !cancelled && setPreview(url))
       .catch(() => undefined);
     return () => {
@@ -76,7 +76,7 @@ export const CropView: React.FC<CropViewProps> = ({ initialFiles = [], onBack })
     if (!file || !page) return;
     setDetecting(true);
     try {
-      const url = await renderThumbnail(file.rawBuffer, pageIndex + 1, 400);
+      const url = await renderThumbnail(file.data, pageIndex + 1, 400);
       const img = new Image();
       img.src = url;
       await img.decode();
@@ -124,9 +124,8 @@ export const CropView: React.FC<CropViewProps> = ({ initialFiles = [], onBack })
   }
 
   const execute = () => {
-    const buffer = file.rawBuffer.slice(0);
-    const payload: CropPayload = { fileBuffer: buffer, fileName: file.name, margins, pageIndices: indices };
-    void runner.run('CROP_PAGES', payload, [buffer]);
+    const payload: CropPayload = { fileBuffer: file.data, fileName: file.name, margins, pageIndices: indices };
+    void runner.run('CROP_PAGES', payload);
   };
 
   const handle = (side: Side) => (e: React.PointerEvent) => {

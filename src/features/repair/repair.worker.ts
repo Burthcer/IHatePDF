@@ -14,9 +14,13 @@
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRef } from 'pdf-lib';
 import { openPdf } from '../../services/pdfLoader';
 import { salvagePdfBytes } from './salvage';
-import type { WorkerRequest, RepairPayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
+import type { RepairPayload, ProcessedPdfResult } from '../../types/worker';
+import { drawImageFull, embedJpegSource } from '../../services/lazyImage';
+import { emitPdf } from '../../services/workerEmit';
+import { serveTask } from '../../services/workerTask';
+import type { OutputSink } from '../../services/workerOutput';
 
-export async function repairPdf(payload: RepairPayload, onProgress?: (p: number, s: string) => void): Promise<ProcessedPdfResult> {
+export async function repairPdf(payload: RepairPayload, onProgress?: (p: number, s: string) => void, sink?: OutputSink): Promise<ProcessedPdfResult> {
   const { fileBuffer, fileName, renderedPages } = payload;
   const base = fileName.replace(/\.[^/.]+$/, '');
 
@@ -25,15 +29,13 @@ export async function repairPdf(payload: RepairPayload, onProgress?: (p: number,
     for (let i = 0; i < renderedPages.length; i++) {
       onProgress?.(10 + Math.round((i / renderedPages.length) * 80), `Rebuilding page ${i + 1}...`);
       const p = renderedPages[i];
-      const img = await doc.embedJpg(new Uint8Array(p.jpeg));
-      doc.addPage([p.widthPt, p.heightPt]).drawImage(img, { x: 0, y: 0, width: p.widthPt, height: p.heightPt });
+      const img = await embedJpegSource(doc, p.jpeg);
+      drawImageFull(doc.addPage([p.widthPt, p.heightPt]), img, p.widthPt, p.heightPt);
     }
-    const bytes = await doc.save({ useObjectStreams: true });
-    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    const out = await emitPdf(doc, sink, { useObjectStreams: true });
     return {
       fileName: `${base}_repaired.pdf`,
-      buffer,
-      size: buffer.byteLength,
+      ...out,
       pageCount: renderedPages.length,
       note: `Rebuilt from rendered pages (${renderedPages.length}). Text in this copy isn’t selectable.`,
     };
@@ -41,9 +43,15 @@ export async function repairPdf(payload: RepairPayload, onProgress?: (p: number,
 
   onProgress?.(15, 'Re-reading every object in the file...');
   let pdfDoc: PDFDocument | null = null;
-  let bytes = new Uint8Array(fileBuffer);
   let salvaged = 0;
   let lastError: unknown;
+  // A file whose structure still reads is rewritten straight from disk.
+  try {
+    pdfDoc = await openPdf(fileBuffer);
+  } catch (err) {
+    lastError = err;
+  }
+  let bytes = pdfDoc ? new Uint8Array(0) : new Uint8Array(fileBuffer instanceof Blob ? await fileBuffer.arrayBuffer() : fileBuffer);
   // Unreadable objects are dropped one at a time (a truncated object stream is
   // partially recovered) until the rest of the file parses.
   for (let attempt = 0; attempt < 60 && !pdfDoc; attempt++) {
@@ -72,10 +80,10 @@ export async function repairPdf(payload: RepairPayload, onProgress?: (p: number,
   if (pageCount === 0) throw new Error('No readable pages were recovered from this file.');
 
   onProgress?.(60, 'Writing a clean copy...');
-  const out = await pdfDoc.save({ useObjectStreams: true });
-  const buffer = out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer;
+  bytes = new Uint8Array(0);
+  const out = await emitPdf(pdfDoc, sink, { useObjectStreams: true });
   onProgress?.(100, 'Repair complete.');
-  return { fileName: `${base}_repaired.pdf`, buffer, size: buffer.byteLength, pageCount, note: `Recovered ${pageCount} page${pageCount === 1 ? '' : 's'} with their original text and graphics.${salvaged ? ` ${salvaged} damaged section${salvaged === 1 ? ' was' : 's were'} skipped.` : ''}` };
+  return { fileName: `${base}_repaired.pdf`, ...out, pageCount, note: `Recovered ${pageCount} page${pageCount === 1 ? '' : 's'} with their original text and graphics.${salvaged ? ` ${salvaged} damaged section${salvaged === 1 ? ' was' : 's were'} skipped.` : ''}` };
 }
 
 /**
@@ -104,18 +112,4 @@ function rebuildPageTree(doc: PDFDocument): number {
   return pages.length;
 }
 
-if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
-  self.addEventListener('message', async (event: MessageEvent<WorkerRequest<RepairPayload>>) => {
-    const { id, action, payload } = event.data;
-    if (action !== 'REPAIR_PDF') return;
-    try {
-      const result = await repairPdf(payload, (progress, stage) => {
-        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-        self.postMessage(msg);
-      });
-      (self as any).postMessage({ type: 'RESPONSE', payload: { id, success: true, data: result } }, [result.buffer]);
-    } catch (err) {
-      self.postMessage({ type: 'RESPONSE', payload: { id, success: false, error: err instanceof Error ? err.message : 'Failed to repair PDF document' } });
-    }
-  });
-}
+serveTask<RepairPayload, ProcessedPdfResult>('REPAIR_PDF', (p, ctx) => repairPdf(p, ctx.progress, ctx.sink()), 'Failed to repair PDF document');

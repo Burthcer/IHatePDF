@@ -10,9 +10,12 @@
 
 import { openPdf } from '../../services/pdfLoader';
 import { withViewerFrame } from '../../services/pageOverlay';
-import type { WorkerRequest, StampSignaturePayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
+import type { StampSignaturePayload, ProcessedPdfResult } from '../../types/worker';
+import { emitPdf } from '../../services/workerEmit';
+import { serveTask } from '../../services/workerTask';
+import type { OutputSink } from '../../services/workerOutput';
 
-export async function stampSignature(payload: StampSignaturePayload, onProgress?: (p: number, s: string) => void): Promise<ProcessedPdfResult> {
+export async function stampSignature(payload: StampSignaturePayload, onProgress?: (p: number, s: string) => void, sink?: OutputSink): Promise<ProcessedPdfResult> {
   const { fileBuffer, fileName, signatureImageBytes, placements } = payload;
   if (!fileBuffer) throw new Error('No PDF buffer provided.');
   if (!signatureImageBytes) throw new Error('No signature image provided.');
@@ -33,24 +36,9 @@ export async function stampSignature(payload: StampSignaturePayload, onProgress?
   }
 
   onProgress?.(85, 'Saving PDF...');
-  const bytes = await pdfDoc.save({ useObjectStreams: true });
-  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const out = await emitPdf(pdfDoc, sink, { useObjectStreams: true });
   onProgress?.(100, 'Signed.');
-  return { fileName: `${fileName.replace(/\.[^/.]+$/, '')}_signed.pdf`, buffer, size: buffer.byteLength, pageCount: pages.length };
+  return { fileName: `${fileName.replace(/\.[^/.]+$/, '')}_signed.pdf`, ...out, pageCount: pages.length };
 }
 
-if (typeof self !== 'undefined' && typeof (self as any).addEventListener === 'function') {
-  self.addEventListener('message', async (event: MessageEvent<WorkerRequest<StampSignaturePayload>>) => {
-    const { id, action, payload } = event.data;
-    if (action !== 'STAMP_SIGNATURE') return;
-    try {
-      const result = await stampSignature(payload, (progress, stage) => {
-        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-        self.postMessage(msg);
-      });
-      (self as any).postMessage({ type: 'RESPONSE', payload: { id, success: true, data: result } }, [result.buffer]);
-    } catch (err) {
-      self.postMessage({ type: 'RESPONSE', payload: { id, success: false, error: err instanceof Error ? err.message : 'Failed to sign PDF document' } });
-    }
-  });
-}
+serveTask<StampSignaturePayload, ProcessedPdfResult>('STAMP_SIGNATURE', (p, ctx) => stampSignature(p, ctx.progress, ctx.sink()), 'Failed to sign PDF document');

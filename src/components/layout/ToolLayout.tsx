@@ -2,6 +2,7 @@ import React from 'react';
 import { ArrowLeft, FileText, RotateCcw, X } from 'lucide-react';
 import { AutoSave } from '../common/AutoSave';
 import { resultKey } from '../../services/fileNames';
+import { resultSize, type ResultData } from '../../services/toolOutput';
 import { Button, IconButton, Notice, ProgressLine, formatBytes } from '../ui';
 import { toolIcon } from '../../constants/toolIcons';
 import type { ToolMetadata, PDFFile } from '../../types/pdf';
@@ -16,7 +17,8 @@ interface ToolLayoutProps {
   progress: number;
   stage: string;
   error: string | null;
-  resultBuffer: ArrayBuffer | null;
+  /** The result: bytes, or a stored output (temp file / Blob). */
+  resultData: ResultData | null;
   resultFileName?: string;
   /** Saves the result; `fileName` is the (possibly user-edited) name to save under. */
   onDownloadResult?: (fileName?: string) => void;
@@ -68,7 +70,7 @@ export const ToolLayout: React.FC<ToolLayoutProps> = ({
   progress,
   stage,
   error,
-  resultBuffer,
+  resultData,
   resultFileName = 'processed_document.pdf',
   onDownloadResult,
   actionButtonLabel,
@@ -136,7 +138,7 @@ export const ToolLayout: React.FC<ToolLayoutProps> = ({
             </div>
           )}
 
-          {options && !resultBuffer && <div className="p-4 space-y-5">{options}</div>}
+          {options && !resultData && <div className="p-4 space-y-5">{options}</div>}
 
           <div className="p-4 space-y-3">
             {isProcessing && <ProgressLine progress={progress} stage={stage} />}
@@ -147,16 +149,16 @@ export const ToolLayout: React.FC<ToolLayoutProps> = ({
               </Notice>
             )}
 
-            {resultBuffer && !isProcessing ? (
+            {resultData && !isProcessing ? (
               <div className="space-y-3">
                 <div>
                   <p className="text-sm font-medium">Done</p>
                   <p className="text-xs text-muted break-all">
-                    {resultFileName} · <span className="font-mono">{formatBytes(resultBuffer.byteLength)}</span>
+                    {resultFileName} · <span className="font-mono">{formatBytes(resultSize(resultData))}</span>
                   </p>
                   {resultNote && <div className="text-xs text-muted mt-1">{resultNote}</div>}
                 </div>
-                <AutoSave key={resultKey(resultBuffer)} fileName={resultFileName} onSave={(name) => onDownloadResult?.(name)} />
+                <AutoSave key={resultKey(resultData)} fileName={resultFileName} onSave={(name) => onDownloadResult?.(name)} />
                 {onReset && (
                   <Button variant="ghost" size="sm" block icon={<RotateCcw className="w-3.5 h-3.5" />} onClick={onReset}>
                     Change settings and run again

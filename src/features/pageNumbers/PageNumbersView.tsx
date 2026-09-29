@@ -39,7 +39,7 @@ export const PageNumbersView: React.FC<PageNumbersViewProps> = ({ initialFiles =
   const [startAt, setStartAt] = useState(1);
   const [mirror, setMirror] = useState(false);
   const file = files[0];
-  const { pages } = usePageThumbnails(file?.rawBuffer, 110);
+  const { pages, thumbRef } = usePageThumbnails(file?.data, 110);
   const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./pageNumbers.worker.ts', import.meta.url), { type: 'module' }));
   const total = pages.length || file?.pageCount || 1;
   const template = style === 'custom' ? custom : TEMPLATES[style];
@@ -52,9 +52,8 @@ export const PageNumbersView: React.FC<PageNumbersViewProps> = ({ initialFiles =
   };
 
   const execute = () => {
-    const buffer = file.rawBuffer.slice(0);
     const payload: PageNumbersPayload = {
-      fileBuffer: buffer,
+      fileBuffer: file.data,
       fileName: file.name,
       format: 'n',
       template,
@@ -66,7 +65,7 @@ export const PageNumbersView: React.FC<PageNumbersViewProps> = ({ initialFiles =
       startingNumber: startAt,
       mirror,
     };
-    void runner.run('ADD_PAGE_NUMBERS', payload, [buffer]);
+    void runner.run('ADD_PAGE_NUMBERS', payload);
   };
 
   return (
@@ -133,7 +132,7 @@ export const PageNumbersView: React.FC<PageNumbersViewProps> = ({ initialFiles =
             const pos = mirror && (i + 1 - firstPage) % 2 === 1 ? (position.endsWith('left') ? position.replace('left', 'right') : position.replace('right', 'left')) : position;
             const [v, h] = pos.split('-');
             return (
-              <PageThumb key={i} src={p.url} aspect={p.width / p.height} width={120} label={i + 1} dimmed={!numbered}>
+              <PageThumb key={i} src={p.url} viewRef={thumbRef(i)} aspect={p.width / p.height} width={120} label={i + 1} dimmed={!numbered}>
                 {numbered && (
                   <span
                     className="absolute font-mono text-[9px] text-accent bg-panel/90 px-0.5 whitespace-nowrap"

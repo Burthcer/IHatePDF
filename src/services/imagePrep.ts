@@ -8,12 +8,14 @@
 import { memoryManager } from './memoryManager';
 
 export interface PreparedImage {
-  bytes: ArrayBuffer;
+  /** The picked file itself when usable as is (read from disk only when the PDF is written). */
+  data: Blob;
   type: 'png' | 'jpg';
-  width: number;
-  height: number;
   url: string;
 }
+
+/** EXIF lives in the first 64 KB of a JPEG. */
+const HEAD_BYTES = 256 * 1024;
 
 /** EXIF orientation (1-8) of a JPEG, or 1. */
 export function jpegOrientation(buf: ArrayBuffer): number {
@@ -48,18 +50,19 @@ function isBaselineOrProgressiveJpeg(buf: ArrayBuffer): boolean {
 
 export async function prepareImage(file: File): Promise<PreparedImage> {
   const url = memoryManager.registerUrl(URL.createObjectURL(file));
-  const bytes = await file.arrayBuffer();
+  const head = await file.slice(0, HEAD_BYTES).arrayBuffer();
+
+  const isJpeg = file.type === 'image/jpeg' || (file.type === '' && isBaselineOrProgressiveJpeg(head));
+  const isPng = file.type === 'image/png';
+  if ((isJpeg && jpegOrientation(head) === 1) || isPng) {
+    // Must still be a readable image.
+    (await createImageBitmap(file)).close();
+    return { data: file, type: isPng ? 'png' : 'jpg', url };
+  }
+
   const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
   const width = bitmap.width;
   const height = bitmap.height;
-
-  const isJpeg = file.type === 'image/jpeg' || (file.type === '' && isBaselineOrProgressiveJpeg(bytes));
-  const isPng = file.type === 'image/png';
-  if ((isJpeg && jpegOrientation(bytes) === 1) || isPng) {
-    bitmap.close();
-    return { bytes, type: isPng ? 'png' : 'jpg', width, height, url };
-  }
-
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -71,5 +74,5 @@ export async function prepareImage(file: File): Promise<PreparedImage> {
   const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, asJpeg ? 'image/jpeg' : 'image/png', 0.92));
   canvas.width = 0;
   if (!blob) throw new Error(`Couldn't read ${file.name}.`);
-  return { bytes: await blob.arrayBuffer(), type: asJpeg ? 'jpg' : 'png', width, height, url };
+  return { data: blob, type: asJpeg ? 'jpg' : 'png', url };
 }

@@ -15,7 +15,7 @@
  */
 
 import { PDFDict, PDFName, PDFRawStream, PDFStream, type PDFContext, type PDFDocument, type PDFFont, type PDFPage, type PDFRef } from 'pdf-lib';
-import { fontForText, type FontFamily } from '../../../services/fonts';
+import { GlyphRun, faceFor as scriptOf, fontForText, graphemes, needsShaping, standardFont, type FontFamily } from '../../../services/fonts';
 import { formatHex, formatName, formatNumber, latin1 } from './lexer';
 import { apply, applyVector, invert, multiply, type Matrix } from './geometry';
 import { interpretPage, type GlyphInfo, type PageModel, type TextOpInfo } from './interpreter';
@@ -250,7 +250,11 @@ function libFace(font: PDFFont): Face {
       }
       return w;
     },
-    encode: (text) => font.encodeText(text).toString(),
+    encode: (text) => {
+      const encoded: unknown = font.encodeText(text);
+      // Shaped text comes with positioning: splice it into the surrounding TJ.
+      return encoded instanceof GlyphRun ? encoded.inner() : String(encoded);
+    },
     hasSpace: true,
     ascent: Math.max(0.6, font.heightAtSize(1, { descender: false })),
   };
@@ -264,7 +268,8 @@ function libFace(font: PDFFont): Face {
 class Typesetter {
   constructor(
     private readonly primary: Face,
-    private readonly fallback: Face | null,
+    /** Face for a character the primary can't draw (one per script: Latin, Devanagari, CJK). */
+    private readonly fallbackFor: ((ch: string) => Face) | null,
     private readonly nameOf: (ref: PDFRef) => string
   ) {}
 
@@ -273,27 +278,28 @@ class Typesetter {
   }
 
   private faceFor(ch: string): Face {
-    if (this.primary.has(ch) || !this.fallback) return this.primary;
-    return this.fallback;
+    // Hindi/Marathi syllables are always drawn with the shaping font, whole.
+    if (this.fallbackFor && (needsShaping(ch) || !this.primary.has(ch))) return this.fallbackFor(ch);
+    return this.primary;
   }
 
   /** Width of an inter-word space, em. */
   private spaceWidth(): number {
     if (this.primary.hasSpace) return this.primary.width(' ');
-    if (this.fallback) return this.fallback.width(' ');
+    if (this.fallbackFor) return this.fallbackFor(' ').width(' ');
     return 0.28;
   }
 
   measure(text: string): number {
     let w = 0;
-    for (const ch of text) w += ch === ' ' ? this.spaceWidth() : this.faceFor(ch).width(ch);
+    for (const ch of graphemes(text)) w += ch === ' ' ? this.spaceWidth() : this.faceFor(ch).width(ch);
     return w;
   }
 
   /** TJ-based drawing of one line; `extra` is additional space (pt) per word gap. */
   emit(text: string, size: number, extra: number): string {
     const runs: Array<{ face: Face; text: string } | { space: true }> = [];
-    for (const ch of text) {
+    for (const ch of graphemes(text)) {
       if (ch === ' ') {
         runs.push({ space: true });
         continue;
@@ -346,15 +352,18 @@ async function buildTypesetter(
   const req = { family, bold: style.bold, italic: style.italic };
   const useOriginal =
     original && style.fontChoice === 'original' && style.bold === original.bold && style.italic === original.italic;
-  if (useOriginal) {
-    const primary = originalFace(doc.context, original);
-    const missing = [...text].filter((ch) => ch !== ' ' && ch !== '\n' && !primary.has(ch)).join('');
-    const needsFallback = missing.length > 0 || !primary.hasSpace;
-    const fallback = needsFallback ? libFace(await fontForText(doc, req, missing || ' ')) : null;
-    return new Typesetter(primary, fallback, nameOf);
+  // The document's own font, or the standard font for the chosen family; characters
+  // it can't draw get an embedded font for their script (several scripts can mix).
+  const primary = useOriginal ? originalFace(doc.context, original) : libFace(await standardFont(doc, req));
+  const missing = graphemes(text).filter((ch) => ch !== ' ' && ch !== '\n' && (needsShaping(ch) || !primary.has(ch)));
+  if (!missing.length && primary.hasSpace) return new Typesetter(primary, null, nameOf);
+  const byScript = new Map<string, Face>();
+  for (const script of new Set(missing.map(scriptOf).concat(missing.length ? [] : ['liberation']))) {
+    const chars = missing.filter((ch) => scriptOf(ch) === script).join('') || ' ';
+    byScript.set(script, libFace(await fontForText(doc, req, chars)));
   }
-  const face = libFace(await fontForText(doc, req, text));
-  return new Typesetter(face, null, nameOf);
+  const first = byScript.values().next().value as Face;
+  return new Typesetter(primary, (ch) => byScript.get(scriptOf(ch)) ?? first, nameOf);
 }
 
 function wrapParagraph(text: string, width: number, measure: (t: string) => number): string[] {

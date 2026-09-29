@@ -151,7 +151,7 @@ export const SignView: React.FC<SignViewProps> = ({ initialFiles = [], onBack })
   const [preview, setPreview] = useState<string | null>(null);
   const drag = useRef<{ index: number; kind: 'move' | 'resize'; sx: number; sy: number; orig: SignaturePlacement } | null>(null);
   const file = files[0];
-  const { pages } = usePageThumbnails(file?.rawBuffer, 40);
+  const { pages } = usePageThumbnails(file?.data, 40, 0); // sizes only
   const { renderThumbnail } = usePdfRenderer();
   const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./sign.worker.ts', import.meta.url), { type: 'module' }));
   const page = pages[pageIndex];
@@ -166,7 +166,7 @@ export const SignView: React.FC<SignViewProps> = ({ initialFiles = [], onBack })
     if (!file || !page) return;
     let cancelled = false;
     setPreview(null);
-    renderThumbnail(file.rawBuffer, pageIndex + 1, PAGE_W * Math.min(2, window.devicePixelRatio || 1))
+    renderThumbnail(file.data, pageIndex + 1, PAGE_W * Math.min(2, window.devicePixelRatio || 1))
       .then((u) => !cancelled && setPreview(u))
       .catch(() => undefined);
     return () => {
@@ -213,10 +213,9 @@ export const SignView: React.FC<SignViewProps> = ({ initialFiles = [], onBack })
 
   const execute = () => {
     if (!signature) return;
-    const buffer = file.rawBuffer.slice(0);
     const sig = signature.bytes.slice(0);
-    const payload: StampSignaturePayload = { fileBuffer: buffer, fileName: file.name, signatureImageBytes: sig, placements };
-    void runner.run('STAMP_SIGNATURE', payload, [buffer, sig]);
+    const payload: StampSignaturePayload = { fileBuffer: file.data, fileName: file.name, signatureImageBytes: sig, placements };
+    void runner.run('STAMP_SIGNATURE', payload, [sig]);
   };
 
   const onThisPage = placements.map((p, i) => ({ p, i })).filter(({ p }) => p.pageIndex === pageIndex);

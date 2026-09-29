@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
 import { PageThumb } from '../../components/common/PageThumb';
+import { VirtualGrid } from '../../components/common/VirtualGrid';
 import { Field, Notice, Segmented, Spinner } from '../../components/ui';
 import { useToolRunner } from '../../hooks/useToolRunner';
 import { usePageThumbnails } from '../../hooks/usePageThumbnails';
@@ -23,7 +24,7 @@ export const SplitView: React.FC<SplitViewProps> = ({ initialFiles = [], onBack 
   const [rangeText, setRangeText] = useState('1');
   const [everyN, setEveryN] = useState(2);
   const file = files[0];
-  const { pages } = usePageThumbnails(file?.rawBuffer);
+  const { pages, thumbRef } = usePageThumbnails(file?.data);
   const total = pages.length || file?.pageCount || 0;
   const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./split.worker.ts', import.meta.url), { type: 'module' }));
 
@@ -65,12 +66,11 @@ export const SplitView: React.FC<SplitViewProps> = ({ initialFiles = [], onBack 
   };
 
   const execute = () => {
-    const buffer = file.rawBuffer.slice(0);
     const payload: SplitPayload =
       mode === 'extract'
-        ? { fileBuffer: buffer, fileName: file.name, ranges: parsed.ranges }
-        : { fileBuffer: buffer, fileName: file.name, ranges: [], groups };
-    void runner.run('SPLIT_PDF', payload, [buffer]);
+        ? { fileBuffer: file.data, fileName: file.name, ranges: parsed.ranges }
+        : { fileBuffer: file.data, fileName: file.name, ranges: [], groups };
+    void runner.run('SPLIT_PDF', payload);
   };
 
   const outputs = mode === 'extract' ? 1 : groups.length;
@@ -154,8 +154,9 @@ export const SplitView: React.FC<SplitViewProps> = ({ initialFiles = [], onBack 
           <Spinner /> Loading pages…
         </div>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(132px,1fr))] gap-x-4 gap-y-6">
-          {pages.map((p, i) => {
+        <VirtualGrid count={pages.length} minColWidth={132} rowHeight={196}>
+          {(i) => {
+            const p = pages[i];
             const page = i + 1;
             const g = groupOf.get(i);
             const inOutput = g !== undefined;
@@ -163,6 +164,7 @@ export const SplitView: React.FC<SplitViewProps> = ({ initialFiles = [], onBack 
               <PageThumb
                 key={i}
                 src={p.url}
+                viewRef={thumbRef(i)}
                 aspect={p.width / p.height}
                 selected={(mode === 'extract' || mode === 'ranges') && selected.has(page)}
                 dimmed={!inOutput}
@@ -175,8 +177,8 @@ export const SplitView: React.FC<SplitViewProps> = ({ initialFiles = [], onBack 
                 }
               />
             );
-          })}
-        </div>
+          }}
+        </VirtualGrid>
       )}
     </ToolLayout>
   );

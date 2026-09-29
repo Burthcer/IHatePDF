@@ -22,9 +22,8 @@ export const UnlockView: React.FC<UnlockViewProps> = ({ initialFiles = [], onBac
   const needsPassword = !!file?.encrypted;
 
   const execute = () => {
-    const buffer = file.rawBuffer.slice(0);
-    const payload: UnlockPayload = { fileBuffer: buffer, fileName: file.name, password: password || undefined };
-    void runner.run('UNLOCK_PDF', payload, [buffer]);
+    const payload: UnlockPayload = { fileBuffer: file.data, fileName: file.name, password: password || undefined };
+    void runner.run('UNLOCK_PDF', payload);
   };
 
   const result = runner.result;

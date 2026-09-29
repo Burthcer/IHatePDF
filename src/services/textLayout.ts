@@ -13,6 +13,7 @@
 
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
+import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 export interface StyledRun {
   text: string;
@@ -37,7 +38,9 @@ export type LayoutBlock =
   | { kind: 'heading'; level: 1 | 2 | 3; runs: StyledRun[]; text: string; box: Box }
   | { kind: 'paragraph'; runs: StyledRun[]; text: string; box: Box; align: 'left' | 'center' | 'right' | 'justify' }
   | { kind: 'list'; ordered: boolean; items: Array<{ runs: StyledRun[]; text: string; marker: string }>; box: Box }
-  | { kind: 'table'; rows: string[][]; box: Box };
+  | { kind: 'table'; rows: string[][]; box: Box }
+  /** A picture on the page (viewer coordinates); `data` is filled in by whoever needs the pixels. */
+  | { kind: 'image'; box: Box; data?: Blob };
 
 export interface Box {
   x0: number;
@@ -76,7 +79,10 @@ interface Segment {
 }
 
 interface Line {
+  /** Runs split where the gap is wider than a generous word space (prose-safe). */
   segments: Segment[];
+  /** Split at any gap wider than half an em: candidate cells of a tightly set table. */
+  fine: Segment[];
   y: number;
   size: number;
 }
@@ -112,12 +118,54 @@ function fontInfo(page: PDFPageProxy, fontName: string, style: { fontFamily?: st
   return { name, bold, italic, mono, serif };
 }
 
-async function pageRuns(page: PDFPageProxy): Promise<{ runs: Run[]; width: number; height: number }> {
+const IMAGE_OPS = new Set([OPS.paintImageXObject, OPS.paintInlineImageXObject, OPS.paintImageMaskXObject]);
+const MIN_IMAGE_PT = 24;
+
+/** Where the page's pictures are drawn, from its operator list (tracking the transform stack). */
+function imageBoxes(ops: { fnArray: number[]; argsArray: unknown[][] }, viewport: number[], width: number, height: number): Box[] {
+  const boxes: Box[] = [];
+  const stack: number[][] = [];
+  let ctm = [1, 0, 0, 1, 0, 0];
+  for (let i = 0; i < ops.fnArray.length; i++) {
+    const fn = ops.fnArray[i];
+    const args = ops.argsArray[i];
+    if (fn === OPS.save) stack.push(ctm);
+    else if (fn === OPS.restore) ctm = stack.pop() ?? ctm;
+    else if (fn === OPS.transform) ctm = Util.transform(ctm, args as number[]);
+    else if (fn === OPS.paintFormXObjectBegin) {
+      stack.push(ctm);
+      const m = args?.[0] as number[] | null;
+      if (Array.isArray(m) && m.length === 6) ctm = Util.transform(ctm, m);
+    } else if (fn === OPS.paintFormXObjectEnd) ctm = stack.pop() ?? ctm;
+    else if (IMAGE_OPS.has(fn)) {
+      const full = Util.transform(viewport, ctm);
+      const pts = [[0, 0], [1, 0], [0, 1], [1, 1]].map((p) => {
+        Util.applyTransform(p, full); // in place
+        return p;
+      });
+      const box = {
+        x0: Math.max(0, Math.min(...pts.map((p) => p[0]))),
+        x1: Math.min(width, Math.max(...pts.map((p) => p[0]))),
+        y0: Math.max(0, Math.min(...pts.map((p) => p[1]))),
+        y1: Math.min(height, Math.max(...pts.map((p) => p[1]))),
+      };
+      if (box.x1 - box.x0 < MIN_IMAGE_PT || box.y1 - box.y0 < MIN_IMAGE_PT) continue;
+      if (boxes.some((b) => Math.abs(b.x0 - box.x0) < 1 && Math.abs(b.y0 - box.y0) < 1 && Math.abs(b.x1 - box.x1) < 1 && Math.abs(b.y1 - box.y1) < 1)) continue;
+      boxes.push(box);
+    }
+  }
+  return boxes;
+}
+
+async function pageRuns(page: PDFPageProxy): Promise<{ runs: Run[]; width: number; height: number; images: Box[] }> {
   const vp = page.getViewport({ scale: 1 });
   // Loading the operator list makes pdf.js resolve the page's fonts, which
-  // is where bold/italic and the real font names come from.
+  // is where bold/italic and the real font names come from. It also says
+  // where the pictures are.
+  let images: Box[] = [];
   try {
-    await page.getOperatorList();
+    const ops = await page.getOperatorList();
+    images = imageBoxes(ops as unknown as { fnArray: number[]; argsArray: unknown[][] }, vp.transform, vp.width, vp.height);
   } catch {
     // text content can still be read
   }
@@ -154,7 +202,7 @@ async function pageRuns(page: PDFPageProxy): Promise<{ runs: Run[]; width: numbe
       serif: info.serif,
     });
   }
-  return { runs, width: vp.width, height: vp.height };
+  return { runs, width: vp.width, height: vp.height, images };
 }
 
 function buildLines(runs: Run[]): Line[] {
@@ -170,18 +218,21 @@ function buildLines(runs: Run[]): Line[] {
   return bands.map((band) => {
     band.sort((p, q) => p.x - q.x);
     const size = median(band.map((r) => r.size));
-    const segments: Segment[] = [];
-    for (const r of band) {
-      const seg = segments[segments.length - 1];
-      if (seg && r.x - seg.x1 < size * 1.6) {
-        seg.runs.push(r);
-        seg.x1 = Math.max(seg.x1, r.x + r.w);
-      } else {
-        segments.push({ runs: [r], x0: r.x, x1: r.x + r.w, y: r.y, size });
+    const split = (maxGap: number) => {
+      const segments: Segment[] = [];
+      for (const r of band) {
+        const seg = segments[segments.length - 1];
+        if (seg && r.x - seg.x1 < size * maxGap) {
+          seg.runs.push(r);
+          seg.x1 = Math.max(seg.x1, r.x + r.w);
+        } else {
+          segments.push({ runs: [r], x0: r.x, x1: r.x + r.w, y: r.y, size });
+        }
       }
-    }
-    segments.forEach((s) => (s.size = median(s.runs.map((r) => r.size))));
-    return { segments, y: median(band.map((r) => r.y)), size };
+      segments.forEach((s) => (s.size = median(s.runs.map((r) => r.size))));
+      return segments;
+    };
+    return { segments: split(1.6), fine: split(0.5), y: median(band.map((r) => r.y)), size };
   });
 }
 
@@ -203,49 +254,83 @@ const runsText = (runs: StyledRun[]) => runs.map((r) => r.text).join('').replace
 
 // ------------------------------------------------------------------ tables
 
-interface TableCandidate {
-  lines: Line[];
-  columns: number[];
+interface Span {
+  x0: number;
+  x1: number;
 }
 
-function detectTables(lines: Line[]): { tables: TableCandidate[]; used: Set<Line> } {
+interface TableCandidate {
+  lines: Line[];
+  /** Each line's cells (segments). */
+  cells: Segment[][];
+  columns: Span[];
+}
+
+/**
+ * A cell belongs to a column if it overlaps the column's horizontal extent,
+ * or shares its left or right edge — so left-aligned text, right-aligned
+ * numbers and centred headers all line up.
+ */
+function inColumn(s: Span, c: Span, tol: number): boolean {
+  return Math.min(s.x1, c.x1) - Math.max(s.x0, c.x0) > 0 || Math.abs(s.x0 - c.x0) < tol || Math.abs(s.x1 - c.x1) < tol;
+}
+
+/** Columns that came to overlap as cells were added are one column. */
+function mergeColumns(cols: Span[]): Span[] {
+  const sorted = [...cols].sort((a, b) => a.x0 - b.x0);
+  const out: Span[] = [];
+  for (const c of sorted) {
+    const last = out[out.length - 1];
+    if (last && c.x0 < last.x1) last.x1 = Math.max(last.x1, c.x1);
+    else out.push({ ...c });
+  }
+  return out;
+}
+
+/**
+ * Groups of consecutive lines whose cells line up in columns. `strict` is the
+ * second pass over finely split lines (tight tables): it needs at least three
+ * rows and three columns of short cells, so prose is never cut into cells.
+ */
+function detectTables(lines: Line[], strict = false): { tables: TableCandidate[]; used: Set<Line> } {
   const tables: TableCandidate[] = [];
   const used = new Set<Line>();
+  const segsOf = (l: Line) => (strict ? l.fine : l.segments);
+  const minCells = strict ? 3 : 2;
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
-    if (line.segments.length < 2) {
+    if (segsOf(line).length < minCells) {
       i++;
       continue;
     }
     const group: Line[] = [line];
-    let cols = line.segments.map((s) => s.x0);
+    let cols: Span[] = mergeColumns(segsOf(line).map((s) => ({ x0: s.x0, x1: s.x1 })));
     let j = i + 1;
     while (j < lines.length) {
       const next = lines[j];
+      const segs = segsOf(next);
       const gap = next.y - group[group.length - 1].y;
       if (gap > Math.max(next.size, line.size) * 3) break;
-      if (next.segments.length < 2) break;
-      const tol = next.size * 1.2;
-      const matched = next.segments.filter((s) => cols.some((c) => Math.abs(c - s.x0) < tol)).length;
-      if (matched < Math.min(2, next.segments.length)) break;
+      if (segs.length < minCells) break;
+      const tol = next.size * 0.8;
+      const hits = segs.map((s) => cols.findIndex((c) => inColumn(s, c, tol)));
+      const distinct = new Set(hits.filter((h) => h >= 0)).size;
+      if (distinct < Math.min(strict ? 3 : 2, segs.length)) break;
       group.push(next);
-      next.segments.forEach((s) => {
-        if (!cols.some((c) => Math.abs(c - s.x0) < tol)) cols.push(s.x0);
-      });
-      cols = cols.sort((a, b) => a - b);
+      cols = mergeColumns([...cols, ...segs.map((s) => ({ x0: s.x0, x1: s.x1 }))]);
       j++;
     }
-    // Two-column body text also yields aligned multi-segment lines; real
-    // table cells are short, so reject groups of wordy "cells".
-    const cellWords = group.flatMap((l) => l.segments.map((s) => runsText(segmentRuns(s)).split(' ').length));
+    const cellWords = group.flatMap((l) => segsOf(l).map((s) => runsText(segmentRuns(s)).split(' ').length));
     const avgWords = cellWords.reduce((a, b) => a + b, 0) / Math.max(1, cellWords.length);
-    // Two side-by-side columns of short phrases look like a 2-column table;
-    // without numbers or single-word labels, treat them as text columns.
-    const hasNumbers = group.some((l) => l.segments.some((s) => /^[\s$€£¥%()+\-.,\d]+$/.test(runsText(segmentRuns(s)))));
+    // Two-column body text also yields aligned multi-segment lines; real
+    // table cells are short. Two side-by-side columns of short phrases look
+    // like a 2-column table; without numbers, treat them as text columns.
+    const hasNumbers = group.some((l) => segsOf(l).some((s) => /^[\s$€£¥₹%()+\-.,\d]+$/.test(runsText(segmentRuns(s)))));
     const proseColumns = cols.length === 2 && avgWords > 3 && !hasNumbers;
-    if (group.length >= 2 && avgWords <= 6 && !proseColumns) {
-      tables.push({ lines: group, columns: cols });
+    const ok = strict ? group.length >= 3 && cols.length >= 3 && avgWords <= 3 : group.length >= 2 && avgWords <= 6 && !proseColumns;
+    if (ok) {
+      tables.push({ lines: group, cells: group.map(segsOf), columns: cols });
       group.forEach((l) => used.add(l));
       i = j;
     } else {
@@ -257,15 +342,17 @@ function detectTables(lines: Line[]): { tables: TableCandidate[]; used: Set<Line
 
 function tableRows(t: TableCandidate): string[][] {
   const cols = t.columns;
-  return t.lines.map((line) => {
+  return t.cells.map((segs) => {
     const row = new Array(cols.length).fill('');
-    for (const seg of line.segments) {
+    for (const seg of segs) {
+      // The column it overlaps most; else the nearest.
       let best = 0;
-      let bestD = Infinity;
+      let bestScore = -Infinity;
       cols.forEach((c, k) => {
-        const d = Math.abs(c - seg.x0);
-        if (d < bestD) {
-          bestD = d;
+        const overlap = Math.min(seg.x1, c.x1) - Math.max(seg.x0, c.x0);
+        const score = overlap > 0 ? overlap : -Math.abs((seg.x0 + seg.x1) / 2 - (c.x0 + c.x1) / 2);
+        if (score > bestScore) {
+          bestScore = score;
           best = k;
         }
       });
@@ -373,22 +460,27 @@ export async function analyzeDocumentLayout(doc: PDFDocumentProxy, onProgress?: 
     lines: Line[];
     tables: TableCandidate[];
     blocks: RawBlock[];
+    images: Box[];
   }
   const work: PageWork[] = [];
   const allSizes: number[] = [];
 
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
-    const { runs, width, height } = await pageRuns(page);
+    const { runs, width, height, images } = await pageRuns(page);
     page.cleanup();
     const lines = buildLines(runs);
     const { tables, used } = detectTables(lines);
+    // Second pass for tables set so tightly that their cells look like words of one line.
+    const tight = detectTables(lines.filter((l) => !used.has(l)), true);
+    tables.push(...tight.tables);
+    tight.used.forEach((l) => used.add(l));
     const segs = lines.filter((l) => !used.has(l)).flatMap((l) => l.segments);
     const blocks = buildBlocks(segs);
     runs.forEach((r) => {
       for (let k = 0; k < Math.min(r.text.length, 20); k++) allSizes.push(Math.round(r.size * 2) / 2);
     });
-    work.push({ pageNumber: p, width, height, lines, tables, blocks });
+    work.push({ pageNumber: p, width, height, lines, tables, blocks, images });
     onProgress?.(p, doc.numPages);
   }
 
@@ -401,9 +493,10 @@ export async function analyzeDocumentLayout(doc: PDFDocumentProxy, onProgress?: 
 
   return work.map((w) => {
     const items: Array<{ box: Box; block: LayoutBlock }> = [];
+    for (const box of w.images) items.push({ box, block: { kind: 'image', box } });
     for (const t of w.tables) {
       const ys = t.lines.map((l) => l.y);
-      const xs = t.lines.flatMap((l) => l.segments.flatMap((s) => [s.x0, s.x1]));
+      const xs = t.cells.flatMap((segs) => segs.flatMap((s) => [s.x0, s.x1]));
       items.push({
         box: { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys) - t.lines[0].size, y1: Math.max(...ys) + 2 },
         block: { kind: 'table', rows: tableRows(t), box: { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) } },

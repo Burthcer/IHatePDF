@@ -14,10 +14,12 @@ interface PageThumbProps {
   className?: string;
   children?: React.ReactNode;
   width?: number;
+  /** usePageThumbnails' thumbRef(i): draws the thumbnail when the tile scrolls into view. */
+  viewRef?: (el: Element | null) => void;
 }
 
 /** A page thumbnail tile: white page in a fixed cell, label underneath. */
-export const PageThumb: React.FC<PageThumbProps> = ({ src, aspect, label, selected, dimmed, rotate = 0, onClick, className, children, width = 132 }) => {
+export const PageThumb: React.FC<PageThumbProps> = ({ src, aspect, label, selected, dimmed, rotate = 0, onClick, className, children, width = 132, viewRef }) => {
   const cellH = width * 1.3;
   const turned = Math.abs(rotate % 180) === 90;
   const visualAspect = turned ? 1 / aspect : aspect;
@@ -31,7 +33,7 @@ export const PageThumb: React.FC<PageThumbProps> = ({ src, aspect, label, select
   const ih = turned ? vw : vh;
 
   return (
-    <div className={cn('flex flex-col items-center gap-1.5', className)}>
+    <div ref={viewRef} className={cn('flex flex-col items-center gap-1.5', className)}>
       <div
         role={onClick ? 'button' : undefined}
         tabIndex={onClick ? 0 : undefined}

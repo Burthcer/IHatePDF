@@ -41,9 +41,8 @@ export const ProtectView: React.FC<ProtectViewProps> = ({ initialFiles = [], onB
   const s = strength(password);
 
   const execute = () => {
-    const buffer = file.rawBuffer.slice(0);
     const payload: ProtectPayload = {
-      fileBuffer: buffer,
+      fileBuffer: file.data,
       fileName: file.name,
       userPassword: password,
       // Restrictions only mean something if the owner password differs from
@@ -55,7 +54,7 @@ export const ProtectView: React.FC<ProtectViewProps> = ({ initialFiles = [], onB
           : undefined,
       permissions: perms,
     };
-    void runner.run('PROTECT_PDF', payload, [buffer]);
+    void runner.run('PROTECT_PDF', payload);
   };
 
   const set = (patch: Partial<typeof perms>) => {

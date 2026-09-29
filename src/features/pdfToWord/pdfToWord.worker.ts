@@ -24,6 +24,7 @@ import {
   BorderStyle,
   Document,
   HeadingLevel,
+  ImageRun,
   Packer,
   PageBreak,
   Paragraph,
@@ -135,8 +136,25 @@ const ALIGN = {
   justify: AlignmentType.JUSTIFIED,
 } as const;
 
-function blockToDocx(block: LayoutBlock): Array<Paragraph | Table> {
+/** Word measures pictures in pixels at 96 per inch. */
+const PT_TO_PX = 96 / 72;
+
+function blockToDocx(block: LayoutBlock, pictures: Map<LayoutBlock, ArrayBuffer>, maxWidthPt: number): Array<Paragraph | Table> {
   switch (block.kind) {
+    case 'image': {
+      const data = pictures.get(block);
+      if (!data) return [];
+      // Same size as on the PDF page, shrunk if wider than the text column.
+      const w = block.box.x1 - block.box.x0;
+      const h = block.box.y1 - block.box.y0;
+      const k = Math.min(1, maxWidthPt / w);
+      return [
+        new Paragraph({
+          spacing: { after: 120 },
+          children: [new ImageRun({ type: 'jpg', data, transformation: { width: Math.round(w * k * PT_TO_PX), height: Math.round(h * k * PT_TO_PX) } })],
+        }),
+      ];
+    }
     case 'heading':
       return [
         new Paragraph({
@@ -185,14 +203,18 @@ export async function buildDocxFromLayout(
 ): Promise<OfficeConversionResult> {
   onProgress?.(20, 'Building document...');
   const children: Array<Paragraph | Table> = [];
+  // Pictures arrive as JPEG Blobs (rendered on the page); read them one by one.
+  const pictures = new Map<LayoutBlock, ArrayBuffer>();
+  for (const page of pages) for (const b of page.blocks) if (b.kind === 'image' && b.data) pictures.set(b, await b.data.arrayBuffer());
+  const first = pages[0];
+  const maxWidthPt = first ? first.width - 108 : 480; // page width minus the 0.75" margins
   pages.forEach((page, pi) => {
-    page.blocks.forEach((b) => children.push(...blockToDocx(b)));
+    page.blocks.forEach((b) => children.push(...blockToDocx(b, pictures, maxWidthPt)));
     if (options.pageBreaks && pi < pages.length - 1) children.push(new Paragraph({ children: [new PageBreak()] }));
   });
   if (children.length === 0) {
     children.push(new Paragraph({ children: [new TextRun('(This PDF has no extractable text — it may be a scan. Try OCR software first.)')] }));
   }
-  const first = pages[0];
   const doc = new Document({
     styles: { default: { document: { run: { font: 'Calibri', size: 22 } } } },
     sections: [

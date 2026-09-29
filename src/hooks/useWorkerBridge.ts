@@ -15,6 +15,8 @@ import type {
   WorkerIncomingMessage,
   WorkerResponse,
 } from '../types/worker';
+import { OutputCollector } from '../services/toolOutput';
+import { attachWorker, registerJob } from '../services/memoryGuard';
 
 export interface UseWorkerBridgeOptions {
   timeoutMs?: number;
@@ -37,6 +39,9 @@ export function useWorkerBridge<TResult = unknown>(
   const [error, setError] = useState<string | null>(null);
 
   const workerRef = useRef<Worker | null>(null);
+  const outputsRef = useRef<OutputCollector | null>(null);
+  const detachMemoryRef = useRef<(() => void) | null>(null);
+  const endJobRef = useRef<(() => void) | null>(null);
   const activeRequestIdRef = useRef<string | null>(null);
   const rejectActivePromiseRef = useRef<((reason?: unknown) => void) | null>(null);
 
@@ -44,18 +49,26 @@ export function useWorkerBridge<TResult = unknown>(
   const getOrCreateWorker = useCallback((): Worker => {
     if (!workerRef.current) {
       workerRef.current = workerFactory();
+      outputsRef.current = new OutputCollector(workerRef.current);
+      detachMemoryRef.current = attachWorker(workerRef.current);
     }
     return workerRef.current;
   }, [workerFactory]);
 
-  // Terminate active worker
-  const terminateWorker = useCallback(() => {
+  // Terminate active worker (frees all of its memory at once)
+  const terminateWorker = useCallback((reason?: Error) => {
     if (workerRef.current) {
       workerRef.current.terminate();
       workerRef.current = null;
+      outputsRef.current?.dispose();
+      outputsRef.current = null;
+      detachMemoryRef.current?.();
+      detachMemoryRef.current = null;
     }
+    endJobRef.current?.();
+    endJobRef.current = null;
     if (rejectActivePromiseRef.current) {
-      rejectActivePromiseRef.current(new Error('Worker execution cancelled.'));
+      rejectActivePromiseRef.current(reason ?? new Error('Worker execution cancelled.'));
       rejectActivePromiseRef.current = null;
     }
     activeRequestIdRef.current = null;
@@ -119,6 +132,11 @@ export function useWorkerBridge<TResult = unknown>(
         const requestId = crypto.randomUUID();
         activeRequestIdRef.current = requestId;
         rejectActivePromiseRef.current = reject;
+        // Memory fail-safe: if the app goes over its RAM budget, this task is stopped.
+        endJobRef.current = registerJob((err) => {
+          setError(err.message);
+          terminateWorker(err);
+        });
 
         setIsProcessing(true);
         setProgress(0);
@@ -133,9 +151,11 @@ export function useWorkerBridge<TResult = unknown>(
           }, options.timeoutMs);
         }
 
+        const outputs = outputsRef.current!;
         const handleMessage = (event: MessageEvent<WorkerIncomingMessage<TResult>>) => {
           const message = event.data;
           if (!message) return;
+          if (outputs.handle(message as { type?: string })) return;
 
           if (message.type === 'PROGRESS') {
             if (message.payload.id === requestId) {
@@ -145,10 +165,22 @@ export function useWorkerBridge<TResult = unknown>(
           } else if (message.type === 'RESPONSE') {
             const res: WorkerResponse<TResult> = message.payload;
             if (res.id === requestId) {
-              cleanup();
               if (res.success && res.data !== undefined) {
-                resolve(res.data);
+                // Streamed output: wait until it's all stored.
+                outputs.resolve(res.data).then(
+                  (data) => {
+                    cleanup();
+                    resolve(data);
+                  },
+                  (err) => {
+                    cleanup();
+                    const errMessage = err instanceof Error ? err.message : 'The result could not be stored.';
+                    setError(errMessage);
+                    reject(new Error(errMessage));
+                  }
+                );
               } else {
+                cleanup();
                 const errMessage = res.error || 'Unknown worker execution failure';
                 setError(errMessage);
                 reject(new Error(errMessage));
@@ -166,6 +198,8 @@ export function useWorkerBridge<TResult = unknown>(
 
         const cleanup = () => {
           if (timeoutTimer) clearTimeout(timeoutTimer);
+          endJobRef.current?.();
+          endJobRef.current = null;
           worker.removeEventListener('message', handleMessage);
           worker.removeEventListener('error', handleError);
           activeRequestIdRef.current = null;
@@ -206,7 +240,7 @@ export function useWorkerBridge<TResult = unknown>(
     progress,
     stage,
     error,
-    cancelTask: terminateWorker,
+    cancelTask: () => terminateWorker(),
     resetState: () => {
       setProgress(0);
       setStage('');

@@ -5,6 +5,7 @@ import { Panel } from '../../components/ui';
 import { useToolRunner } from '../../hooks/useToolRunner';
 import { openPdfJsDocument } from '../../services/pdfWorkerSetup';
 import { memoryManager } from '../../services/memoryManager';
+import { MemoryLimitError, startJob } from '../../services/memoryGuard';
 import { getTool } from '../../constants/tools';
 import type { PDFFile } from '../../types/pdf';
 import type { ProcessedPdfResult, RepairPayload } from '../../types/worker';
@@ -14,11 +15,13 @@ interface RepairViewProps {
   onBack: () => void;
 }
 
-async function renderAll(buffer: ArrayBuffer, onPage: (i: number, n: number) => void): Promise<NonNullable<RepairPayload['renderedPages']>> {
-  const doc = await openPdfJsDocument(buffer).promise;
+async function renderAll(data: Blob, onPage: (i: number, n: number) => void): Promise<NonNullable<RepairPayload['renderedPages']>> {
+  const doc = await openPdfJsDocument(data).promise;
   const out: NonNullable<RepairPayload['renderedPages']> = [];
+  const job = startJob();
   try {
     for (let i = 1; i <= doc.numPages; i++) {
+      job.check();
       onPage(i, doc.numPages);
       try {
         const page = await doc.getPage(i);
@@ -32,12 +35,14 @@ async function renderAll(buffer: ArrayBuffer, onPage: (i: number, n: number) => 
         await page.render({ canvasContext: ctx, viewport: vp, canvas }).promise;
         const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', 0.9));
         canvas.width = 0;
-        if (blob) out.push({ jpeg: await blob.arrayBuffer(), widthPt: vp.width / 2, heightPt: vp.height / 2 });
+        // Kept as a Blob (the browser pages big ones out to disk) and embedded from there.
+        if (blob) out.push({ jpeg: blob, widthPt: vp.width / 2, heightPt: vp.height / 2 });
       } catch {
         // skip pages even pdf.js can't draw
       }
     }
   } finally {
+    job.end();
     await memoryManager.destroyPdfDocument(doc);
   }
   return out;
@@ -46,24 +51,26 @@ async function renderAll(buffer: ArrayBuffer, onPage: (i: number, n: number) => 
 export const RepairView: React.FC<RepairViewProps> = ({ initialFiles = [], onBack }) => {
   const [files, setFiles] = useState<PDFFile[]>(initialFiles.slice(0, 1));
   const [fallbackStage, setFallbackStage] = useState<string | null>(null);
+  const [fallbackError, setFallbackError] = useState<string | null>(null);
   const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./repair.worker.ts', import.meta.url), { type: 'module' }));
   const file = files[0];
 
   const execute = async () => {
-    const buffer = file.rawBuffer.slice(0);
-    const res = await runner.run<RepairPayload>('REPAIR_PDF', { fileBuffer: buffer, fileName: file.name }, [buffer]);
+    setFallbackError(null);
+    const res = await runner.run<RepairPayload>('REPAIR_PDF', { fileBuffer: file.data, fileName: file.name });
     const expected = file.pageCount;
     if (res && (!expected || (res.pageCount ?? 0) >= expected)) return;
     // Structural repair failed or lost pages — rebuild from what pdf.js can render.
     try {
       setFallbackStage('Rendering readable pages…');
-      const rendered = await renderAll(file.rawBuffer, (i, n) => setFallbackStage(`Rendering page ${i} of ${n}…`));
+      const rendered = await renderAll(file.data, (i, n) => setFallbackStage(`Rendering page ${i} of ${n}…`));
       setFallbackStage(null);
       if (!rendered.length) return;
       if (res && (res.pageCount ?? 0) >= rendered.length) return;
-      await runner.run<RepairPayload>('REPAIR_PDF', { fileBuffer: new ArrayBuffer(0), fileName: file.name, renderedPages: rendered }, rendered.map((r) => r.jpeg));
-    } catch {
+      await runner.run<RepairPayload>('REPAIR_PDF', { fileBuffer: new ArrayBuffer(0), fileName: file.name, renderedPages: rendered });
+    } catch (err) {
       setFallbackStage(null);
+      if (err instanceof MemoryLimitError) setFallbackError(err.message);
     }
   };
 
@@ -77,6 +84,7 @@ export const RepairView: React.FC<RepairViewProps> = ({ initialFiles = [], onBac
       {...runner.layout}
       isProcessing={runner.layout.isProcessing || !!fallbackStage}
       stage={fallbackStage ?? runner.layout.stage}
+      error={fallbackError ?? runner.layout.error}
       resultNote={runner.result?.note}
       actionButtonLabel="Repair"
       onExecuteAction={() => void execute()}

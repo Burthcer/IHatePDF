@@ -7,7 +7,7 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
-import { PDFDocument, PDFName, PDFArray } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFArray, PDFDict, PDFRawStream, StandardFonts, decodePDFRawStream } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { buildComplexPdf, encryptLegacy, PAGE1_TEXT } from './complexFixtures';
 import { openPdf, PdfPasswordError } from '../src/services/pdfLoader';
@@ -255,11 +255,45 @@ async function main() {
     assert(b1.some((b) => b.kind === 'table' && b.rows.length >= 3), `table not detected: ${b1.map((b) => b.kind).join(',')}`);
     assert(layout[2].blocks.some((b) => b.kind === 'list' && b.items.length === 3), 'bullet list not detected');
   });
+  await check('layout: pictures found where they are drawn (for PDF→Word)', () => {
+    const pics = layout.flatMap((p) => p.blocks.filter((b) => b.kind === 'image').map((b) => ({ page: p.pageNumber, box: b.box })));
+    assert(pics.length >= 1, 'no picture found');
+    for (const { box } of pics) assert(box.x1 - box.x0 >= 24 && box.y1 - box.y0 >= 24, `picture box too small: ${JSON.stringify(box)}`);
+  });
   await check('Markdown output has #, table pipes and list items', () => {
     const md = layoutToMarkdown(layout, { pageHeadings: false, emphasis: true });
     assert(/^# |\n# |^## |\n## /m.test(md), 'no heading');
     assert(md.includes('| Region |'), 'no table');
     assert(/\n- First bullet/.test(md), 'no list');
+  });
+  await check('tables: centred headers and right-aligned numbers keep their columns; prose stays prose', async () => {
+    const d = await PDFDocument.create();
+    const f = await d.embedFont(StandardFonts.Helvetica);
+    const b = await d.embedFont(StandardFonts.HelveticaBold);
+    const pg = d.addPage([595, 842]);
+    let y = 800;
+    const at = (t: string, x: number, font = f) => pg.drawText(t, { x, y, size: 10, font });
+    const right = (t: string, x1: number) => at(t, x1 - f.widthOfTextAtSize(t, 10));
+    const center = (t: string, cx: number) => at(t, cx - b.widthOfTextAtSize(t, 10) / 2, b);
+    at('Ordinary prose that runs across most of the page and must remain a paragraph of text,', 50);
+    y -= 13;
+    at('not turn into a table just because it has several lines of similar length in a row.', 50);
+    y -= 30;
+    center('Region', 90); center('Units', 185); center('Revenue', 250); center('Growth', 312);
+    y -= 13;
+    for (const [r, u, rev, g] of [['North', '1,204', '1,234,567', '4%'], ['South', '980', '5', '-12%'], ['East Coast', '12', '98,000', '100%']]) {
+      at(r, 50); right(u, 209); right(rev, 274); right(g, 340);
+      y -= 13;
+    }
+    const pdf = await getDocument({ data: await d.save() }).promise;
+    const [pageLayout] = await analyzeDocumentLayout(pdf as never);
+    const tables = pageLayout.blocks.filter((x) => x.kind === 'table') as Array<{ rows: string[][] }>;
+    assert(tables.length === 1, `expected one table, got ${tables.length}`);
+    const rows = tables[0].rows;
+    assert(JSON.stringify(rows[0]) === JSON.stringify(['Region', 'Units', 'Revenue', 'Growth']), `header row: ${JSON.stringify(rows[0])}`);
+    assert(JSON.stringify(rows[2]) === JSON.stringify(['South', '980', '5', '-12%']), `data row: ${JSON.stringify(rows[2])}`);
+    assert(!pageLayout.blocks.some((x) => x.kind === 'heading' && /Region/.test(x.text)), 'header row became a heading');
+    assert(pageLayout.blocks.some((x) => x.kind === 'paragraph' && /Ordinary prose/.test(x.text)), 'prose was not kept as a paragraph');
   });
   await check('Word output builds', async () => {
     const r = await buildDocxFromLayout(layout, 'c.pdf', { pageBreaks: true });
@@ -283,6 +317,35 @@ async function main() {
   await check('Watermark with non-Latin text (Unicode fallback font), tiled', async () => {
     const r = await applyWatermark({ fileBuffer: ab(complex), fileName: 'c.pdf', mode: 'text', text: 'ЧЕРНОВИК draft', fontSize: 40, color: '#cc0000', opacity: 0.2, rotationDegrees: 30, position: 'center', layer: 'above', tile: true });
     assert((await pdfText(r.buffer))[0].includes('ЧЕРНОВИК'), 'Cyrillic watermark missing');
+  });
+  await check('Chinese/Japanese watermark: every character embedded and readable (subset fix)', async () => {
+    const text = '机密文件 請勿外傳 マル秘 東京';
+    const r = await applyWatermark({ fileBuffer: ab(complex), fileName: 'c.pdf', mode: 'text', text, fontSize: 30, color: '#000000', opacity: 1, rotationDegrees: 0, position: 'center', layer: 'above' });
+    const got = (await pdfText(r.buffer))[0].replace(/\s+/g, '');
+    assert(got.includes(text.replace(/\s+/g, '')), `CJK text missing: ${got.slice(0, 80)}`);
+    // The embedded subset must hold a real outline for each character (it used to lose most of them).
+    const doc = await PDFDocument.load(new Uint8Array(r.buffer));
+    const fonts = [...doc.context.enumerateIndirectObjects()]
+      .map(([, o]) => o)
+      .filter((o): o is PDFDict => o instanceof PDFDict && o.has(PDFName.of('FontFile2')))
+      .map((fd) => doc.context.lookup(fd.get(PDFName.of('FontFile2'))));
+    assert(fonts.length >= 1, 'no embedded TrueType font');
+    const fk = (await import('@pdf-lib/fontkit')).default as unknown as { create(b: Uint8Array): { numGlyphs: number; getGlyph(i: number): { path: { commands: unknown[] } } } };
+    const sub = fk.create(decodePDFRawStream(fonts[fonts.length - 1] as PDFRawStream).decode());
+    // Only the space may be empty (13 visible characters + space + .notdef).
+    let empty = 0;
+    for (let g = 1; g < sub.numGlyphs; g++) if (!sub.getGlyph(g).path.commands.length) empty++;
+    assert(sub.numGlyphs >= 14 && empty <= 1, `${empty} of ${sub.numGlyphs} subset glyphs are empty`);
+  });
+  await check('Hindi/Marathi watermark and page numbers: shaped with the Devanagari font', async () => {
+    const r = await applyWatermark({ fileBuffer: ab(complex), fileName: 'c.pdf', mode: 'text', text: 'गोपनीय क्षत्रिय महाराष्ट्र', fontSize: 30, color: '#000000', opacity: 1, rotationDegrees: 0, position: 'center', layer: 'above' });
+    const n = await addPageNumbers({ fileBuffer: r.buffer!, fileName: 'c.pdf', format: 'n', template: 'पृष्ठ {n} / {total}', position: 'bottom-center', fontSize: 10, color: '#000000', marginMm: 10, startPage: 1, startingNumber: 1 });
+    const doc = await PDFDocument.load(new Uint8Array(n.buffer!));
+    const names = [...doc.context.enumerateIndirectObjects()].map(([, o]) => o).filter((o) => o instanceof PDFDict && o.get(PDFName.of('Type')) === PDFName.of('Font')).map((o) => String((o as PDFDict).get(PDFName.of('BaseFont'))));
+    assert(names.some((x) => x.includes('NotoSansDevanagari')), `Devanagari font not used: ${names.join(', ')}`);
+    // Shaped output: conjuncts are single glyphs, so there are fewer glyphs than characters.
+    const t = await pdfText(n.buffer);
+    assert(/पृष्ठ|पृ/.test(t[0]), 'page label missing');
   });
   await check('Page numbers land upright on the rotated page', async () => {
     const r = await addPageNumbers({ fileBuffer: ab(complex), fileName: 'c.pdf', format: 'n', template: 'Page {n} of {total}', position: 'bottom-center', fontSize: 10, color: '#000000', marginMm: 10, startPage: 1, startingNumber: 1 });

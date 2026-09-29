@@ -41,7 +41,7 @@ export const FormsView: React.FC<FormsViewProps> = ({ initialFiles = [], onBack 
     setFields(null);
     setInspectError(null);
     inspector
-      .run('GET_FORM_FIELDS', { fileBuffer: file.rawBuffer.slice(0) })
+      .run('GET_FORM_FIELDS', { fileBuffer: file.data })
       .then((res) => {
         if (cancelled) return;
         if (!res) {
@@ -75,9 +75,8 @@ export const FormsView: React.FC<FormsViewProps> = ({ initialFiles = [], onBack 
   };
 
   const execute = () => {
-    const buffer = file.rawBuffer.slice(0);
-    const payload: FillFormPayload = { fileBuffer: buffer, fileName: file.name, values, flatten };
-    void runner.run('FILL_FORM', payload, [buffer]);
+    const payload: FillFormPayload = { fileBuffer: file.data, fileName: file.name, values, flatten };
+    void runner.run('FILL_FORM', payload);
   };
 
   const editable = (fields ?? []).filter((f) => f.type !== 'unsupported');

@@ -11,14 +11,18 @@
 
 import { degrees } from 'pdf-lib';
 import { openPdf } from '../../services/pdfLoader';
-import type { WorkerRequest, RotatePayload, ProcessedPdfResult, WorkerIncomingMessage } from '../../types/worker';
+import type { RotatePayload, ProcessedPdfResult, PdfInput } from '../../types/worker';
+import { emitPdf } from '../../services/workerEmit';
+import { serveTask } from '../../services/workerTask';
+import type { OutputSink } from '../../services/workerOutput';
 
 export async function rotatePdfPages(
-  fileBuffer: ArrayBuffer,
+  fileBuffer: PdfInput,
   fileName: string,
   rotations: RotatePayload['rotations'] = [],
   globalDegrees = 0,
-  onProgress?: (progress: number, stage: string) => void
+  onProgress?: (progress: number, stage: string) => void,
+  sink?: OutputSink
 ): Promise<ProcessedPdfResult> {
   if (!fileBuffer) throw new Error('No PDF buffer provided for rotation.');
 
@@ -44,45 +48,19 @@ export async function rotatePdfPages(
   }
 
   onProgress?.(80, 'Saving rotated document...');
-  const rotatedBytes = await pdfDoc.save();
-  const resultBuffer = rotatedBytes.buffer.slice(
-    rotatedBytes.byteOffset,
-    rotatedBytes.byteOffset + rotatedBytes.byteLength
-  ) as ArrayBuffer;
+  const out = await emitPdf(pdfDoc, sink);
 
   onProgress?.(100, 'Rotation completed successfully.');
   const cleanBaseName = fileName.replace(/\.[^/.]+$/, '');
   return {
     fileName: `${cleanBaseName}_rotated.pdf`,
-    buffer: resultBuffer,
-    size: resultBuffer.byteLength,
+    ...out,
     pageCount: totalPages,
   };
 }
 
-if (typeof self !== 'undefined') self.addEventListener('message', async (event: MessageEvent<WorkerRequest<RotatePayload>>) => {
-  const { id, action, payload } = event.data;
-  if (action !== 'ROTATE_PAGES') return;
-
-  try {
-    const result = await rotatePdfPages(
-      payload.fileBuffer,
-      payload.fileName,
-      payload.rotations,
-      payload.globalDegrees,
-      (progress, stage) => {
-        const msg: WorkerIncomingMessage = { type: 'PROGRESS', payload: { id, progress, stage } };
-        self.postMessage(msg);
-      }
-    );
-    const responseMsg: WorkerIncomingMessage<ProcessedPdfResult> = {
-      type: 'RESPONSE',
-      payload: { id, success: true, data: result },
-    };
-    (self as any).postMessage(responseMsg, [result.buffer]);
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : 'Failed to rotate PDF document';
-    const responseMsg: WorkerIncomingMessage = { type: 'RESPONSE', payload: { id, success: false, error: errorMsg } };
-    self.postMessage(responseMsg);
-  }
-});
+serveTask<RotatePayload, ProcessedPdfResult>(
+  'ROTATE_PAGES',
+  (p, ctx) => rotatePdfPages(p.fileBuffer, p.fileName, p.rotations, p.globalDegrees, ctx.progress, ctx.sink()),
+  'Failed to rotate PDF document'
+);

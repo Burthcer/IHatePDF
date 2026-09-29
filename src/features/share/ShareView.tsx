@@ -404,6 +404,17 @@ export const ShareView: React.FC<ShareViewProps> = ({ onBack }) => {
                 </li>
               ))}
             </ul>
+            {items.some((it) => it.skipped?.length) && (
+              <Notice tone="warn" title="Some things in these folders will be left out">
+                {items
+                  .flatMap((it) => it.skipped ?? [])
+                  .slice(0, 5)
+                  .map((s) => `${s.name} (${s.reason})`)
+                  .join(', ')}
+                {items.reduce((n, it) => n + (it.skipped?.length ?? 0), 0) > 5 && ` and ${items.reduce((n, it) => n + (it.skipped?.length ?? 0), 0) - 5} more`}
+                . Everything else is shared as normal.
+              </Notice>
+            )}
           </Panel>
         )}
       </section>

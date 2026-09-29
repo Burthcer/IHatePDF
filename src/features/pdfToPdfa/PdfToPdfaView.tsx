@@ -18,8 +18,7 @@ export const PdfToPdfaView: React.FC<PdfToPdfaViewProps> = ({ initialFiles = [],
   const file = files[0];
 
   const execute = () => {
-    const buffer = file.rawBuffer.slice(0);
-    void runner.run<PdfToPdfaPayload>('PDF_TO_PDFA', { fileBuffer: buffer, fileName: file.name }, [buffer]);
+    void runner.run<PdfToPdfaPayload>('PDF_TO_PDFA', { fileBuffer: file.data, fileName: file.name });
   };
 
   return (
