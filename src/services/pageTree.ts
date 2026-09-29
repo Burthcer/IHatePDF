@@ -6,7 +6,7 @@
  * be added to the root's /Kids directly.
  */
 
-import { PDFArray, PDFName, PDFNumber, PDFPage, PDFPageLeaf, PDFRef, type PDFDocument } from 'pdf-lib';
+import { PDFArray, PDFContentStream, PDFName, PDFNumber, PDFPage, PDFPageLeaf, PDFRawStream, PDFRef, type PDFDocument } from 'pdf-lib';
 
 interface DocInternals {
   pageCache: { invalidate(): void };
@@ -38,4 +38,26 @@ export function appendPages(doc: PDFDocument, pages: PDFPage[]): void {
   }
   root.set(PDFName.of('Count'), PDFNumber.of(kids.size()));
   internals.pageCache.invalidate();
+}
+
+/**
+ * Turns a finished page's drawing operations into compressed bytes now,
+ * instead of keeping them as objects until the document is saved. Building
+ * thousands of pages (a big spreadsheet) otherwise holds millions of small
+ * objects: gigabytes. Anything drawn on the page afterwards goes into a new
+ * content stream.
+ */
+export function sealPage(page: PDFPage): void {
+  const context = page.doc.context;
+  const contents = page.node.get(PDFName.of('Contents'));
+  const refs = contents instanceof PDFArray ? contents.asArray() : [contents];
+  for (const ref of refs) {
+    if (!(ref instanceof PDFRef)) continue;
+    const stream = context.lookup(ref);
+    if (stream instanceof PDFContentStream) context.assign(ref, PDFRawStream.of(stream.dict, stream.getContents()));
+  }
+  // The page keeps its own handle on the operations; drop it (drawing again would start a new stream).
+  const internals = page as unknown as { contentStream?: unknown; contentStreamRef?: unknown };
+  internals.contentStream = undefined;
+  internals.contentStreamRef = undefined;
 }
