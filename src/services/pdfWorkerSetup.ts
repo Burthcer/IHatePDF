@@ -63,17 +63,40 @@ export interface PdfJsTask {
   destroy(): Promise<void>;
 }
 
+/**
+ * A PDF ends with `startxref … %%EOF`. Without it (a cut-off download), pdf.js
+ * rebuilds the file's index by scanning all of it, and reading on demand it
+ * restarts that scan for every missing piece: hours for a large file.
+ */
+async function looksComplete(blob: Blob): Promise<boolean> {
+  const tail = await blob.slice(Math.max(0, blob.size - 2048)).text();
+  return tail.includes('startxref') && tail.includes('%%EOF');
+}
+
 export function openPdfJsDocument(data: PdfJsSource, password?: string): PdfJsTask {
   if (data instanceof Blob && data.size >= FETCH_ON_DEMAND_BYTES) {
-    const task = pdfjsLib.getDocument({
-      ...PDFJS_DOCUMENT_OPTIONS,
-      range: new BlobRangeTransport(data),
-      rangeChunkSize: 256 * 1024,
-      disableAutoFetch: true,
-      disableStream: true,
-      password,
+    let task: ReturnType<typeof pdfjsLib.getDocument> | null = null;
+    let destroyed = false;
+    const promise = looksComplete(data).then((ok) => {
+      if (!ok) throw new Error('Invalid PDF structure: the end of the file is missing (startxref).');
+      if (destroyed) throw new Error('The document was closed.');
+      task = pdfjsLib.getDocument({
+        ...PDFJS_DOCUMENT_OPTIONS,
+        range: new BlobRangeTransport(data),
+        rangeChunkSize: 256 * 1024,
+        disableAutoFetch: true,
+        disableStream: true,
+        password,
+      });
+      return task.promise;
     });
-    return { promise: task.promise, destroy: () => task.destroy() };
+    return {
+      promise,
+      destroy: async () => {
+        destroyed = true;
+        await task?.destroy();
+      },
+    };
   }
   if (data instanceof Blob) {
     let task: ReturnType<typeof pdfjsLib.getDocument> | null = null;
