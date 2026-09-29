@@ -1,13 +1,14 @@
 /**
  * App-wide notices from the desktop shell: the window was reloaded after its
- * page crashed or was ended by the memory fail-safe, and "memory is tight".
- * (Jobs the fail-safe stops also show their own message in the tool.)
+ * page crashed or was ended by the memory fail-safe, and "Low on memory:
+ * taking longer" while a job works in smaller pieces or pauses to stay within
+ * the RAM budget. (Jobs the fail-safe stops show their own message in the tool.)
  */
 
 import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { Notice } from '../ui';
-import { memoryState, subscribeMemory, type MemoryState } from '../../services/memoryGuard';
+import { jobsRunning, memoryState, subscribeMemory, type MemoryState } from '../../services/memoryGuard';
 
 function recoveredReason(): 'memory' | 'crash' | null {
   try {
@@ -23,13 +24,22 @@ const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`;
 export const SystemNotice: React.FC = () => {
   const [recovered, setRecovered] = useState(recoveredReason);
   const [mem, setMem] = useState<MemoryState>(memoryState);
-  useEffect(() => subscribeMemory(setMem), []);
+  const [busy, setBusy] = useState(jobsRunning);
+  useEffect(
+    () =>
+      subscribeMemory((s) => {
+        setMem(s);
+        setBusy(jobsRunning());
+      }),
+    []
+  );
   useEffect(() => {
     // Don't show the recovery note again on a later reload.
     if (recovered) window.history.replaceState(null, '', window.location.pathname + window.location.hash);
   }, [recovered]);
 
-  if (!recovered && mem.level !== 'high') return null;
+  const slowed = busy && (mem.level === 'high' || mem.level === 'over');
+  if (!recovered && !slowed) return null;
   return (
     <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pt-4">
       {recovered ? (
@@ -44,8 +54,9 @@ export const SystemNotice: React.FC = () => {
           </button>
         </div>
       ) : (
-        <Notice tone="info" title="Memory is getting tight">
-          IHatePDF is using {gb(mem.usedMB)} of the {gb(mem.budgetMB)} it’s allowed on this PC, so it’s working more slowly to stay within that.
+        <Notice tone="info" title="Low on memory: taking longer">
+          {mem.level === 'over' ? 'Paused for a moment while memory frees up. ' : ''}
+          IHatePDF is working in smaller pieces to stay within the {gb(mem.budgetMB)} it may use on this PC. The job will finish; it just takes longer.
         </Notice>
       )}
     </div>

@@ -12,7 +12,8 @@
  * - "Share to phone": a QR download page over Wi-Fi or this PC's own hotspot
  *   (share.cjs, hotspot.cjs), or Bluetooth (bluetooth.cjs).
  * - Memory fail-safe (memoryGuard.cjs): a RAM budget sized to this PC; jobs
- *   that would go over it are stopped cleanly instead of freezing Windows.
+ *   near it work in smaller pieces and pause, and are stopped cleanly only
+ *   as a last resort, instead of freezing Windows.
  * - If the page's process dies, the window reloads and says what happened.
  */
 
@@ -173,6 +174,9 @@ function createWindow() {
     mainWindow.loadURL(`${HOST}/index.html?recovered=${why}`);
   });
 
+  // A fresh page has no jobs; the fail-safe measures from there.
+  mainWindow.webContents.on('did-finish-load', () => watchdog?.pageLoaded());
+
   mainWindow.loadURL(`${HOST}/index.html`);
 }
 
@@ -182,6 +186,7 @@ let watchdog = null;
 
 ipcMain.handle('ihp:mem-info', () => (watchdog ? watchdog.state() : memoryGuard.info()));
 ipcMain.on('ihp:mem-ack', () => watchdog?.ack());
+ipcMain.on('ihp:mem-jobs', (event, n) => watchdog?.setJobs(Math.max(0, Number(n) || 0)));
 
 ipcMain.on('ihp:show-in-folder', (event, file) => {
   if (typeof file === 'string' && path.normalize(file).startsWith(saveDir())) shell.showItemInFolder(file);

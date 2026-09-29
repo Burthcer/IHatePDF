@@ -21,7 +21,7 @@ async function renderAll(data: Blob, onPage: (i: number, n: number) => void): Pr
   const job = startJob();
   try {
     for (let i = 1; i <= doc.numPages; i++) {
-      job.check();
+      await job.checkpoint();
       onPage(i, doc.numPages);
       try {
         const page = await doc.getPage(i);

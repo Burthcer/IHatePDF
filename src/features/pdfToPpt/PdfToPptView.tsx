@@ -22,7 +22,7 @@ async function renderSlides(source: PdfJsSource, width: number, onPage: (i: numb
   const job = startJob();
   try {
     for (let i = 1; i <= doc.numPages; i++) {
-      job.check();
+      await job.checkpoint();
       onPage(i, doc.numPages);
       const page = await doc.getPage(i);
       const base = page.getViewport({ scale: 1 });
