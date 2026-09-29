@@ -21,6 +21,7 @@
 import { PDFArray, PDFBool, PDFDict, PDFName, PDFNumber, PDFRawStream, PDFRef, PDFStream, type PDFDocument, type PDFObject } from 'pdf-lib';
 import { deflate } from 'pako';
 import { openPdf } from '../../services/pdfLoader';
+import { isLazyStream } from '../../services/lazyPdf';
 import { interpretPage } from '../editPdf/engine/interpreter';
 import { configureJpx, decodePdfImage, type DecodedImage } from './imageCodec';
 import type { CompressPayload, ProcessedPdfResult, PdfInput } from '../../types/worker';
@@ -294,17 +295,35 @@ function shapeKey(stream: PDFRawStream): string {
   return `${stream.getContentsSize()}:${entries}`;
 }
 
+/** Part of a stream's bytes, read from disk when the stream is still there (never the whole image). */
+function streamRange(stream: PDFRawStream, offset: number, length: number): Uint8Array {
+  if (isLazyStream(stream)) return stream.source.read(stream.start + offset, length);
+  return stream.getContents().subarray(offset, offset + length);
+}
+
+const HASH_WINDOW = 64 * 1024;
+const COMPARE_CHUNK = 1024 * 1024;
+
+/** Hash of the start, middle and end: tells apart nearly all same-size streams without reading them whole. */
 function sampleHash(stream: PDFRawStream): number {
-  const c = stream.getContents();
+  const size = stream.getContentsSize();
   let h = 0x811c9dc5;
-  const step = Math.max(1, Math.floor(c.length / 4096));
-  for (let i = 0; i < c.length; i += step) h = Math.imul(h ^ c[i], 16777619);
+  for (const at of [0, Math.max(0, Math.floor(size / 2) - HASH_WINDOW / 2), Math.max(0, size - HASH_WINDOW)]) {
+    const c = streamRange(stream, at, Math.min(HASH_WINDOW, size - at));
+    for (let i = 0; i < c.length; i++) h = Math.imul(h ^ c[i], 16777619);
+  }
   return h >>> 0;
 }
 
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+function sameBytes(a: PDFRawStream, b: PDFRawStream): boolean {
+  const size = a.getContentsSize();
+  if (size !== b.getContentsSize()) return false;
+  for (let at = 0; at < size; at += COMPARE_CHUNK) {
+    const n = Math.min(COMPARE_CHUNK, size - at);
+    const x = streamRange(a, at, n);
+    const y = streamRange(b, at, n);
+    for (let i = 0; i < n; i++) if (x[i] !== y[i]) return false;
+  }
   return true;
 }
 
@@ -348,7 +367,7 @@ function dedupeStreams(doc: PDFDocument): number {
         firstByHash.set(hash, ref);
         continue;
       }
-      if (sameBytes((context.lookup(first) as PDFRawStream).getContents(), obj.getContents())) map.set(ref, first);
+      if (sameBytes(context.lookup(first) as PDFRawStream, obj)) map.set(ref, first);
     }
   }
   if (map.size === 0) return 0;
