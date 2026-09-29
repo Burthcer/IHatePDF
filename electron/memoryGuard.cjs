@@ -10,13 +10,18 @@
  * Watchdog (every second) adds up the physical memory (working set) of every
  * IHatePDF process — window, workers, GPU, helpers — and reports a level:
  *   normal   below 80% of the budget
+ * (checked twice a second)
  *   high     80-100%: tools work in lower-memory, slower ways
  *   critical over the budget, or Windows itself is nearly out of memory
  *            (less than 5% / 400 MB available) while IHatePDF uses over half
  *            its budget: the running job is stopped and its memory freed,
  *            with a message saying why.
- * If the page can't stop the job (stuck), the page process is ended after a
- * few seconds and reloaded — the PC stays usable either way.
+ * The page answers each critical report once it has stopped its jobs. If
+ * memory still doesn't come down, the page process is ended and reloaded:
+ *   page not answering (stuck)   after 1 s if memory is running away (1.5×
+ *                                the budget, or Windows nearly out), else 3 s
+ *   page answering               after 3 s running away, else 6 s
+ * The PC stays usable either way.
  */
 
 const os = require('os');
@@ -31,9 +36,13 @@ function budgetFor(total) {
 const TOTAL = os.totalmem();
 const BUDGET = Number(process.env.IHP_MEMORY_BUDGET_MB) > 0 ? Number(process.env.IHP_MEMORY_BUDGET_MB) * MB : budgetFor(TOTAL);
 const HIGH = 0.8;
-const CHECK_MS = 1000;
-/** Seconds the page gets to stop a job on its own before it's reloaded. */
-const GRACE_CHECKS = 6;
+const CHECK_MS = 500;
+/** Checks over budget before the page is reloaded (see above). */
+const LIMITS = { stuck: { runaway: 2, over: 6 }, answering: { runaway: 6, over: 12 } };
+/** "Running away": this far over the budget (or Windows nearly out). */
+const RUNAWAY = 1.5;
+/** The page counts as answering if it did so this recently. */
+const ANSWER_MS = 1500;
 
 /** Physical memory currently used by all of the app's processes, in bytes. */
 function appMemory(app) {
@@ -56,6 +65,7 @@ function info(used = 0, level = 'normal') {
 function startWatchdog(app, getContents, onEscalate) {
   let level = 'normal';
   let criticalFor = 0;
+  let answeredAt = 0;
   let last = info();
   const timer = setInterval(() => {
     const contents = getContents();
@@ -71,7 +81,8 @@ function startWatchdog(app, getContents, onEscalate) {
     // Tell the page on every change, and keep reminding it while critical.
     if (next !== level || next === 'critical') contents.send('ihp:mem', last);
     level = next;
-    if (criticalFor > GRACE_CHECKS) {
+    const limits = Date.now() - answeredAt < ANSWER_MS ? LIMITS.answering : LIMITS.stuck;
+    if (criticalFor >= (used > BUDGET * RUNAWAY || low ? limits.runaway : limits.over)) {
       criticalFor = 0;
       onEscalate(last);
     }
@@ -79,6 +90,7 @@ function startWatchdog(app, getContents, onEscalate) {
   timer.unref();
   return {
     state: () => last,
+    ack: () => (answeredAt = Date.now()),
     stop: () => clearInterval(timer),
   };
 }
