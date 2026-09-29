@@ -26,18 +26,25 @@ interface PasswordRequest {
   resolve: (password: string | null) => void;
 }
 
+const COUNT_TIMEOUT_MS = 30_000;
+
 async function countPages(data: Blob, password?: string): Promise<number> {
   // pdf.js is loaded on first use so the home screen starts without it.
   const { openPdfJsDocument } = await import('../services/pdfWorkerSetup');
   const task = openPdfJsDocument(data, password);
+  let timer = 0;
   try {
-    const doc = await task.promise;
+    // A badly damaged file can take pdf.js very long to read; the tools (Repair included) don't need the count.
+    const tooSlow = new Promise<never>((_, reject) => (timer = window.setTimeout(() => reject(new Error('Invalid PDF structure: counting pages took too long.')), COUNT_TIMEOUT_MS)));
+    const doc = await Promise.race([task.promise, tooSlow]);
     const n = doc.numPages;
     await memoryManager.destroyPdfDocument(doc);
     return n;
   } catch (err) {
     void task.destroy();
     throw err;
+  } finally {
+    window.clearTimeout(timer);
   }
 }
 
