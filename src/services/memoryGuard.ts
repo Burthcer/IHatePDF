@@ -60,7 +60,7 @@ const workers = new Set<Worker>();
 let lastStopped: MemoryLimitError | null = null;
 
 function configMessage() {
-  return { type: 'MEM_CONFIG', budgetBytes: currentLimitMB() * 1024 * 1024, level: state.level };
+  return { type: 'MEM_CONFIG', budgetBytes: state.budgetMB * 1024 * 1024, limitBytes: currentLimitMB() * 1024 * 1024, level: state.level };
 }
 
 const notify = () => listeners.forEach((l) => l(state));
@@ -197,8 +197,12 @@ export function attachWorker(worker: Worker): () => void {
   return () => workers.delete(worker);
 }
 
-/** Largest canvas to render into, in pixels (a canvas costs 4 bytes a pixel, plus copies). */
+/**
+ * Largest canvas to render into, in pixels (a canvas costs 4 bytes a pixel, plus
+ * copies). From the PC's budget, not the live limit: Windows being busy for a
+ * moment slows a job down, it never lowers the quality of what it makes.
+ */
 export function maxCanvasPixels(): number {
-  const byBudget = (currentLimitMB() * 1024 * 1024) / 40;
-  return Math.max(4_000_000, Math.min(40_000_000, state.level === 'normal' ? byBudget : byBudget / 2));
+  const byBudget = (state.budgetMB * 1024 * 1024) / 40;
+  return Math.max(4_000_000, Math.min(40_000_000, byBudget));
 }
