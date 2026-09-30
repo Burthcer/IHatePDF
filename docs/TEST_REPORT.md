@@ -1,6 +1,95 @@
-# IHatePDF — Test Report (v1.3.0)
+# IHatePDF — Test Report (v1.3.1)
 
-Every result below comes from real runs of version 1.3.0 against generated dummy documents. Nothing is hand-edited. The large-file and fail-safe tests ran the real desktop app (Electron 44) on a 16 GB, 4-core Linux machine; "1.2.0" columns are the same tests run on version 1.2.0.
+Every result below comes from real runs against generated dummy documents. Nothing is hand-edited. **Version 1.3.1** was tested on Windows (the installed app, on a real Windows 11 PC) and on Linux; the **1.3.0** results that follow are still valid for everything 1.3.1 didn't change.
+
+**80 checks passing:** 17 + 34 automated checks (`npm test`) and all 29 tools through the browser (`scripts/e2e/all-tools.mjs`), on Windows.
+
+# Version 1.3.1
+
+## Windows: memory fail-safe on the installed app
+
+Windows 11 Home (build 26200), Intel Core Ultra 9 185H, 32 GB RAM; `IHatePDF-Setup.exe` 1.3.1-beta.3 installed over 1.3.0 (one entry in *Settings → Apps*, shortcuts kept). Driven by `scripts/e2e/memory/` with `IHP_EXE` set to the installed app. Inputs: 300 dpi JPEG scans of 10, 50, 150 and 500 MB (`node scripts/generateScanFixtures.mjs`; 500 MB = 144 pages). Budgets forced with `IHP_MEMORY_BUDGET_MB`: 624 (a 4 GB PC with 400 MB less, for Windows' higher idle memory), 1024 (4 GB), 3072 (6 GB), 4096 (8 GB), 8192 (16 GB), and unset (this PC: 16 GB). Commands, expected results and every row: [`docs/testing/WINDOWS_TESTS.md`](testing/WINDOWS_TESTS.md).
+
+**Every tool, every budget** (`matrix.mjs`: Compress, Watermark, Merge, Rotate, Page numbers, PDF → Word × 4 scans × 6 budgets = 144 runs; `student.mjs`: every tool on a normal student file at 624 and 1024 = 56 runs):
+
+| Budget (PC) | Scans: finished / slowed / stopped | Student files: finished / slowed / stopped |
+|---|---|---|
+| 624 (4 GB, tight) | 10 / 14 / 0 | 19 / 9 / 0 |
+| 1024 (4 GB) | 15 / 9 / 0 | 24 / 4 / 0 |
+| 3072 (6 GB) | 24 / 0 / 0 | |
+| 4096 (8 GB) | 24 / 0 / 0 | |
+| 8192 (16 GB) | 24 / 0 / 0 | |
+| unset (16 GB) | 24 / 0 / 0 | |
+
+Every Compress: all images recompressed (3/3, 15/15, 44/44, 144/144). PDF → Word on the 500 MB scan finished at 624 (slowed, 92 s) and 1024 (145 s).
+
+**Compress, 1.3.0 vs 1.3.1 on the same PC:**
+
+| Scan | 1 GB budget, 1.3.0 | 1 GB, 1.3.1 | 3 GB (6 GB PC) | 4 GB (8 GB PC) | unset (16 GB) |
+|---|---|---|---|---|---|
+| 10 MB → 831 KB | stopped in 1–2 s | 2.9 s | 2.9 s | 2.9 s | |
+| 50 MB → 4.04 MB | stopped | 10.6 s | 10.1 s | 9.5 s | |
+| 150 MB → 11.7 MB | stopped | 31.3 s | 26.0 s | 26.6 s | |
+| 500 MB → 38.4 MB | stopped | 120.6 s | 107.9 s | 91.4 s | 87.1 s |
+
+Watermark on the 500 MB scan: stopped in 1.3.0 at 1 GB; 2.6 s in 1.3.1 (peak 1.1 GB for the whole app).
+
+**Windows busy with other programs** (`busy.mjs`; this PC's budget; the free memory the app is told shrinks as the job grows). On this 32 GB PC the reserve kept for Windows is 3.2 GB, so the cases are given above it, with the same margins as 2,400 and 1,800 MB free on a 16 GB PC:
+
+| Windows leaves free | Compress 150 MB | PDF → Word 150 MB | Watermark 500 MB |
+|---|---|---|---|
+| 8,192 MB | finished, 33.7 s, 44/44 images | finished, 7.7 s | finished, 2.2 s |
+| reserve + 762 MB | slowed, 38.4 s, 44/44 images | slowed, 29.7 s | finished, 1.9 s |
+| reserve + 162 MB | **stopped** after 10.1 s: *"Windows is almost out of memory (2.9 GB free of 31.4 GB)"* | slowed, 39.0 s | slowed, 4.1 s |
+
+With less than the reserve free (2,400 and 1,800 MB on this PC), Compress and Watermark stopped with the same message, and PDF → Word's window was restarted by the watchdog instead of showing it. With 80 MB above the reserve, PDF → Word on the 500 MB scan slowed down and finished (264 s): on a 32 GB PC the emergency threshold (5% of RAM, 1.6 GB) is below the reserve.
+
+**Last resorts** (`lastresort.mjs`):
+
+| Case | Result |
+|---|---|
+| 300-megapixel PNG → PDF at 1 GB | Refused in 0.4 s: *"part of this job needs more memory than IHatePDF may use here…"*; app usable afterwards |
+| Windows down to 300 MB free during Compress 150 MB | Stopped in 2.4 s: *"Windows is almost out of memory (0.3 GB free…)"*; app usable afterwards |
+| A window stuck grabbing memory, 1 GB budget | Restarted in 1.5 s, notice shown |
+
+**Other Windows checks** (`windows-checks.mjs`):
+
+| Check | Result |
+|---|---|
+| App memory, home screen | 398 MB |
+| App memory, 500 MB scan open in Rotate | 1,424 MB (first 12 previews after 1.1 s) |
+| First 12 previews of the 50 MB scan in Rotate | 7.4 s at 1 GB, 0.9 s unset |
+| Watermark "गोपनीय" / "机密", Edit PDF with Hindi and Chinese | Correct characters and joined Devanagari in Edge's PDF viewer; Noto fonts embedded; text extractable |
+| PDF → Word on a heading edited to "गोपनीय दस्तावेज़ 机密文件" | Both scripts in the .docx; Word displays them |
+| Network requests (every request recorded) | None outside the app |
+| Startup | About 8 s for the first launch after installing, then under 0.5 s |
+
+## Linux: memory fail-safe on the dev build
+
+The same kind of scans in the desktop app on a 16 GB Linux PC (`xvfb-run`), with the budget of a 4 GB PC (1 GB) and 400 MB less (624 MB):
+
+| Tool | 10 / 50 / 150 / 500 MB scan, 624 MB budget | 500 MB scan, 1 GB budget |
+|---|---|---|
+| Compress | all finished (4 s / 12 s / 32 s / 107 s) | finished, 100 s |
+| Watermark | all finished (1–5 s) | finished, 5 s |
+| Merge (+ a 20-page journal) | all finished (0–4 s) | finished, 4 s |
+| Rotate | all finished (0–4 s) | finished, 4 s |
+| Page numbers | all finished (1–4 s) | finished, 4 s |
+| PDF → Word | all finished; the 500 MB scan slowed down and paused, 123 s | finished, 110 s |
+
+- Every tool finished a 50 MB scan or a 10–20 page journal at both 624 MB and 1 GB (60 of 60).
+- A single 300-megapixel image is refused before anything starts; with almost no free memory the running job stops in 3 s; a window stuck grabbing memory is restarted in 1.5 s. After each, the app carried on working.
+- PDF → Word builds the Word file in one piece: on the 500 MB, 138-page scan at 624 MB it finished in two runs out of three and stopped with the message in the third.
+
+## Known limits found in 1.3.1
+
+- Compress can stop with *"Windows is almost out of memory"* when Windows is within ~160 MB of the reserve it keeps free (other tools slow down and finish). On Windows a paused job's memory takes longer to come down than on Linux.
+- PDF → Word leaves out sideways (rotated) text, in any language.
+- Page previews are ~8× slower at a 1 GB budget (pdf.js's own JPEG decoder, used to save memory).
+
+# Version 1.3.0
+
+Every result below comes from real runs of version 1.3.0. The large-file and fail-safe tests ran the real desktop app (Electron 44) on a 16 GB, 4-core Linux machine; "1.2.0" columns are the same tests run on version 1.2.0.
 
 ## 1. Automated suites (`npm test`)
 
