@@ -162,8 +162,12 @@ function startWatchdog(app, getContents, onEscalate) {
     if (jobs === 0) {
       if (now - loadedAt >= WARMUP_MS) idle.push([now, used]);
       idle = idle.filter(([t]) => now - t <= IDLE_WINDOW_MS);
-      // Settling after a (re)load: measure from when it loaded, so a runaway right away is caught too.
-      base = idle.length ? Math.min(...idle.map(([, b]) => b)) : loadBase;
+      // Measure from the lowest point of the last minute; within a minute of a (re)load that
+      // includes the level at load time, so a runaway that starts right away can't raise
+      // its own reference point.
+      const lows = idle.map(([, b]) => b);
+      if (now - loadedAt < IDLE_WINDOW_MS) lows.push(loadBase);
+      base = Math.min(...lows);
     }
     if (base === null) {
       // Still starting up: nothing to measure against yet.
@@ -222,7 +226,8 @@ function startWatchdog(app, getContents, onEscalate) {
     /** The page (re)loaded: start measuring afresh. */
     pageLoaded: () => {
       loadedAt = Date.now();
-      loadBase = null;
+      // Measured now, as the page finishes loading: before anything on it can have grown.
+      loadBase = appMemory(app);
       idle = [];
       jobs = 0;
       jobBase = null;

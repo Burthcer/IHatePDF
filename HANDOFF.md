@@ -148,6 +148,7 @@ npm run lint                # oxlint (warnings only)
 npx tsx scripts/generateTestFixtures.ts && npm test      # 17 + 33 automated checks
 npx tsx scripts/test-streaming-tools.ts <file.pdf>      # every streaming tool on a big file, with peak memory
 node scripts/generateScanFixtures.mjs                    # realistic 300 dpi JPEG scans (10/50/150/500 MB) and journals in test-fixtures/scans/
+npx tsx scripts/e2e/memory/make-inputs.ts; node scripts/e2e/memory/matrix.mjs   # memory fail-safe tests in the real app (see scripts/e2e/memory/README.md)
 npx vite preview --port 4173 & node scripts/e2e/all-tools.mjs   # all 28 tools in Chromium
 node scripts/e2e/screenshots.mjs   # regenerate docs/screenshots (needs the preview server + big fixtures)
 npm run build:exe           # FinalApp/IHatePDF-Setup.exe (Linux needs wine64 + wine32)
