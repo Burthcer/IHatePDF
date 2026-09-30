@@ -14,7 +14,7 @@
 ![Tests](https://img.shields.io/badge/tests-80_passing-247a48?style=flat-square)
 [![License: MIT](https://img.shields.io/badge/license-MIT-171612?style=flat-square)](LICENSE)
 
-**New in 1.3.1:** on 4 GB PCs, big jobs now slow down instead of being stopped: every tool finished every test file, on Windows and Linux. [What changed](#whats-new-in-131)
+**New in 1.3.1:** big jobs slow down instead of stopping, and the app leaves room for your other programs. [What changed](#whats-new-in-131)
 
 <br>
 
@@ -124,45 +124,22 @@ Password-protected PDFs work in every tool: you type the password once when you 
 
 ## What's new in 1.3.1
 
-**The memory fail-safe slows down instead of stopping.** In 1.3.0 the app's own idle memory (0.4–0.9 GB on Windows) counted against its budget, so on a 4 GB PC (1 GB budget) even a 10 MB scan was stopped. Now only the running job's memory counts. Near its limit a job works in smaller pieces ("Low on memory: taking longer"); over it, the job pauses, frees memory and carries on. It stops only as a last resort: Windows itself almost out of memory, or one piece too big for the PC. When Windows is busy with other programs, jobs give it room by slowing down earlier, never by lowering quality.
+**Big jobs slow down instead of stopping.** When memory gets tight, tools work in smaller pieces and show *"Low on memory: taking longer"*; if they run out, they pause, free memory and carry on. A job only stops as a last resort, when Windows itself is almost out of memory, and the app stays usable.
 
-Measured on a Windows 11 PC with the installed app (smaller PCs simulated by their budget):
+**It leaves room for your other programs.** IHatePDF sizes itself to your PC's RAM and keeps some free for Windows. If other programs are using a lot, it works more slowly rather than crowding them out, and the result is exactly the same.
 
-| Compress a 300 dpi scan | 4 GB PC, 1.3.0 | 4 GB PC, 1.3.1 | 8 GB PC, 1.3.1 |
-|---|---|---|---|
-| 10 MB | stopped | 831 KB in 3 s | 831 KB in 3 s |
-| 150 MB | stopped | 11.7 MB in 31 s | 11.7 MB in 27 s |
-| 500 MB (144 pages) | stopped | 38.4 MB in 121 s | 38.4 MB in 91 s |
+**Only the job counts.** The app's own memory (about 0.4 GB while idle) no longer counts against its limit, so everyday files run at normal speed on every PC.
 
-- **200 of 200** tool runs finished on Windows at the budgets of 4, 6, 8 and 16 GB PCs; every Compress kept every image. The same tests on Linux: 60 of 60.
-- **Known limit:** when Windows is within ~160 MB of the memory it keeps free, Compress can still stop with *"Windows is almost out of memory"*; closing other programs lets it run.
+Compressing a 500 MB, 144-page scan, measured on Windows 11 (smaller PCs simulated):
 
-Full details and every measurement: [release notes](docs/RELEASE_NOTES.md), [test report](docs/TEST_REPORT.md).
+| PC's RAM | 4 GB | 6 GB | 8 GB | 16 GB or more |
+|---|---|---|---|---|
+| Result | 38.4 MB in 121 s | 38.4 MB in 108 s | 38.4 MB in 91 s | 38.4 MB in 87 s |
 
-## What's new in 1.3.0
+- **200 of 200** tool runs finished on Windows across every tool and PC size, and every compression kept every image. Also tested on Linux.
+- **Known limit:** if Windows is almost out of memory, Compress may stop with *"Windows is almost out of memory"*; closing other programs lets it run.
 
-**Much less memory for big files.** Tools read only the parts of a PDF they need from disk and write the result straight to disk, so memory stays about the same for a 5 MB or a 2 GB file.
-
-| Job (desktop app) | 1.2.0 | 1.3.0 |
-|---|---|---|
-| Watermark a 500 MB PDF | 5.2 GB RAM | 0.9 GB RAM |
-| Rotate a 500 MB PDF | 4.7 GB RAM | 1.6 GB RAM |
-| Redact 5,000 pages | 8.3 GB RAM | 1.2 GB RAM |
-| Merge two 5,000-page PDFs | 13 s | 3.6 s |
-
-**Memory fail-safe.** The app gives itself a memory budget based on the PC's RAM and leaves the rest for Windows: 1 GB on a 4 GB PC, 4 GB on 8 GB, 8 GB on 16 GB, never more than 16 GB. A window stuck using too much memory is restarted before Windows runs short. (1.3.1 changed how the budget is counted: see above.)
-
-**Fixes:**
-- **Hindi, Marathi, Chinese and Japanese** text now works in Edit PDF, Watermark, Page numbers, Fill forms and the Word, Excel, PowerPoint and HTML to PDF tools. The fonts ship with the app.
-- **PDF→Word keeps pictures** where they were on the page.
-- **Tables** are detected more reliably in PDF→Word and PDF→Excel.
-- **5,000-page files open straight away:** thumbnails are drawn only for the pages on screen.
-- **Compare** and **Redact** no longer need memory for every page at once.
-- **Crashes** reload the window with a short note instead of leaving it blank.
-- **Damaged files** get a plain explanation and a pointer to Repair PDF, instead of a technical error.
-- **Share to phone** skips unreadable files in a folder (in use, no permission) instead of failing, and lists them.
-
-Details: [1.3.0 release notes](https://github.com/Burthcer/IHatePDF/releases/tag/v1.3.0).
+Full details: [release notes](docs/RELEASE_NOTES.md) · [test report](docs/TEST_REPORT.md). Earlier versions: [all releases](https://github.com/Burthcer/IHatePDF/releases).
 
 ---
 
