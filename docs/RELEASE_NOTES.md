@@ -1,6 +1,6 @@
 # IHatePDF v1.3.1
 
-The memory fail-safe now slows down instead of stopping. On a 4 GB lab PC, 1.3.0 stopped even a 10 MB scan; 1.3.1 finishes normal student files on every tool, and big scans too, taking longer when it has to. Tested on Linux and on a real Windows 11 PC: 200 of 200 tool runs finished at the budgets of 4, 6, 8 and 16 GB PCs.
+Big jobs now slow down instead of stopping, and IHatePDF leaves room for your other programs. It also fixes 1.3.0 on PCs with little memory, where even a small scan could be stopped. Tested on Linux and on a real Windows 11 PC: 200 of 200 tool runs finished, on every PC size tested.
 
 ## Install
 
