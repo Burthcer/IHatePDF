@@ -104,6 +104,12 @@ export async function runTool(name, tool, files, { before, action, env = {}, tim
   } catch (e) {
     row.outcome = 'harness-error';
     row.message = String(e.message).split('\n')[0].slice(0, 220);
+    // A window the fail-safe reloaded (?recovered=memory) or that crashed and was reloaded (?recovered=crash)
+    // looks like "Page crashed" to Playwright: say which it was.
+    await new Promise((r) => setTimeout(r, 2000));
+    const url = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.webContents.getURL() ?? '').catch(() => '');
+    if (url.includes('recovered=memory')) row.outcome = 'restarted';
+    else if (url.includes('recovered=crash')) row.outcome = 'crashed';
   } finally {
     clearInterval(sampler);
     Object.assign(row, { peakMB: peak, maxLevel, jobMaxMB: maxJob, lowestLimitMB: minLimit === Infinity ? undefined : minLimit, totalSecs: +((Date.now() - t0) / 1000).toFixed(1) });
