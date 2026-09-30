@@ -8,7 +8,11 @@ export const OUT = resolve('test-fixtures/e2e-out');
 mkdirSync(OUT, { recursive: true });
 
 export async function launch() {
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
+  // Windows: the installed Microsoft Edge (Chromium). Elsewhere: the Linux CI Chromium, or CHROMIUM_PATH.
+  const where = process.env.CHROMIUM_PATH
+    ? { executablePath: process.env.CHROMIUM_PATH }
+    : process.platform === 'win32' ? { channel: 'msedge' } : { executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' };
+  const browser = await chromium.launch({ ...where, args: ['--no-sandbox'] });
   const context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
   const logs = [];
