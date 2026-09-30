@@ -1,8 +1,10 @@
-# IHatePDF v1.3.1-beta
+# IHatePDF v1.3.1-beta.2
 
 **Pre-release for testing on real Windows PCs.** The stable version is still [v1.3.0](https://github.com/Burthcer/IHatePDF/releases/tag/v1.3.0).
 
 The memory fail-safe now slows down instead of stopping. On a 4 GB lab PC, 1.3.0 stopped even a 10 MB scan; 1.3.1 finishes normal student files on every tool, and big scans too, taking longer when it has to.
+
+**New in beta.2:** the fail-safe also makes room for Windows. When Windows and other programs are using most of the memory, IHatePDF lowers its own limit, so jobs slow down and pause early instead of running until Windows is almost out.
 
 ## Install
 
@@ -22,8 +24,12 @@ The memory fail-safe now slows down instead of stopping. On a 4 GB lab PC, 1.3.0
 | 70% or more | Works in smaller pieces; the app shows **"Low on memory: taking longer"** |
 | Over the budget | Pauses at the next page or image, frees memory, and carries on |
 
+**Room for Windows (beta.2).** The budget is fixed from the PC's RAM (1 GB on 4 GB, 4 GB on 8 GB, 8 GB on 16 GB, 16 GB on 32 GB+). But a job may only use as much as keeps a reserve free for Windows: 10% of RAM, at least 1 GB. On a 16 GB PC where Windows uses 8 GB, a job's limit is about 6.4 GB instead of 8 GB; with only 2 GB free it's about 0.4 GB, and never below 0.25 GB. The steps above then start earlier, and the message says **"Windows is short of memory, so IHatePDF is working in smaller pieces to leave it room"**.
+
+**Busy moments never lower quality (beta.2).** Which images Compress re-encodes, how large pages are rendered for JPG and Word, and which images are refused depend on the PC's budget only. A busy moment makes a job slower, never worse.
+
 **Stopping is the last resort,** with the same clear message and the app still usable:
-- Windows itself is almost out of memory, or
+- Windows itself is almost out of memory (under 5% of RAM free), or has so little free that the job can't fit even after pausing, or
 - one piece of the job needs more than the budget even after pausing (for example a single enormous image).
 
 **Less memory for scanned PDFs.**
