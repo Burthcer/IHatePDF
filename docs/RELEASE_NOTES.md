@@ -1,8 +1,10 @@
-# IHatePDF v1.3.1-beta.2
+# IHatePDF v1.3.1-beta.3
 
 **Pre-release for testing on real Windows PCs.** The stable version is still [v1.3.0](https://github.com/Burthcer/IHatePDF/releases/tag/v1.3.0).
 
 The memory fail-safe now slows down instead of stopping. On a 4 GB lab PC, 1.3.0 stopped even a 10 MB scan; 1.3.1 finishes normal student files on every tool, and big scans too, taking longer when it has to.
+
+**New in beta.3:** a window that starts grabbing memory right after the app opens is now caught as fast as any other (about 1.5 s); and the memory tests are in the repository (`scripts/e2e/memory/`).
 
 **New in beta.2:** the fail-safe also makes room for Windows. When Windows and other programs are using most of the memory, IHatePDF lowers its own limit, so jobs slow down and pause early instead of running until Windows is almost out.
 
@@ -60,5 +62,7 @@ Real 300 dpi scans (JPEG, ~3.6 MB a page) in the desktop app, with the budget fo
 ## Known limits
 
 Same as 1.3.0: see the [1.3.0 release notes](https://github.com/Burthcer/IHatePDF/releases/tag/v1.3.0).
+
+PDF → Word builds the Word file in one piece at the end. At the tightest budget tested (a 4 GB PC with a busy Windows), a 500 MB, 138-page scan is borderline: it finished in two runs out of three and was stopped with the message in the third. At a 4 GB PC's normal budget it finishes.
 
 On 4 GB PCs, page previews of scanned PDFs draw more slowly than on bigger PCs (the leaner decoder).
