@@ -11,6 +11,7 @@
 import './polyfills';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from './pdfjs.worker.ts?worker&url';
+import { currentLimitMB, memoryState } from './memoryGuard';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -30,6 +31,20 @@ export const PDFJS_DOCUMENT_OPTIONS = {
   useSystemFonts: false,
   isEvalSupported: false,
 };
+
+/**
+ * pdf.js decodes JPEGs with the browser's ImageDecoder by default: fast, but
+ * its full-size frames (35 MB for a 300 dpi A4 scan) stay in shared memory
+ * long after they're drawn — thumbnails of a scanned PDF hold about 1 GB. On
+ * a PC with a small memory budget (4 GB of RAM), while Windows is short of
+ * memory, or while memory is tight,
+ * pdf.js's own decoder is used instead: about 4× slower on scans, but its
+ * memory is freed as soon as a page is done.
+ */
+function documentOptions() {
+  // What a job may use right now: smaller on a 4 GB PC, and while Windows is short of memory.
+  return { ...PDFJS_DOCUMENT_OPTIONS, isImageDecoderSupported: currentLimitMB() >= 2048 && memoryState().level === 'normal' };
+}
 
 /**
  * Feeds pdf.js from a (disk-backed) Blob on demand, so a large PDF is never
@@ -81,7 +96,7 @@ export function openPdfJsDocument(data: PdfJsSource, password?: string): PdfJsTa
       if (!ok) throw new Error('Invalid PDF structure: the end of the file is missing (startxref).');
       if (destroyed) throw new Error('The document was closed.');
       task = pdfjsLib.getDocument({
-        ...PDFJS_DOCUMENT_OPTIONS,
+        ...documentOptions(),
         range: new BlobRangeTransport(data),
         rangeChunkSize: 256 * 1024,
         disableAutoFetch: true,
@@ -103,7 +118,7 @@ export function openPdfJsDocument(data: PdfJsSource, password?: string): PdfJsTa
     let destroyed = false;
     const promise = data.arrayBuffer().then((buf) => {
       if (destroyed) throw new Error('The document was closed.');
-      task = pdfjsLib.getDocument({ ...PDFJS_DOCUMENT_OPTIONS, data: new Uint8Array(buf), password });
+      task = pdfjsLib.getDocument({ ...documentOptions(), data: new Uint8Array(buf), password });
       return task.promise;
     });
     return {
@@ -115,7 +130,7 @@ export function openPdfJsDocument(data: PdfJsSource, password?: string): PdfJsTa
     };
   }
   const bytes = data instanceof Uint8Array ? data.slice() : new Uint8Array(data.slice(0));
-  const task = pdfjsLib.getDocument({ ...PDFJS_DOCUMENT_OPTIONS, data: bytes, password });
+  const task = pdfjsLib.getDocument({ ...documentOptions(), data: bytes, password });
   return { promise: task.promise, destroy: () => task.destroy() };
 }
 

@@ -11,10 +11,10 @@
 
 [![Latest release](https://img.shields.io/github/v/release/Burthcer/IHatePDF?style=flat-square&color=171612)](https://github.com/Burthcer/IHatePDF/releases/latest)
 ![Runs offline](https://img.shields.io/badge/runs-100%25_offline-247a48?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-79_passing-247a48?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-80_passing-247a48?style=flat-square)
 [![License: MIT](https://img.shields.io/badge/license-MIT-171612?style=flat-square)](LICENSE)
 
-**New in 1.3.0:** big files use up to 6× less memory, a built-in memory fail-safe protects the PC, and Hindi, Marathi, Chinese and Japanese text works in every tool that writes text. [What changed](#whats-new-in-130)
+**New in 1.3.1:** on 4 GB PCs, big jobs now slow down instead of being stopped: every tool finished every test file, on Windows and Linux. [What changed](#whats-new-in-131)
 
 <br>
 
@@ -122,6 +122,23 @@ Password-protected PDFs work in every tool: you type the password once when you 
 
 ---
 
+## What's new in 1.3.1
+
+**The memory fail-safe slows down instead of stopping.** In 1.3.0 the app's own idle memory (0.4–0.9 GB on Windows) counted against its budget, so on a 4 GB PC (1 GB budget) even a 10 MB scan was stopped. Now only the running job's memory counts. Near its limit a job works in smaller pieces ("Low on memory: taking longer"); over it, the job pauses, frees memory and carries on. It stops only as a last resort: Windows itself almost out of memory, or one piece too big for the PC. When Windows is busy with other programs, jobs give it room by slowing down earlier, never by lowering quality.
+
+Measured on a Windows 11 PC with the installed app (smaller PCs simulated by their budget):
+
+| Compress a 300 dpi scan | 4 GB PC, 1.3.0 | 4 GB PC, 1.3.1 | 8 GB PC, 1.3.1 |
+|---|---|---|---|
+| 10 MB | stopped | 831 KB in 3 s | 831 KB in 3 s |
+| 150 MB | stopped | 11.7 MB in 31 s | 11.7 MB in 27 s |
+| 500 MB (144 pages) | stopped | 38.4 MB in 121 s | 38.4 MB in 91 s |
+
+- **200 of 200** tool runs finished on Windows at the budgets of 4, 6, 8 and 16 GB PCs; every Compress kept every image. The same tests on Linux: 60 of 60.
+- **Known limit:** when Windows is within ~160 MB of the memory it keeps free, Compress can still stop with *"Windows is almost out of memory"*; closing other programs lets it run.
+
+Full details and every measurement: [release notes](docs/RELEASE_NOTES.md), [test report](docs/TEST_REPORT.md).
+
 ## What's new in 1.3.0
 
 **Much less memory for big files.** Tools read only the parts of a PDF they need from disk and write the result straight to disk, so memory stays about the same for a 5 MB or a 2 GB file.
@@ -133,7 +150,7 @@ Password-protected PDFs work in every tool: you type the password once when you 
 | Redact 5,000 pages | 8.3 GB RAM | 1.2 GB RAM |
 | Merge two 5,000-page PDFs | 13 s | 3.6 s |
 
-**Memory fail-safe.** The app gives itself a memory budget based on the PC's RAM and leaves the rest for Windows: 1 GB on a 4 GB PC, 4 GB on 8 GB, 8 GB on 16 GB, never more than 16 GB. Near the budget, tools work in smaller pieces. A job that would go over it stops with *"Stopped to protect this PC"* and the app stays usable; a window stuck using too much memory is restarted before Windows runs short.
+**Memory fail-safe.** The app gives itself a memory budget based on the PC's RAM and leaves the rest for Windows: 1 GB on a 4 GB PC, 4 GB on 8 GB, 8 GB on 16 GB, never more than 16 GB. A window stuck using too much memory is restarted before Windows runs short. (1.3.1 changed how the budget is counted: see above.)
 
 **Fixes:**
 - **Hindi, Marathi, Chinese and Japanese** text now works in Edit PDF, Watermark, Page numbers, Fill forms and the Word, Excel, PowerPoint and HTML to PDF tools. The fonts ship with the app.
@@ -145,7 +162,7 @@ Password-protected PDFs work in every tool: you type the password once when you 
 - **Damaged files** get a plain explanation and a pointer to Repair PDF, instead of a technical error.
 - **Share to phone** skips unreadable files in a folder (in use, no permission) instead of failing, and lists them.
 
-Full details and known limits: [release notes](docs/RELEASE_NOTES.md).
+Details: [1.3.0 release notes](https://github.com/Burthcer/IHatePDF/releases/tag/v1.3.0).
 
 ---
 
@@ -182,8 +199,8 @@ npm run dev          # then open the localhost link it prints
 
 ## More
 
-- [Release notes for 1.3.0](docs/RELEASE_NOTES.md)
-- [Test results](docs/TEST_REPORT.md)
+- [Release notes for 1.3.1](docs/RELEASE_NOTES.md)
+- [Test results](docs/TEST_REPORT.md), and the [Windows test log](docs/testing/WINDOWS_TESTS.md)
 - [For developers](HANDOFF.md): how the code is organized, building the installer, and releasing.
 
 ## License

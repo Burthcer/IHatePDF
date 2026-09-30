@@ -6,6 +6,7 @@
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { PDFDocument, PDFName, PDFArray, PDFDict, PDFRawStream, StandardFonts, decodePDFRawStream } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
@@ -299,6 +300,38 @@ async function main() {
     const r = await buildDocxFromLayout(layout, 'c.pdf', { pageBreaks: true });
     assert(r.size > 3000, 'docx too small');
     await writeFile(resolve(OUT, 'complex.docx'), new Uint8Array(r.buffer));
+  });
+
+  console.log('\n--- Memory fail-safe ---');
+  await check('fail-safe: slows down, then pauses, and stops only as a last resort', async () => {
+    const { levelFor, limitFor, RESERVE } = createRequire(import.meta.url)('../electron/memoryGuard.cjs') as {
+      levelFor: (o: { growth: number; budget: number; limit?: number; low?: boolean; overFor?: number }) => { level: string; reason?: string };
+      limitFor: (o: { growth: number; free: number; budget: number }) => number;
+      RESERVE: number;
+    };
+    const MB = 1024 * 1024;
+    const budget = 1024 * MB;
+    const at = (growth: number, extra: { low?: boolean; overFor?: number } = {}) => levelFor({ growth, budget, ...extra });
+    assert(at(300 * MB).level === 'normal', 'normal under 70%');
+    assert(at(800 * MB).level === 'high', 'smaller pieces from 70%');
+    assert(at(1100 * MB).level === 'over', 'over the budget pauses first');
+    assert(at(1100 * MB, { overFor: 5000 }).level === 'over', 'still pausing after 5 s');
+    const stuck = at(1100 * MB, { overFor: 9000 });
+    assert(stuck.level === 'critical' && stuck.reason === 'too-big', 'stops when pausing does not help');
+    assert(at(2100 * MB).level === 'critical', 'a runaway stops at once');
+    const low = at(200 * MB, { low: true });
+    assert(low.level === 'critical' && low.reason === 'system', 'stops when Windows is nearly out of memory');
+    assert(at(50 * MB, { low: true }).level === 'high', 'a tiny job is only slowed when Windows is low');
+    // Windows itself short of memory: the job's limit shrinks to leave the reserve free.
+    const big = 8192 * MB;
+    assert(limitFor({ growth: 0, free: 16384 * MB, budget: big }) === big, 'plenty free: the full budget');
+    const tight = limitFor({ growth: 200 * MB, free: RESERVE + 300 * MB, budget: big });
+    assert(tight === 500 * MB, `busy Windows: what the job holds + free − reserve (got ${tight / MB} MB)`);
+    assert(limitFor({ growth: 0, free: 100 * MB, budget: big }) === 256 * MB, 'never below the floor');
+    const shrunk = levelFor({ growth: 600 * MB, budget: big, limit: 500 * MB });
+    assert(shrunk.level === 'over', 'over a shrunk limit pauses first');
+    const stuckWin = levelFor({ growth: 600 * MB, budget: big, limit: 500 * MB, overFor: 9000 });
+    assert(stuckWin.level === 'critical' && stuckWin.reason === 'system', 'stops, blaming Windows, when pausing does not help');
   });
 
   console.log('\n--- Tools on the complicated fixture ---');

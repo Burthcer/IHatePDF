@@ -11,6 +11,7 @@
 
 import { PDFDocument, PDFName, PDFNumber, PDFStreamWriter, PDFWriter, CharCodes, type PDFDict, type PDFObject, type PDFRef } from 'pdf-lib';
 import { LazyRawStream } from './lazyPdf';
+import { memoryCheckpoint } from './workerMemory';
 
 export interface ChunkSink {
   write(chunk: Uint8Array): void | Promise<void>;
@@ -64,6 +65,8 @@ class ChunkedOut {
     const out = this.buf.slice(0, this.used);
     this.used = 0;
     await this.sink.write(out);
+    // A chunk is written: pause here while memory is over the budget.
+    await memoryCheckpoint();
   }
 }
 

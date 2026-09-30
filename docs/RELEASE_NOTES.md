@@ -1,68 +1,99 @@
-# IHatePDF v1.3.0
+# IHatePDF v1.3.1
 
-Big files use a fraction of the memory they did, the app protects the PC it runs on from running out of memory, and Hindi, Marathi, Chinese and Japanese text now works in every tool that writes text.
+The memory fail-safe now slows down instead of stopping. On a 4 GB lab PC, 1.3.0 stopped even a 10 MB scan; 1.3.1 finishes normal student files on every tool, and big scans too, taking longer when it has to. Tested on Linux and on a real Windows 11 PC: 200 of 200 tool runs finished at the budgets of 4, 6, 8 and 16 GB PCs.
 
 ## Install
 
 1. Download **IHatePDF-Setup.exe** below, under *Assets*.
 2. Run it. If Windows says *"Windows protected your PC"*, click **More info → Run anyway**. The installer isn't code-signed.
-3. Windows asks once for **administrator permission** (for the Share to phone firewall rule).
+3. It replaces 1.3.0 (or any earlier version) in place: one IHatePDF in *Settings → Apps*, shortcuts kept.
 
-**Updating from 1.1.0 or 1.2.0:** just run the new setup. It replaces the old version, including a 1.1.0 installed for your own Windows account only. The one case it can't clean up: 1.1.0 installed under a *different* Windows account than the one installing 1.3.0. That copy stays in that account's *Settings → Apps* and can be uninstalled there.
+## What changed
 
-## Much less memory for big files
+**Only the job's memory counts.** IHatePDF itself uses 0.4–0.9 GB while idle on Windows. In 1.3.0 that counted against the memory budget, so on a 4 GB PC (1 GB budget) almost every job was stopped at once. Now the fail-safe measures only what the running job adds.
 
-Files are no longer read into memory whole. Tools read the parts of a PDF they need from disk and write the result to disk as they go, so memory stays roughly the same whether a file is 5 MB or 2 GB.
+**Slower, not stopped.** As a job nears its limit:
 
-| Job (measured in the desktop app) | 1.2.0 | 1.3.0 |
-|---|---|---|
-| Watermark a 500 MB PDF | 5.2 GB | 0.9 GB |
-| Rotate a 500 MB PDF | 4.7 GB | 1.6 GB |
-| Redact 5,000 pages | 8.3 GB | 1.2 GB |
-| Compress a 2 GB PDF | — | 1.1 GB |
-| Excel→PDF, 100,000 rows | 4.3 GB | 1.9 GB |
-| Merge two 5,000-page PDFs | 13 s | 3.6 s |
-
-- **Thumbnails** are drawn only for the pages on screen, so a 5,000-page file opens straight away in Organize, Rotate, Split, PDF→JPG and the editor.
-- **Redact** draws and saves one page at a time.
-- **Compare** keeps only the page images near what you're looking at.
-- **Compress** skips any single image too large to decode safely, and says which.
-- **PDF→Markdown** shows the start of very long results on screen; the saved file and **Copy** include everything.
-
-## Memory fail-safe
-
-IHatePDF now gives itself a memory budget based on the PC's RAM, leaving the rest for Windows and other programs:
-
-| PC's RAM | IHatePDF uses at most |
+| Job's memory | What happens |
 |---|---|
-| 4 GB | 1 GB |
-| 6 GB | 3 GB |
-| 8 GB | 4 GB |
-| 16 GB | 8 GB |
-| 32 GB or more | 16 GB |
+| Under 70% of the limit | Normal speed |
+| 70% or more | Works in smaller pieces; the app shows **"Low on memory: taking longer"** |
+| Over the limit | Pauses at the next page or image, frees memory, and carries on |
 
-Near the budget, tools slow down and work in smaller pieces. If a job would go over it anyway, or Windows itself is running out of memory, the job stops with *"Stopped to protect this PC"* and the app stays usable. If the window stops responding while using too much memory, it is restarted and says why, before Windows itself runs short.
+**Room for Windows.** The budget is fixed from the PC's RAM (1 GB on 4 GB, 3 GB on 6 GB, 4 GB on 8 GB, 8 GB on 16 GB, 16 GB on 32 GB+). But a job may only use as much as keeps a reserve free for Windows: 10% of RAM, at least 1 GB. On a 16 GB PC where Windows uses 8 GB, a job's limit is about 6.4 GB instead of 8 GB; with only 2 GB free it's about 0.4 GB, and never below 0.25 GB. The steps above then start earlier, and the message says **"Windows is short of memory, so IHatePDF is working in smaller pieces to leave it room"**.
 
-## Hindi, Marathi, Chinese and Japanese
+**Busy moments never lower quality.** Which images Compress re-encodes, how large pages are rendered for JPG and Word, and which images are refused depend on the PC's budget only. A busy moment makes a job slower, never worse.
 
-Edit PDF, Watermark, Page numbers, Fill forms, and Word, Excel, PowerPoint and HTML to PDF now write Devanagari (Hindi, Marathi) with correctly joined letters and vowel signs, and Chinese and Japanese characters. Text that mixes scripts, like Hindi with English words, works too. The fonts ship inside the app (Noto Sans, Open Font License), so it works offline.
+**Stopping is the last resort,** with the same clear message and the app still usable:
+- Windows itself is almost out of memory (under 5% of RAM free), or has so little free that the job can't fit even after pausing, or
+- one piece of the job needs more than the budget even after pausing (for example a single enormous image).
 
-## Also fixed
+**Less memory for scanned PDFs.**
+- Page previews pause while a job runs.
+- On 4 GB PCs, pages are decoded in a leaner way: the browser's own decoder kept every decoded 300 dpi page (35 MB each) in memory.
+- Memory the job has finished with is released straight away when memory is tight.
 
-- **PDF→Word keeps pictures**: photos and figures appear in the Word file where they were on the page.
-- **Tables** in PDF→Word and PDF→Excel are detected more reliably, including tables with narrow gaps between columns.
-- **Crashes:** if a window crashes, it reloads with a short note instead of staying blank. Repeated crashes close the app with a message.
-- **Damaged files** get a plain explanation instead of a technical error: that the file is damaged and to run it through Repair PDF first, or that it was moved or deleted after you added it.
-- **Share to phone:** folders containing files that can't be read (in use, no permission, or shortcut loops) no longer fail. Those files are skipped and listed.
-- The Windows build checks that everything it needs is included before the installer is made.
+**Also:** a window that starts grabbing memory right after the app opens is caught as fast as any other (about 1.5 s), and the memory tests are in the repository (`scripts/e2e/memory/`, Windows log in `docs/testing/WINDOWS_TESTS.md`).
+
+## Measured on Windows
+
+Windows 11 (build 26200), Intel Core Ultra 9 185H, 32 GB RAM, the installed app driven by the repository's memory tests. Scans are 300 dpi JPEG pages (~3.4 MB a page): 10, 50, 150 and 500 MB (144 pages). Smaller PCs are simulated by forcing their budget; 624 MB is a 4 GB PC with 400 MB less, for Windows' higher idle memory.
+
+**Every tool at every budget:** Compress, Watermark, Merge, Rotate, Page numbers and PDF → Word on the four scans (144 runs), and every tool on a normal student file at 624 MB and 1 GB (56 runs).
+
+| Budget (PC) | Finished (scans + student files) | Finished, slowed down | Stopped |
+|---|---|---|---|
+| 624 MB (4 GB, tight) | 10 + 19 | 14 + 9 | 0 |
+| 1 GB (4 GB) | 15 + 24 | 9 + 4 | 0 |
+| 3 GB (6 GB) | 24 | 0 | 0 |
+| 4 GB (8 GB) | 24 | 0 | 0 |
+| 8 GB (16 GB) | 24 | 0 | 0 |
+| 16 GB (this 32 GB PC) | 24 | 0 | 0 |
+
+Every Compress recompressed every image (3/3, 15/15, 44/44, 144/144).
+
+**Compress, and the change from 1.3.0 on the same PC:**
+
+| Scan | 4 GB PC, 1.3.0 | 4 GB PC, 1.3.1 | 6 GB PC | 8 GB PC |
+|---|---|---|---|---|
+| 10 MB | stopped | 831 KB, 3 s | 831 KB, 3 s | 831 KB, 3 s |
+| 50 MB | stopped | 4.0 MB, 11 s | 4.0 MB, 10 s | 4.0 MB, 10 s |
+| 150 MB | stopped | 11.7 MB, 31 s | 11.7 MB, 26 s | 11.7 MB, 27 s |
+| 500 MB | stopped | 38.4 MB, 121 s | 38.4 MB, 108 s | 38.4 MB, 91 s |
+
+Watermark on the 500 MB scan: stopped in 1.3.0 at a 1 GB budget; 3 s in 1.3.1.
+
+**Windows busy with other programs** (this PC's 16 GB budget; free memory shrinks as the job grows). Free memory is given above the 3.2 GB reserve, the same margins as 2,400 and 1,800 MB free on a 16 GB PC:
+
+| Windows leaves free | Compress 150 MB | PDF → Word 150 MB | Watermark 500 MB |
+|---|---|---|---|
+| 8 GB | finished, 34 s, 44/44 images | finished, 8 s | finished, 2 s |
+| reserve + 762 MB | slowed, 38 s, 44/44 images | slowed, 30 s | finished, 2 s |
+| reserve + 162 MB | **stopped** after 10 s: "Windows is almost out of memory" | slowed, 39 s | slowed, 4 s |
+
+**Last resorts:** a 300-megapixel image refused at once; Windows down to 300 MB free stopped the running job in 2.4 s; a window stuck grabbing memory restarted in 1.5 s with a notice. After each, the next job worked normally.
+
+**Also on Windows:** the app idles at 0.4 GB on its home screen (1.4 GB with a 500 MB scan open in Rotate). The first 12 page previews of a 50 MB scan take 7.4 s on a 4 GB PC and 0.9 s on bigger PCs. Hindi and Chinese text in Watermark and Edit PDF show correctly in Edge and, after PDF → Word, in Word. No internet requests. `npm test` 17/17 + 34/34, and every tool through the browser 29/29.
+
+## Measured on Linux
+
+Same kind of scans in the desktop app on a 16 GB Linux PC, with the budget of a 4 GB PC (1 GB) and 400 MB less (624 MB):
+
+| Tool | 10 / 50 / 150 / 500 MB scan, 624 MB budget | 500 MB scan, 1 GB budget |
+|---|---|---|
+| Compress | all finished (4 s / 12 s / 32 s / 107 s) | finished, 100 s |
+| Watermark | all finished (1–5 s) | finished, 5 s |
+| Merge (+ a 20-page journal) | all finished (0–4 s) | finished, 4 s |
+| Rotate | all finished (0–4 s) | finished, 4 s |
+| Page numbers | all finished (1–4 s) | finished, 4 s |
+| PDF → Word | all finished; the 500 MB scan slowed down and paused, 123 s | finished, 110 s |
+
+- **Every tool** finished a 50 MB scan or a 10–20 page journal at both a 624 MB and a 1 GB budget (60 of 60).
+- **Stopped only when it had to:** a single 300-megapixel image is refused before anything starts; when Windows reports almost no free memory, the running job stops in 3 s; a window stuck grabbing memory is restarted in 1.5 s. After each, the app carried on working normally.
 
 ## Known limits
 
-- Password-protected PDFs are decrypted into memory when opened, so they need about twice their size in RAM.
-- On a 4 GB PC, very large jobs (a 1 GB+ image PDF) may be stopped by the fail-safe. Nothing crashes; the job just doesn't run.
-- Repairing a large damaged file reads it whole, so it needs several times the file's size in RAM (a 450 MB file: about 3 GB).
-- One piece of text that mixes Hindi/Marathi with Chinese/Japanese (for example a single watermark with both) shows only the first script's characters. Each script on its own, or mixed with English, works; Edit PDF handles any mix.
-- Scanned pages have no text to edit or convert (there's no OCR).
-- Signing adds a visible signature, not a certificate-based digital signature.
-
-Earlier changes: [v1.2.0 release notes](https://github.com/Burthcer/IHatePDF/releases/tag/v1.2.0).
+- **Compress on a PC that's almost full.** When Windows is within about 160 MB of the reserve it keeps free, Compress can stop with *"Windows is almost out of memory"* instead of slowing down (other tools slow down and finish). Nothing crashes; closing other programs lets it run.
+- **PDF → Word** builds the Word file in one piece at the end. If Windows is already below its reserve, the window may be restarted (with a notice) instead of showing the stop message. It also leaves out sideways (rotated) text.
+- **Page previews** of scanned PDFs draw more slowly on 4 GB PCs (the leaner decoder). The tools themselves aren't slowed.
+- Everything else as in 1.3.0: see the [1.3.0 release notes](https://github.com/Burthcer/IHatePDF/releases/tag/v1.3.0).

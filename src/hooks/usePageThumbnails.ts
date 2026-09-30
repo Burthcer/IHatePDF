@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { openPdfJsDocument } from '../services/pdfWorkerSetup';
 import { memoryManager } from '../services/memoryManager';
-import { memoryState } from '../services/memoryGuard';
+import { jobsRunning, memoryState, whileOver } from '../services/memoryGuard';
 
 export interface PageThumbInfo {
   url?: string;
@@ -58,6 +58,7 @@ export function usePageThumbnails(data: Blob | ArrayBuffer | null | undefined, t
     let doc: PDFDocumentProxy | null = null;
     const task = openPdfJsDocument(data);
     let active = 0;
+    let waiting = false;
     let rendered = 0;
     let total = 0;
     let info: PageThumbInfo[] = [];
@@ -96,7 +97,23 @@ export function usePageThumbnails(data: Blob | ArrayBuffer | null | undefined, t
 
     pump.current = () => {
       if (!doc || cancelled) return;
-      // One at a time when memory is tight (memory fail-safe).
+      // Memory fail-safe: none while a job runs (its memory is measured) or memory is
+      // over the budget, one at a time when it's tight.
+      if (jobsRunning() || memoryState().level === 'over') {
+        if (!waiting) {
+          waiting = true;
+          const retry = () => {
+            if (cancelled) return;
+            if (jobsRunning()) return void setTimeout(retry, 500);
+            void whileOver().then(() => {
+              waiting = false;
+              pump.current();
+            });
+          };
+          retry();
+        }
+        return;
+      }
       const limit = memoryState().level === 'normal' ? CONCURRENCY : 1;
       while (active < limit && wanted.current.length) {
         const i = wanted.current.shift()!;
