@@ -384,6 +384,8 @@ First run, old absolute defaults (below this PC's reserve):
 
 **H. Text:** Watermark "गोपनीय" and "机密", and Edit PDF with Hindi and with Chinese, all saved with embedded Noto Sans Devanagari / Noto Sans SC subsets; text extracts correctly; Edge's PDF viewer renders them with correctly joined Devanagari (e.g. स्ता in दस्तावेज़). Adobe Reader: **not installed, not checked**. PDF→Word on a heading edited to "गोपनीय दस्तावेज़ 机密文件": both scripts in the .docx; Word shows them (falls back to Nirmala UI for Hindi and MS Mincho for the Chinese characters). PDF→Word on the *rotated* margin note drops it, in any language (see Known limits).
 
+**Network:** No internet requests on 1.3.1-beta.3 (a separate run recording every request the app made: Compress 50 MB scan, Watermark 150 MB scan, a small job).
+
 **I.** `npm test`: 17/17 + 34/34. `all-tools.mjs` in Edge: 29/29 (after the harness fixes below; before them 24/29 on missing input files).
 
 **Harness changes this session (no app code changed):**
