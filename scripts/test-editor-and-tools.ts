@@ -304,8 +304,10 @@ async function main() {
 
   console.log('\n--- Memory fail-safe ---');
   await check('fail-safe: slows down, then pauses, and stops only as a last resort', async () => {
-    const { levelFor } = createRequire(import.meta.url)('../electron/memoryGuard.cjs') as {
-      levelFor: (o: { growth: number; budget: number; low?: boolean; overFor?: number }) => { level: string; reason?: string };
+    const { levelFor, limitFor, RESERVE } = createRequire(import.meta.url)('../electron/memoryGuard.cjs') as {
+      levelFor: (o: { growth: number; budget: number; limit?: number; low?: boolean; overFor?: number }) => { level: string; reason?: string };
+      limitFor: (o: { growth: number; free: number; budget: number }) => number;
+      RESERVE: number;
     };
     const MB = 1024 * 1024;
     const budget = 1024 * MB;
@@ -320,6 +322,16 @@ async function main() {
     const low = at(200 * MB, { low: true });
     assert(low.level === 'critical' && low.reason === 'system', 'stops when Windows is nearly out of memory');
     assert(at(50 * MB, { low: true }).level === 'high', 'a tiny job is only slowed when Windows is low');
+    // Windows itself short of memory: the job's limit shrinks to leave the reserve free.
+    const big = 8192 * MB;
+    assert(limitFor({ growth: 0, free: 16384 * MB, budget: big }) === big, 'plenty free: the full budget');
+    const tight = limitFor({ growth: 200 * MB, free: RESERVE + 300 * MB, budget: big });
+    assert(tight === 500 * MB, `busy Windows: what the job holds + free − reserve (got ${tight / MB} MB)`);
+    assert(limitFor({ growth: 0, free: 100 * MB, budget: big }) === 256 * MB, 'never below the floor');
+    const shrunk = levelFor({ growth: 600 * MB, budget: big, limit: 500 * MB });
+    assert(shrunk.level === 'over', 'over a shrunk limit pauses first');
+    const stuckWin = levelFor({ growth: 600 * MB, budget: big, limit: 500 * MB, overFor: 9000 });
+    assert(stuckWin.level === 'critical' && stuckWin.reason === 'system', 'stops, blaming Windows, when pausing does not help');
   });
 
   console.log('\n--- Tools on the complicated fixture ---');

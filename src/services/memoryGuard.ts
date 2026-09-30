@@ -24,6 +24,8 @@ export interface MemoryState {
   /** Memory the running jobs have taken (the app's own idle memory not included). */
   jobMB?: number;
   budgetMB: number;
+  /** What a job may use right now: the budget, or less while Windows itself is short of memory. */
+  limitMB?: number;
   totalMB: number;
   availableMB: number;
 }
@@ -58,7 +60,7 @@ const workers = new Set<Worker>();
 let lastStopped: MemoryLimitError | null = null;
 
 function configMessage() {
-  return { type: 'MEM_CONFIG', budgetBytes: state.budgetMB * 1024 * 1024, level: state.level };
+  return { type: 'MEM_CONFIG', budgetBytes: currentLimitMB() * 1024 * 1024, level: state.level };
 }
 
 const notify = () => listeners.forEach((l) => l(state));
@@ -85,7 +87,7 @@ function jobsChanged() {
 }
 
 function update(next: MemoryState) {
-  const changed = next.level !== state.level || next.budgetMB !== state.budgetMB;
+  const changed = next.level !== state.level || next.budgetMB !== state.budgetMB || next.limitMB !== state.limitMB;
   state = next;
   if (changed) workers.forEach((w) => w.postMessage(configMessage()));
   if (next.level === 'critical' && jobs.size) {
@@ -115,6 +117,12 @@ if (desktop()) {
 }
 
 export const memoryState = () => state;
+
+/** What a job may use right now, in MB (the budget, or less while Windows is short of memory). */
+export const currentLimitMB = () => Math.min(state.budgetMB, state.limitMB ?? state.budgetMB);
+
+/** True while the limit is lower than the budget because Windows itself is short of memory. */
+export const windowsShort = () => currentLimitMB() < state.budgetMB;
 
 /** True while a job is running (for "Low on memory: taking longer"). */
 export const jobsRunning = () => jobs.size > 0;
@@ -191,6 +199,6 @@ export function attachWorker(worker: Worker): () => void {
 
 /** Largest canvas to render into, in pixels (a canvas costs 4 bytes a pixel, plus copies). */
 export function maxCanvasPixels(): number {
-  const byBudget = (state.budgetMB * 1024 * 1024) / 40;
+  const byBudget = (currentLimitMB() * 1024 * 1024) / 40;
   return Math.max(4_000_000, Math.min(40_000_000, state.level === 'normal' ? byBudget : byBudget / 2));
 }

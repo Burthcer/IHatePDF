@@ -56,7 +56,10 @@ export const SystemNotice: React.FC = () => {
       ) : (
         <Notice tone="info" title="Low on memory: taking longer">
           {mem.level === 'over' ? 'Paused for a moment while memory frees up. ' : ''}
-          IHatePDF is working in smaller pieces to stay within the {gb(mem.budgetMB)} it may use on this PC. The job will finish; it just takes longer.
+          {(mem.limitMB ?? mem.budgetMB) < mem.budgetMB
+            ? 'Windows is short of memory, so IHatePDF is working in smaller pieces to leave it room.'
+            : `IHatePDF is working in smaller pieces to stay within the ${gb(mem.budgetMB)} it may use on this PC.`}{' '}
+          The job will finish; it just takes longer.
         </Notice>
       )}
     </div>
