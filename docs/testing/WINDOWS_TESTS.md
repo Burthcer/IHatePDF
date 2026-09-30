@@ -91,6 +91,11 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-09-30 · v1.3.1 released, tested as above
+
+Released from the same app code as 1.3.1-beta.3 (the commits after 6134285 change only tests, docs and the version number), so the 1.3.1-beta.3 run below is the 1.3.1 baseline. Open issue 1 (Compress stops within ~160 MB of the reserve) ships as a known limit, listed in the release notes. Not yet checked by hand: the SmartScreen flow, test F, Share to phone.
+
+
 ### 2026-09-30 · v1.3.1-beta.3 (branch `claude/bold-cori-o7rx16`, commit 6134285) · Windows 11 26200, 31.4 GB
 
 **Verdict:** the 4 GB problem of 1.3.0 is fixed: nothing in B or C stopped (200 runs). E behaves as designed. One real issue in D (Compress stops when Windows is within ~160 MB of the reserve). H passes. I passes after two harness fixes.
