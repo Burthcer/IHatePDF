@@ -6,7 +6,7 @@
  */
 
 import { memoryManager } from './memoryManager';
-import { MemoryLimitError, memoryState } from './memoryGuard';
+import { MemoryLimitError, currentLimitMB, memoryState, windowsShort } from './memoryGuard';
 
 export interface PreparedImage {
   /** The picked file itself when usable as is (read from disk only when the PDF is written). */
@@ -48,8 +48,9 @@ const CHECK_DECODE_PIXELS = 40_000_000;
  */
 export function assertDecodable(size: { width: number; height: number } | null, copies: number): void {
   if (!size) return;
-  const state = memoryState();
-  if (size.width * size.height * 4 * copies > state.budgetMB * 1024 * 1024) throw new MemoryLimitError({ ...state, reason: 'too-big' });
+  if (size.width * size.height * 4 * copies > currentLimitMB() * 1024 * 1024) {
+    throw new MemoryLimitError({ ...memoryState(), reason: windowsShort() ? 'system' : 'too-big' });
+  }
 }
 
 /** EXIF lives in the first 64 KB of a JPEG. */

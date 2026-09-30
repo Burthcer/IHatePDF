@@ -11,7 +11,7 @@
 import './polyfills';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from './pdfjs.worker.ts?worker&url';
-import { memoryState } from './memoryGuard';
+import { currentLimitMB, memoryState } from './memoryGuard';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -36,13 +36,14 @@ export const PDFJS_DOCUMENT_OPTIONS = {
  * pdf.js decodes JPEGs with the browser's ImageDecoder by default: fast, but
  * its full-size frames (35 MB for a 300 dpi A4 scan) stay in shared memory
  * long after they're drawn — thumbnails of a scanned PDF hold about 1 GB. On
- * a PC with a small memory budget (4 GB of RAM), or while memory is tight,
+ * a PC with a small memory budget (4 GB of RAM), while Windows is short of
+ * memory, or while memory is tight,
  * pdf.js's own decoder is used instead: about 4× slower on scans, but its
  * memory is freed as soon as a page is done.
  */
 function documentOptions() {
-  const s = memoryState();
-  return { ...PDFJS_DOCUMENT_OPTIONS, isImageDecoderSupported: s.budgetMB >= 2048 && s.level === 'normal' };
+  // What a job may use right now: smaller on a 4 GB PC, and while Windows is short of memory.
+  return { ...PDFJS_DOCUMENT_OPTIONS, isImageDecoderSupported: currentLimitMB() >= 2048 && memoryState().level === 'normal' };
 }
 
 /**

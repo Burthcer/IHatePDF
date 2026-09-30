@@ -8,7 +8,10 @@
  *   4 GB PC → 1 GB   ·   8 GB → 4 GB   ·   16 GB → 8 GB   ·   32 GB+ → 16 GB
  *
  * The budget is for the work a job does, not for the app itself: what the
- * app uses while idle (0.5–0.9 GB, depending on Windows) doesn't count. The
+ * app uses while idle (0.5–0.9 GB, depending on Windows) doesn't count. And it
+ * shrinks while Windows itself is short of memory: a job may then only use
+ * what keeps a reserve (10% of RAM, at least 1 GB) free for Windows, so the
+ * steps below start earlier on a busy PC. The
  * watchdog (twice a second) adds up the physical memory (working set) of
  * every IHatePDF process and measures how much it has grown since the job
  * started (or, with no job running, since the last minute's low point):
@@ -43,6 +46,13 @@ const TOTAL = os.totalmem();
 const BUDGET = Number(process.env.IHP_MEMORY_BUDGET_MB) > 0 ? Number(process.env.IHP_MEMORY_BUDGET_MB) * MB : budgetFor(TOTAL);
 const CHECK_MS = 500;
 const HIGH = 0.7;
+/**
+ * Memory always left to Windows and other programs: 10% of RAM, at least 1 GB.
+ * When Windows itself is busy, a job's limit shrinks so this stays free.
+ */
+const RESERVE = Math.max(1 * GB, TOTAL * 0.1);
+/** A job's limit never shrinks below this (small jobs always get room to run). */
+const MIN_LIMIT = Math.min(BUDGET, 256 * MB);
 /** Over the budget for this long while paused: the job can't be made to fit. */
 const OVER_LIMIT_MS = 8000;
 const RUNAWAY = 2;
@@ -85,14 +95,26 @@ function systemLow(free = freeMemory()) {
 }
 
 /**
- * The level for `growth` bytes of job memory (pure, for tests). `overFor` is
- * how long growth has been over the budget; `low` whether Windows is nearly out.
+ * How much a job may use right now (pure, for tests): its budget, or less when
+ * Windows is short — what it already holds plus Windows' free memory, minus the
+ * reserve — but never below MIN_LIMIT.
  */
-function levelFor({ growth, budget = BUDGET, low = false, overFor = 0 }) {
+function limitFor({ growth, free, budget = BUDGET }) {
+  return Math.min(budget, Math.max(Math.min(budget, MIN_LIMIT), growth + free - RESERVE));
+}
+
+/**
+ * The level for `growth` bytes of job memory (pure, for tests). `limit` is the
+ * job's current limit (the budget, or less while Windows is short, see
+ * limitFor); `overFor` how long growth has been over it; `low` whether Windows
+ * is nearly out.
+ */
+function levelFor({ growth, budget = BUDGET, limit = budget, low = false, overFor = 0 }) {
+  const reason = limit < budget ? 'system' : 'too-big';
   if (low && growth > LOW_SHARE) return { level: 'critical', reason: 'system' };
   if (growth > budget * RUNAWAY) return { level: 'critical', reason: 'too-big' };
-  if (growth > budget) return overFor >= OVER_LIMIT_MS ? { level: 'critical', reason: 'too-big' } : { level: 'over' };
-  if (growth > budget * HIGH || low) return { level: 'high' };
+  if (growth > limit) return overFor >= OVER_LIMIT_MS ? { level: 'critical', reason } : { level: 'over' };
+  if (growth > limit * HIGH || low) return { level: 'high' };
   return { level: 'normal' };
 }
 
@@ -102,6 +124,7 @@ function info(extra = {}) {
     usedMB: 0,
     jobMB: 0,
     budgetMB: Math.round(BUDGET / MB),
+    limitMB: Math.round(BUDGET / MB),
     totalMB: Math.round(TOTAL / MB),
     availableMB: Math.round(freeMemory() / MB),
     ...extra,
@@ -124,6 +147,7 @@ function startWatchdog(app, getContents, onEscalate) {
   let overSince = 0;
   let criticalFor = 0;
   let answeredAt = 0;
+  let sentLimit = BUDGET;
   let last = info();
 
   const tick = () => {
@@ -147,21 +171,33 @@ function startWatchdog(app, getContents, onEscalate) {
       return;
     }
     const growth = Math.max(0, used - base);
-    if (growth > BUDGET) overSince ||= now;
+    const limit = limitFor({ growth, free });
+    if (growth > limit) overSince ||= now;
     else overSince = 0;
     // With no job there's nothing to stop: previews pause while over, and only a
     // runaway, Windows running low or a page that stops answering count.
-    const next = levelFor({ growth, low, overFor: overSince && jobs > 0 ? now - overSince : 0 });
-    last = info({ ...next, usedMB: Math.round(used / MB), jobMB: Math.round(growth / MB), availableMB: Math.round(free / MB) });
-    // Tell the page on every change, and keep reminding it while over or critical.
-    if (next.level !== level || next.level === 'over' || next.level === 'critical') contents.send('ihp:mem', last);
+    const next = levelFor({ growth, limit, low, overFor: overSince && jobs > 0 ? now - overSince : 0 });
+    last = info({
+      ...next,
+      usedMB: Math.round(used / MB),
+      jobMB: Math.round(growth / MB),
+      limitMB: Math.round(limit / MB),
+      availableMB: Math.round(free / MB),
+    });
+    // Tell the page on every change (of level, or of the limit by a tenth), and
+    // keep reminding it while over or critical.
+    const limitMoved = Math.abs(limit - sentLimit) > BUDGET * 0.1;
+    if (next.level !== level || limitMoved || next.level === 'over' || next.level === 'critical') {
+      contents.send('ihp:mem', last);
+      sentLimit = limit;
+    }
     level = next.level;
 
     // Last resort: a page that doesn't free memory (stuck, or unable to) is ended.
     const pressing = next.level === 'critical' || (next.level === 'over' && now - answeredAt >= ANSWER_MS);
     criticalFor = pressing ? criticalFor + 1 : 0;
-    const limit = now - answeredAt < ANSWER_MS ? LIMITS.answering : LIMITS.stuck;
-    if (criticalFor >= limit) {
+    const checks = now - answeredAt < ANSWER_MS ? LIMITS.answering : LIMITS.stuck;
+    if (criticalFor >= checks) {
       criticalFor = 0;
       overSince = 0;
       onEscalate(last);
@@ -198,4 +234,4 @@ function startWatchdog(app, getContents, onEscalate) {
   };
 }
 
-module.exports = { budgetFor, levelFor, startWatchdog, info, BUDGET, TOTAL, OVER_LIMIT_MS };
+module.exports = { budgetFor, limitFor, levelFor, startWatchdog, info, BUDGET, TOTAL, RESERVE, OVER_LIMIT_MS };
