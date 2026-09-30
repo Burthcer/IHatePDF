@@ -12,6 +12,7 @@
 type Level = 'normal' | 'high' | 'over' | 'critical';
 
 let budget = 2 * 1024 * 1024 * 1024;
+let limit = budget;
 let level: Level = 'normal';
 const waiters = new Set<() => void>();
 const relievers = new Set<() => void>();
@@ -21,6 +22,7 @@ if (typeof self !== 'undefined' && typeof (self as { addEventListener?: unknown 
     const m = event.data;
     if (m?.type !== 'MEM_CONFIG') return;
     if (m.budgetBytes > 0) budget = m.budgetBytes;
+    limit = m.limitBytes > 0 ? m.limitBytes : budget;
     if (m.level) level = m.level;
     if (level !== 'over') {
       waiters.forEach((w) => w());
@@ -29,8 +31,14 @@ if (typeof self !== 'undefined' && typeof (self as { addEventListener?: unknown 
   });
 }
 
-/** The RAM a job may use on this PC, in bytes. */
+/**
+ * The RAM a job may use on this PC, in bytes. Decisions about the result (what
+ * to skip, how big to render) use this, so a busy moment never lowers quality.
+ */
 export const memoryBudget = () => budget;
+
+/** What a job may use right now (less than the budget while Windows is short of memory). */
+export const memoryLimit = () => limit;
 
 /** True when memory is getting tight: prefer slower, leaner ways of working. */
 export const memoryTight = () => level !== 'normal';
