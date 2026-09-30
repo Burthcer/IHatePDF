@@ -37,6 +37,7 @@ interface IhpDesktopBridge {
     info(): Promise<import('../services/memoryGuard').MemoryState>;
     onChange(cb: (state: import('../services/memoryGuard').MemoryState) => void): () => void;
     ack?(): void;
+    jobs?(n: number): void;
   };
   /** Tool results streamed to temp files (see src/services/toolOutput.ts). */
   output: {

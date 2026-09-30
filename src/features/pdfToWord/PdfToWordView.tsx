@@ -29,7 +29,7 @@ async function withPictures(data: Blob, pages: PageLayout[], onPage: (done: numb
   const byPage = new Map<number, PageLayout>();
   try {
     for (let k = 0; k < todo.length; k++) {
-      job.check();
+      await job.checkpoint();
       onPage(k, todo.length);
       const layout = todo[k];
       const page = await doc.getPage(layout.pageNumber);

@@ -50,7 +50,7 @@ export const PdfToJpgView: React.FC<PdfToJpgViewProps> = ({ initialFiles = [], o
     const job = startJob();
     try {
       for (let k = 0; k < selection.pages.length; k++) {
-        job.check();
+        await job.checkpoint();
         const n = selection.pages[k];
         setRendering({ progress: (k / selection.pages.length) * 90, stage: `Rendering page ${n}…` });
         const page = await doc.getPage(n);

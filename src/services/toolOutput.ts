@@ -6,6 +6,7 @@
  */
 
 import type { ToolOutput } from '../types/worker';
+import { collectGarbage, memoryState } from './memoryGuard';
 
 interface OutputMessage {
   id: string;
@@ -52,8 +53,11 @@ export class OutputCollector {
     const target = await this.open.get(m.id);
     if (!target) return;
     if (m.op === 'chunk' && m.chunk) {
-      if (target.kind === 'file') await window.ihpDesktop!.output.write(target.handle, m.chunk);
-      else {
+      if (target.kind === 'file') {
+        await window.ihpDesktop!.output.write(target.handle, m.chunk);
+        // The chunk is on disk now; when memory is tight, don't leave it lying around.
+        if (memoryState().level !== 'normal') collectGarbage();
+      } else {
         target.parts.push(m.chunk);
         target.partBytes += m.chunk.byteLength;
         if (target.partBytes >= COMPACT_BYTES) {
