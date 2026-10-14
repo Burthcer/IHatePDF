@@ -31,7 +31,7 @@
 
 - **Edit the actual text.** Double-click any paragraph and retype it, like in Word. The paragraph reflows in the document's own font, and the old characters are removed from the file, not hidden under a white box.
 - **Compress to the size you need.** Choose a preset, or type a target like `2 MB` or `400 KB` and it finds the best quality that fits. For example, a 35 MB scan becomes 1.7 MB with no visible difference.
-- **Your files never leave your computer.** There's no server and nothing to upload to. Every tool runs locally, and the app works with the network unplugged. The app keeps a small [usage log](docs/USAGE_LOG.md) on the PC (tools, sizes, times, errors; never file names or content, never sent anywhere); you can turn it off in the footer.
+- **Your files never leave your computer.** There's no server and nothing to upload to. Every tool runs locally, and the app works with the network unplugged. The app keeps a small [usage log](#for-labs-the-usage-log) on the PC (tools, sizes, times, errors; never file names or content, never sent anywhere); you can turn it off in the footer.
 - **Send files to a phone, offline.** Share files or whole folders to a phone with a QR code, over Wi-Fi, this PC's own hotspot or Bluetooth. Nothing goes through the internet. See [Share to phone](#share-to-phone).
 - **Results save themselves.** When a tool finishes, the file saves after 5 seconds under a sensible name. Rename it during the countdown if you want. In the desktop app, files land in `Downloads\IHatePDF`.
 
@@ -124,23 +124,58 @@ Password-protected PDFs work in every tool: you type the password once when you 
 
 ## What's new in 1.4.0
 
-**Pictures in Word files now come through.** Before, a .docx with screenshots became a PDF of text only. Now the pictures are placed at the size Word gave them, with their original pixels.
+| | 1.3.1 | **1.4.0** |
+|---|---|---|
+| **Word → PDF**, a Word file with a screenshot and a photo | both pictures dropped (text-only PDF) | **both kept**, with their original pixels |
+| **Compress** a screenshot at *Balanced* | shrunk to 945 × 531, only 44% of its edge sharpness left | **kept sharp: 100%** |
+| **Compress** a chart at *Balanced* | 81% | **100%** |
+| **Compress** a scanned text page at *Balanced* | 220 KB | 220 KB (unchanged) |
+| **Usage log** for labs | none | **local log, 15 MB cap, summary tool**, [see below](#for-labs-the-usage-log) |
+| Rotate, Split… on a file **over 2 GB** | "Loading pages…" forever | **a clear message** |
+| A **5 GB** file: Watermark · Merge · Protect · PDF/A · Compress | not tested | 86 s · 65 s · 62 s · 71 s · 743 s (about 1 GB of RAM, Compress 2.1 GB) |
+| A **10,000-page** file | not tested | all 14 tools finished, 3 to 67 s (Redact on every page: 63 min) |
+| Memory on a 4 GB PC | slows down instead of stopping | same |
+| The app idle: memory · size installed | 390 MB · 416 MB | 397 MB · 416 MB |
+| Automated checks | 80 | 85 |
 
-**Screenshots and charts stay sharp when compressed.** Compress used to shrink every picture the same way, so text inside a screenshot went soft. It now recognises screenshots and charts and keeps them sharp (a 1920 × 1080 screenshot at *Balanced* keeps 100% of its edge sharpness, was 44%); photos and full-page scans are compressed as before. *Custom size* warns when a target is so small that text in pictures may be hard to read.
+Measured on Windows 11 with the installed app; smaller PCs simulated by their memory limit.
 
-**A local usage log.** For labs that want to measure how the app performs: which tools are used, whether jobs succeed, how long they take, memory and CPU, and whether temp files are cleaned up. It stays on the PC, is **never uploaded**, holds **no file names or document content**, is capped at 15 MB and can be turned off in the footer. [What it records and how to use it](docs/USAGE_LOG.md).
+**Pictures in Word files now come through.** A .docx with screenshots used to become a PDF of text only. The pictures are now placed at the size Word gave them, scaled down only if wider than the page, without re-compressing them. (Pictures inside table cells are still left out.)
 
-**Files over 2 GB.** Page previews can't open them (the tools that show pages say so, instead of spinning). Merge, Compress, Watermark, Page numbers, Protect and PDF/A work on a 5 GB, 1,436-page scan in about a minute each, using about 1 GB of memory.
+**Screenshots and charts stay sharp when compressed.** Compress treated every picture the same, so a screenshot pasted into Word, which is shown scaled down, lost half its pixels at 150 dpi and its text went soft. It now recognises screenshots and charts (mostly flat colour with sharp edges, not a full-page scan), gives them more resolution and quality than photos at the same setting, and stores them losslessly when that is smaller than a JPEG. Photos and full-page scans are compressed as before. *Custom size* warns when a target is so small that text in pictures may be hard to read.
 
-Full details and measurements: [release notes](docs/RELEASE_NOTES.md) · [test report](docs/TEST_REPORT.md). Earlier versions: [all releases](https://github.com/Burthcer/IHatePDF/releases).
+**Files over 2 GB.** The app's page engine can't hold a 2 GB block of memory, so page previews can't open such files, and the tools that show pages (Rotate, Organize, Crop, Split, Edit PDF…) now say so instead of spinning. Merge, Compress, Watermark, Page numbers, Protect and PDF/A work on a 5 GB, 1,436-page scan.
 
----|---|---|---|---|
-| Result | 38.4 MB in 121 s | 38.4 MB in 108 s | 38.4 MB in 91 s | 38.4 MB in 87 s |
+**Known limits:** PDF → Word leaves out sideways text and can misplace pictures inside tables; PDF → Word on 10,000 pages needs about 4 GB of RAM; if Windows is almost out of memory Compress may stop with *"Windows is almost out of memory"*; scanned pages have no text (no OCR).
 
-- **200 of 200** tool runs finished on Windows across every tool and PC size, and every compression kept every image. Also tested on Linux.
-- **Known limit:** if Windows is almost out of memory, Compress may stop with *"Windows is almost out of memory"*; closing other programs lets it run.
+Full details and every measurement: [release notes](docs/RELEASE_NOTES.md) · [test report](docs/TEST_REPORT.md). Earlier versions: [all releases](https://github.com/Burthcer/IHatePDF/releases).
 
-Full details: [release notes](docs/RELEASE_NOTES.md) · [test report](docs/TEST_REPORT.md). Earlier versions: [all releases](https://github.com/Burthcer/IHatePDF/releases).
+---
+
+## For labs: the usage log
+
+New in 1.4.0. The app keeps a small log **on the PC** of what it did, so a lab can measure how reliable and how heavy it really is: which tools are used, whether jobs succeed, how long they take, memory and CPU, and whether temp files are cleaned up.
+
+- **Never uploaded.** It's a file on the PC; nothing is sent anywhere.
+- **No file names, no document content.** Only the tool, sizes, times and results. Error messages have anything that looks like a file name removed. Users and PCs are anonymous ids (hashes).
+- **Capped at 15 MB** (3 files of 5 MB). 15 days of normal use is a few hundred KB.
+- **Switch it off** with *Turn off* in the footer (below), or `IHP_LOG=off`.
+- **Deep Freeze labs:** point every PC at a shared drive with `%ProgramData%\IHatePDF\config.json`, so a restart can't wipe the log.
+
+<img src="docs/screenshots/usage-log-footer.png" alt="The notice at the bottom of the app: a usage log stays on this PC, never file names or content, never uploaded, with a Turn off link" width="900">
+
+What a line of the log looks like. This is a Compress of a 50 MB scan (it worked, took 8.4 s and used 1.5 GB at most), and a damaged file that was refused (no file name in the log):
+
+```json
+{"ts":"2026-10-14T11:58:59Z","event":"job","tool":"compress","outcome":"ok","ms":8351,"inBytes":53409522,"outBytes":4231116,"ramPeakMB":1489,"appCpuPeak":1,"sysCpuPeak":34,"freeRamMinMB":9793,"tempFilesAtEnd":1}
+{"ts":"2026-10-14T11:59:08Z","event":"job","tool":"watermark","outcome":"error","ms":332,"inBytes":48068569,"ramPeakMB":568,"errorClass":"damaged-file","errorText":"<file>\u201d is damaged — part of its structure can\u2019t be read. Open it in Repair PDF first, then use the repaired copy here."}
+```
+
+(Shortened; every line also has the anonymous PC, user and session ids.) `node scripts/log-summary.mjs <log folder>` turns the log into the tables a report needs: usage, success rate overall and per tool, error classes, times, RAM and CPU, temp-file clean-up (must be 0 left), and the log's own growth. From a short real session on 1.4.0:
+
+<img src="docs/screenshots/usage-log-summary.png" alt="Output of the log summary: usage, success rate per tool, resources while jobs ran, temp files and clean-up, size of the log" width="700">
+
+Everything it records, every setting, and how to check the PC over time (Day 1 / Day 10 / Day 15): [docs/USAGE_LOG.md](docs/USAGE_LOG.md).
 
 ---
 
