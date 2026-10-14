@@ -104,7 +104,7 @@ node --max-old-space-size=8192 scripts/generateStressFixtures.mjs; node scripts/
 npx tsx scripts/test-docx-images.ts                   # Word -> PDF keeps pictures (part of npm test)
 ```
 
-**Results:** usage log 21/21; `npm test` 17 + 34 + 5; `all-tools.mjs` 29/29 (Edge); Word → PDF keeps pictures (a real Word file: 0 → 2 pictures); Compress keeps screenshots at 100% edge sharpness at Light and Balanced (was 44% at Balanced); files over 2 GB can't be previewed (typed arrays of 2 GB fail in the app's engine), now with a message; on a 5 GB, 1,436-page scan Watermark 86 s, Page numbers 56 s, Merge 65 s, Protect 62 s, PDF/A 71 s, all about 1 GB.
+**Results:** usage log 21/21; `npm test` 17 + 34 + 5; `all-tools.mjs` 29/29 (Edge); Word → PDF keeps pictures (a real Word file: 0 → 2 pictures); Compress keeps screenshots at 100% edge sharpness at Light and Balanced (was 44% at Balanced); files over 2 GB can't be previewed (typed arrays of 2 GB fail in the app's engine), now with a message; on a 5 GB, 1,436-page scan Watermark 86 s, Page numbers 56 s, Merge 65 s, Protect 62 s, PDF/A 71 s (all about 1 GB), Compress 743 s (2.1 GB); a 10,000-page PDF: all 14 tools finished, PDF → Word peaked at 4.1 GB, Redact on every page took 63 min.
 
 **Things learned (read before the next session):**
 - Only **one copy of the app per profile** can run: a second launch quits at once, which looks like a hang in the harness. Set `IHP_PROFILE_DIR` (or the script's own `--user-data-dir`) when running a test next to another.
