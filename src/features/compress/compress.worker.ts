@@ -16,6 +16,11 @@
  *
  * Presets pick a DPI/quality pair. "custom" searches the quality ladder for
  * the best setting that fits a requested file size.
+ *
+ * Screenshots and charts ("graphics": mostly flat areas with sharp edges, not
+ * full-page scans) get more resolution and quality than photos at the same setting, and are
+ * stored losslessly when that is smaller than a JPEG: text in a picture turns
+ * soft long before a photo looks any different.
  */
 
 import { PDFArray, PDFBool, PDFDict, PDFName, PDFNumber, PDFRawStream, PDFRef, PDFStream, type PDFDocument, type PDFObject } from 'pdf-lib';
@@ -69,6 +74,12 @@ const LADDER: Setting[] = COARSE_LADDER.flatMap((s, i) => {
   if (!next) return [s];
   return [s, { dpi: Math.round((s.dpi + next.dpi) / 2), quality: +((s.quality + next.quality) / 2).toFixed(2) }];
 });
+
+/** Graphics keep this much more resolution than photos (never above GRAPHIC_DPI_CAP, never less than the setting). */
+const GRAPHIC_DPI_BOOST = 1.4;
+const GRAPHIC_DPI_CAP = 300;
+const GRAPHIC_QUALITY_BOOST = 0.12;
+const GRAPHIC_MAX_QUALITY = 0.93;
 
 type Progress = (progress: number, stage: string) => void;
 
@@ -139,15 +150,39 @@ function collectJobs(doc: PDFDocument): ImageJob[] {
   return jobs.sort((a, b) => b.originalSize - a.originalSize);
 }
 
-function targetDims(job: ImageJob, s: Setting): { w: number; h: number } {
+/**
+ * Screenshot, chart or scanned text, as opposed to a photo: most neighbouring pixels are
+ * (nearly) the same colour, and there are real sharp edges. Photos are noisy, smooth skies have no edges.
+ */
+function isGraphic(img: DecodedImage): boolean {
+  const { width, height, rgba } = img;
+  const rowStep = Math.max(1, Math.floor(height / 400));
+  let pairs = 0;
+  let flat = 0;
+  let edges = 0;
+  for (let y = 0; y < height; y += rowStep) {
+    let i = y * width * 4;
+    for (let x = 1; x < width; x++) {
+      const o = i + x * 4;
+      const d = Math.abs(rgba[o] - rgba[o - 4]) + Math.abs(rgba[o + 1] - rgba[o - 3]) + Math.abs(rgba[o + 2] - rgba[o - 2]);
+      pairs++;
+      if (d <= 8) flat++;
+      else if (d >= 150) edges++;
+    }
+  }
+  return pairs > 0 && flat / pairs >= 0.6 && edges / pairs >= 0.003;
+}
+
+function targetDims(job: ImageJob, s: Setting, graphic = false): { w: number; h: number } {
+  const dpi = graphic ? Math.max(s.dpi, Math.min(s.dpi * GRAPHIC_DPI_BOOST, GRAPHIC_DPI_CAP)) : s.dpi;
   let scale: number;
   if (job.shownPt && job.shownPt.w > 1 && job.shownPt.h > 1) {
-    const wantW = (job.shownPt.w / 72) * s.dpi;
-    const wantH = (job.shownPt.h / 72) * s.dpi;
+    const wantW = (job.shownPt.w / 72) * dpi;
+    const wantH = (job.shownPt.h / 72) * dpi;
     scale = Math.max(wantW / job.width, wantH / job.height);
   } else {
     // Not placed on a page we could read: cap the long side at A4-length × dpi.
-    scale = ((11.7 * s.dpi) / Math.max(job.width, job.height));
+    scale = (11.7 * dpi) / Math.max(job.width, job.height);
   }
   scale = Math.min(1, scale);
   return { w: Math.max(16, Math.round(job.width * scale)), h: Math.max(16, Math.round(job.height * scale)) };
@@ -179,18 +214,10 @@ function resample(img: DecodedImage, w: number, h: number): OffscreenCanvas {
   return out;
 }
 
-async function encode(job: ImageJob, img: DecodedImage, s: Setting): Promise<Encoded | null> {
-  const { w, h } = targetDims(job, s);
-  const downsample = w < img.width || h < img.height;
-  const canvas = resample(img, w, h);
-  const lossyOk = !job.isMask && (img.colors > 1024 || isLossySource(job));
-  if (lossyOk) {
-    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: s.quality });
-    return { bytes: new Uint8Array(await blob.arrayBuffer()), width: w, height: h, format: 'jpeg', gray: false };
-  }
-  if (!downsample && job.stream.dict.has(PDFName.of('Filter'))) return null; // lossless & same size: nothing to gain
+/** Lossless: 8-bit RGB (or gray) with Flate. Best for flat artwork; far too big for photos. */
+function flateEncode(canvas: OffscreenCanvas, w: number, h: number, isMask: boolean): Encoded {
   const px = canvas.getContext('2d')!.getImageData(0, 0, w, h).data;
-  const gray = job.isMask || isGrayish(px);
+  const gray = isMask || isGrayish(px);
   const raw = new Uint8Array(w * h * (gray ? 1 : 3));
   for (let i = 0, p = 0; i < w * h; i++, p += 4) {
     if (gray) raw[i] = px[p];
@@ -201,6 +228,29 @@ async function encode(job: ImageJob, img: DecodedImage, s: Setting): Promise<Enc
     }
   }
   return { bytes: deflate(raw, { level: 9 }), width: w, height: h, format: 'flate', gray };
+}
+
+async function encode(job: ImageJob, img: DecodedImage, s: Setting): Promise<Encoded | null> {
+  // Full-page scans keep the setting's own resolution (they're read at page size, and the extra data would double the file).
+  const fullPage = !!job.shownPt && job.shownPt.w >= 500 && job.shownPt.h >= 650;
+  const graphic = !job.isMask && !fullPage && isGraphic(img);
+  const { w, h } = targetDims(job, s, graphic);
+  const downsample = w < img.width || h < img.height;
+  const canvas = resample(img, w, h);
+  const lossyOk = !job.isMask && (img.colors > 1024 || isLossySource(job));
+  if (lossyOk) {
+    const quality = graphic ? Math.min(GRAPHIC_MAX_QUALITY, s.quality + GRAPHIC_QUALITY_BOOST) : s.quality;
+    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+    const jpeg: Encoded = { bytes: new Uint8Array(await blob.arrayBuffer()), width: w, height: h, format: 'jpeg', gray: false };
+    // A screenshot or chart is often smaller (and exact) as lossless data than as a JPEG.
+    if (graphic && w * h <= 12_000_000) {
+      const lossless = flateEncode(canvas, w, h, false);
+      if (lossless.bytes.length < jpeg.bytes.length) return lossless;
+    }
+    return jpeg;
+  }
+  if (!downsample && job.stream.dict.has(PDFName.of('Filter'))) return null; // lossless & same size: nothing to gain
+  return flateEncode(canvas, w, h, job.isMask);
 }
 
 function isLossySource(job: ImageJob): boolean {
@@ -523,7 +573,7 @@ export async function compressPdf(
         if (size <= target || best >= LADDER.length - 1) {
           note =
             size <= target
-              ? `Target ${fmt(target)} reached with images at ${LADDER[best].dpi} dpi, ${Math.round(LADDER[best].quality * 100)}% quality.`
+              ? `Target ${fmt(target)} reached with images at ${LADDER[best].dpi} dpi, ${Math.round(LADDER[best].quality * 100)}% quality.${LADDER[best].dpi < 100 ? ' At this size small text inside pictures may be hard to read.' : ''}`
               : `Couldn't get down to ${fmt(target)} — this is as small as it goes without destroying legibility (${fmt(size)}). Text, fonts and vector graphics can't be shrunk further.`;
           clearCache();
           return finish(size);

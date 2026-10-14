@@ -7,7 +7,7 @@
 // `node scripts/e2e/memory/report.mjs` turns them into tables.
 
 import { _electron as electron } from 'playwright-core';
-import { appendFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -30,7 +30,8 @@ export async function launch(env = {}) {
   const electronBin = resolve(REPO, 'node_modules/electron/dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
   const app = await electron.launch({
     executablePath: exe ?? electronBin,
-    args: exe ? [] : ['.', ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
+    // IHP_PROFILE_DIR gives the app its own profile, so it can run next to another copy (one copy per profile is allowed).
+    args: [...(exe ? [] : ['.', ...(process.platform === 'linux' ? ['--no-sandbox'] : [])]), ...(process.env.IHP_PROFILE_DIR ? [`--user-data-dir=${process.env.IHP_PROFILE_DIR}`] : [])],
     cwd: exe ? undefined : REPO,
     env: { ...process.env, ...env },
   });
@@ -53,7 +54,8 @@ export const memInfo = (win) => win.evaluate(() => window.ihpDesktop.memory.info
 export async function runTool(name, tool, files, { before, action, env = {}, timeout = 40 * 60_000, onTick, keepApp = false } = {}) {
   const row = { name, tool, budgetMB: env.IHP_MEMORY_BUDGET_MB ? Number(env.IHP_MEMORY_BUDGET_MB) : undefined };
   // Same start for every test: the input files in the OS's file cache.
-  for (const f of files ?? []) readFileSync(f).length;
+  // (Skipped for huge files: readFileSync can't read 2 GB or more, and they can't be cached anyway.)
+  for (const f of files ?? []) if (statSync(f).size < 512 * 1024 * 1024) readFileSync(f).length;
   const t0 = Date.now();
   const { app, win } = await launch(env);
   let peak = 0, maxLevel = 'normal', maxJob = 0, minLimit = Infinity, slowed = false;
@@ -81,7 +83,9 @@ export async function runTool(name, tool, files, { before, action, env = {}, tim
       await win.waitForFunction((el) => !el.disabled, await btn.elementHandle(), { timeout });
       tRun = Date.now();
       log('click', action);
-      await btn.click();
+      const tClick = Date.now();
+      await btn.click({ timeout });
+      row.clickWaitS = +((Date.now() - tClick) / 1000).toFixed(1); // how long the page took to accept the click (huge files keep it busy)
     }
     const done = win.getByRole('button', { name: /^Save now$/ }).first();
     const stop = win.getByText(/Stopped to protect this PC/).first();

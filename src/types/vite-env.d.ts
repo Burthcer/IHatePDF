@@ -62,6 +62,14 @@ interface IhpDesktopBridge {
     stop(): Promise<void>;
     onEnded(cb: (reason: string) => void): () => void;
   };
+  /** Local usage log: what the app did, never what the documents hold. */
+  log: {
+    tool(tool: string): void;
+    jobStart(id: string, info: { tool: string; inputBytes: number; inputFiles: number }): void;
+    jobEnd(id: string, result: { outcome: 'ok' | 'error' | 'stopped' | 'cancelled'; outputBytes?: number; error?: string }): void;
+    info(): Promise<{ enabled: boolean; dir: string | null }>;
+    setEnabled(on: boolean): Promise<boolean>;
+  };
   bluetooth: {
     /** Phones in range (a ~8 s Bluetooth scan). */
     scan(): Promise<{ radio: 'On' | 'Off'; devices: BluetoothPhone[] }>;

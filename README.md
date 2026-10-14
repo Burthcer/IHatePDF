@@ -11,10 +11,10 @@
 
 [![Latest release](https://img.shields.io/github/v/release/Burthcer/IHatePDF?style=flat-square&color=171612)](https://github.com/Burthcer/IHatePDF/releases/latest)
 ![Runs offline](https://img.shields.io/badge/runs-100%25_offline-247a48?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-80_passing-247a48?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-85_passing-247a48?style=flat-square)
 [![License: MIT](https://img.shields.io/badge/license-MIT-171612?style=flat-square)](LICENSE)
 
-**New in 1.3.1:** big jobs slow down instead of stopping, and the app leaves room for your other programs. [What changed](#whats-new-in-131)
+**New in 1.4.0:** a local usage log for labs (never uploaded, no file names), pictures in Word files now survive Word → PDF, and screenshots stay sharp when compressed. [What changed](#whats-new-in-140)
 
 <br>
 
@@ -31,7 +31,7 @@
 
 - **Edit the actual text.** Double-click any paragraph and retype it, like in Word. The paragraph reflows in the document's own font, and the old characters are removed from the file, not hidden under a white box.
 - **Compress to the size you need.** Choose a preset, or type a target like `2 MB` or `400 KB` and it finds the best quality that fits. For example, a 35 MB scan becomes 1.7 MB with no visible difference.
-- **Your files never leave your computer.** There's no server and nothing to upload to. Every tool runs locally, and the app works with the network unplugged.
+- **Your files never leave your computer.** There's no server and nothing to upload to. Every tool runs locally, and the app works with the network unplugged. The app keeps a small [usage log](docs/USAGE_LOG.md) on the PC (tools, sizes, times, errors; never file names or content, never sent anywhere); you can turn it off in the footer.
 - **Send files to a phone, offline.** Share files or whole folders to a phone with a QR code, over Wi-Fi, this PC's own hotspot or Bluetooth. Nothing goes through the internet. See [Share to phone](#share-to-phone).
 - **Results save themselves.** When a tool finishes, the file saves after 5 seconds under a sensible name. Rename it during the countdown if you want. In the desktop app, files land in `Downloads\IHatePDF`.
 
@@ -122,18 +122,19 @@ Password-protected PDFs work in every tool: you type the password once when you 
 
 ---
 
-## What's new in 1.3.1
+## What's new in 1.4.0
 
-**Big jobs slow down instead of stopping.** When memory gets tight, tools work in smaller pieces and show *"Low on memory: taking longer"*; if they run out, they pause, free memory and carry on. A job only stops as a last resort, when Windows itself is almost out of memory, and the app stays usable.
+**Pictures in Word files now come through.** Before, a .docx with screenshots became a PDF of text only. Now the pictures are placed at the size Word gave them, with their original pixels.
 
-**It leaves room for your other programs.** IHatePDF sizes itself to your PC's RAM and keeps some free for Windows. If other programs are using a lot, it works more slowly rather than crowding them out, and the result is exactly the same.
+**Screenshots and charts stay sharp when compressed.** Compress used to shrink every picture the same way, so text inside a screenshot went soft. It now recognises screenshots and charts and keeps them sharp (a 1920 × 1080 screenshot at *Balanced* keeps 100% of its edge sharpness, was 44%); photos and full-page scans are compressed as before. *Custom size* warns when a target is so small that text in pictures may be hard to read.
 
-**Only the job counts.** The app's own memory (about 0.4 GB while idle) no longer counts against its limit, so everyday files run at normal speed on every PC.
+**A local usage log.** For labs that want to measure how the app performs: which tools are used, whether jobs succeed, how long they take, memory and CPU, and whether temp files are cleaned up. It stays on the PC, is **never uploaded**, holds **no file names or document content**, is capped at 15 MB and can be turned off in the footer. [What it records and how to use it](docs/USAGE_LOG.md).
 
-Compressing a 500 MB, 144-page scan, measured on Windows 11 (smaller PCs simulated):
+**Files over 2 GB.** Page previews can't open them (the tools that show pages say so, instead of spinning). Merge, Compress, Watermark, Page numbers, Protect and PDF/A work on a 5 GB, 1,436-page scan in about a minute each, using about 1 GB of memory.
 
-| PC's RAM | 4 GB | 6 GB | 8 GB | 16 GB or more |
-|---|---|---|---|---|
+Full details and measurements: [release notes](docs/RELEASE_NOTES.md) · [test report](docs/TEST_REPORT.md). Earlier versions: [all releases](https://github.com/Burthcer/IHatePDF/releases).
+
+---|---|---|---|---|
 | Result | 38.4 MB in 121 s | 38.4 MB in 108 s | 38.4 MB in 91 s | 38.4 MB in 87 s |
 
 - **200 of 200** tool runs finished on Windows across every tool and PC size, and every compression kept every image. Also tested on Linux.
@@ -176,7 +177,7 @@ npm run dev          # then open the localhost link it prints
 
 ## More
 
-- [Release notes for 1.3.1](docs/RELEASE_NOTES.md)
+- [Release notes for 1.4.0](docs/RELEASE_NOTES.md) · [The usage log](docs/USAGE_LOG.md)
 - [Test results](docs/TEST_REPORT.md), and the [Windows test log](docs/testing/WINDOWS_TESTS.md)
 - [For developers](HANDOFF.md): how the code is organized, building the installer, and releasing.
 

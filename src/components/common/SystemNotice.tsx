@@ -9,6 +9,7 @@ import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { Notice } from '../ui';
 import { jobsRunning, memoryState, subscribeMemory, type MemoryState } from '../../services/memoryGuard';
+import { clearNotice, subscribeNotice } from '../../services/notices';
 
 function recoveredReason(): 'memory' | 'crash' | null {
   try {
@@ -25,6 +26,8 @@ export const SystemNotice: React.FC = () => {
   const [recovered, setRecovered] = useState(recoveredReason);
   const [mem, setMem] = useState<MemoryState>(memoryState);
   const [busy, setBusy] = useState(jobsRunning);
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => subscribeNotice(setNotice), []);
   useEffect(
     () =>
       subscribeMemory((s) => {
@@ -39,10 +42,19 @@ export const SystemNotice: React.FC = () => {
   }, [recovered]);
 
   const slowed = busy && (mem.level === 'high' || mem.level === 'over');
-  if (!recovered && !slowed) return null;
+  if (!recovered && !slowed && !notice) return null;
   return (
     <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pt-4">
-      {recovered ? (
+      {notice && !recovered ? (
+        <div className="relative">
+          <Notice tone="warn" title="This file can't be previewed">
+            {notice}
+          </Notice>
+          <button aria-label="Dismiss" className="absolute top-2 right-2 text-muted hover:text-ink" onClick={clearNotice}>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      ) : recovered ? (
         <div className="relative">
           <Notice tone="warn" title={recovered === 'memory' ? 'IHatePDF restarted to protect this PC' : 'IHatePDF recovered from a problem'}>
             {recovered === 'memory'
