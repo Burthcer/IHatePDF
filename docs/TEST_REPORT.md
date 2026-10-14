@@ -61,6 +61,37 @@ A 5.0 GB PDF of 1,436 scanned pages (300 dpi JPEG, every page different), create
 | PDF/A | finished | 71 s | 983 MB |
 | Rotate | no preview opens (limit above) | n/a | n/a |
 
+### 5 GB: also Compress
+
+| Tool on the 5 GB file | Result | Time | Most memory used by the app |
+|---|---|---|---|
+| Compress | finished (every image recompressed) | 743 s | 2.1 GB |
+
+Split also needs page previews, so on a 5 GB file it shows the message instead of starting.
+
+### 10,000 pages
+
+A 10,000-page text PDF (14.6 MB: a heading, 40 lines and a small table on every page), on Windows 11, 32 GB RAM, this PC's own memory budget. All 14 tools finished:
+
+| Tool | Time | Most memory used by the app |
+|---|---|---|
+| Watermark | 6 s | 1.2 GB |
+| Rotate | 4 s | 1.2 GB |
+| Page numbers | 5 s | 1.2 GB |
+| Merge (+ 20 pages) | 3 s | 0.9 GB |
+| Organize (reverse order) | 4 s | 1.2 GB |
+| Split (every page → ZIP) | 5 s | 1.3 GB |
+| Protect (AES-256) | 4 s | 0.9 GB |
+| Compress | 17 s | 1.7 GB |
+| PDF/A | 4 s | 0.9 GB |
+| PDF → Markdown | 32 s | 2.1 GB |
+| PDF → Word | 9 s | **4.1 GB** |
+| PDF → Excel | 67 s | 2.0 GB |
+| Redact (a word that is on every page) | **63 min** | 1.7 GB |
+| Edit PDF (open and retype a paragraph) | 3 s | 1.5 GB |
+
+Two things to know: **PDF → Word on 10,000 pages needs about 4 GB of RAM** (on a 4 GB lab PC the memory limit would slow it down or stop it, so split such a file first), and **Redact on every one of 10,000 pages takes about an hour** (it redraws each page; fine for a few pages, slow for all of them).
+
 # Version 1.3.1
 
 ## Windows: memory fail-safe on the installed app

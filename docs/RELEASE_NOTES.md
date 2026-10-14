@@ -47,6 +47,8 @@ The app's page engine can't hold a 2 GB block of memory, so **page previews can'
 | Protect (AES-256) | 62 s | 990 MB |
 | PDF/A | 71 s | 983 MB |
 
+**More stress results** (full tables in the test report): Compress on the same 5 GB file finished in 743 s (peak 2.1 GB). A 10,000-page PDF went through 14 tools on Windows, all finished: most took 3 to 32 seconds and 0.9 to 2 GB of RAM. Two to know: **PDF → Word on 10,000 pages needs about 4 GB of RAM**, and **Redact on every page of 10,000 takes about an hour**.
+
 ## Also
 
 - The memory tests and the Windows test log (`scripts/e2e/memory/`, `docs/testing/WINDOWS_TESTS.md`) now include `usagelog.mjs`, `stress.mjs` (5 GB and 10,000-page files) and `quality.mjs` (picture quality, scored by `quality_score.py`).
