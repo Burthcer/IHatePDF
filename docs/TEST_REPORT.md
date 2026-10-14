@@ -1,8 +1,65 @@
-# IHatePDF — Test Report (v1.3.1)
+# IHatePDF — Test Report (v1.4.0)
 
 Every result below comes from real runs against generated dummy documents. Nothing is hand-edited. **Version 1.3.1** was tested on Windows (the installed app, on a real Windows 11 PC) and on Linux; the **1.3.0** results that follow are still valid for everything 1.3.1 didn't change.
 
-**80 checks passing:** 17 + 34 automated checks (`npm test`) and all 29 tools through the browser (`scripts/e2e/all-tools.mjs`), on Windows.
+**85 checks passing:** 17 + 34 + 5 automated checks (`npm test`) and all 29 tools through the browser (`scripts/e2e/all-tools.mjs`), on Windows. Plus 21 checks of the usage log on the real desktop app (`scripts/e2e/memory/usagelog.mjs`).
+
+# Version 1.4.0
+
+Windows 11 Home (build 26200), Intel Core Ultra 9 185H, 32 GB RAM; the unpacked app built from the release code, driven by the repository's end-to-end scripts. Scores below are for pictures in generated test documents.
+
+## Usage log (`scripts/e2e/memory/usagelog.mjs`): 21 / 21
+
+Three launches of the real app (two good jobs, one damaged file), then rotation and the off switch.
+
+| Check | Result |
+|---|---|
+| One log file per PC; `app_start` per launch with version, OS, RAM, cores, budget | pass |
+| `tool_open` for each tool used | pass |
+| Each job: tool, time, input and output size, app RAM peak, app and whole-PC CPU | pass |
+| A 50 MB scan's input size matches; the damaged file is logged `error` with class `damaged-file` | pass |
+| Every launch ends with `app_quit`; temp files left after clean-up = 0; left from a previous run = 0 | pass |
+| Files saved are logged by type and size only | pass |
+| **No file name or path anywhere in the log** (checked for the test files' names, ".pdf", "Downloads", "C:\\", "Users") | pass |
+| User and PC ids are hashes | pass |
+| Summary tool (`scripts/log-summary.mjs`) reports usage, success rate, resources, temp files, log size | pass |
+| 4 launches with a 3 KB limit: at most 3 files, total under 3 × the limit | pass (2 files, 5.1 KB) |
+| `IHP_LOG=off` writes nothing | pass |
+
+## Word → PDF with pictures (`scripts/test-docx-images.ts` and a real Word file)
+
+| Document | Before | Now |
+|---|---|---|
+| Word-made .docx with a 1385 × 779 screenshot and a 1384 × 922 photo | PDF with 0 pictures (1 KB) | **both pictures**, original pixels, 1 page |
+| .docx with PNG, JPEG, and a picture wider than the page | 0 pictures | all 3; the wide one scaled to the page; JPEG stays JPEG |
+
+Found on the way: pdf-lib refused JPEGs taken out of the .docx ("SOI not found") because it ignores where a byte view starts in its buffer; the fix is to copy the bytes first.
+
+## Picture quality after Compress (`scripts/e2e/quality.mjs`, scored by `quality_score.py`)
+
+SSIM (1.000 = identical) and the share of edge sharpness kept, comparing each compressed picture, scaled back up, with the original. 1920 × 1080 screenshot pasted 16 cm wide (305 dpi on the page):
+
+| Setting | v1.3.1: stored as | SSIM | Edges kept | v1.4.0: stored as | SSIM | Edges kept |
+|---|---|---|---|---|---|---|
+| Light | 1920 × 1080, 230 KB | 1.000 | 100% | 1920 × 1080, 230 KB | 1.000 | 100% |
+| Balanced | 945 × 531, 155 KB | 0.910 | 44% | 1920 × 1080, 230 KB (left as it was) | 1.000 | 100% |
+| Smallest | 605 × 340, 79 KB | 0.879 | 34% | 847 × 476, 127 KB | 0.904 | 43% |
+| Custom 100 KB | 693 × 390, 87 KB | 0.892 | 39% | 741 × 417, 98 KB | 0.896 | 41% |
+
+A chart (1600 × 900): Balanced 81% → 100% edges kept. Full-page scanned text (300 dpi, 2480 × 3508): unchanged by the new code (Balanced 220 KB, SSIM 0.941, 79% before and after). Real Word file (screenshot + photo): Balanced 667 KB → 146 KB (−78%), 2 of 2 pictures recompressed.
+
+## Files over 2 GB: a limit, and what works (`scripts/e2e/memory/stress.mjs`)
+
+A 5.0 GB PDF of 1,436 scanned pages (300 dpi JPEG, every page different), created by `scripts/generateStressFixtures.mjs`. The app's page engine can't allocate a typed array of 2 GB or more (`new Uint8Array(2 GB)` fails, in the page and in workers), and pdf.js keeps one the size of the file, so **page previews can't open files over 2 GB**. Rotate showed "Loading pages…" with no thumbnail for 10 minutes; now a message explains.
+
+| Tool on the 5 GB file | Result | Time | Most memory used by the app |
+|---|---|---|---|
+| Watermark | finished | 86 s | 924 MB |
+| Page numbers | finished | 56 s | 1.0 GB |
+| Merge (+ 20 pages) | finished | 65 s | 1.0 GB |
+| Protect (AES-256) | finished | 62 s | 990 MB |
+| PDF/A | finished | 71 s | 983 MB |
+| Rotate | no preview opens (limit above) | n/a | n/a |
 
 # Version 1.3.1
 

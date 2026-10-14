@@ -109,7 +109,8 @@ export async function convertDocxToPdf(
   const pdfDoc = await PDFDocument.create();
   const fonts: FontCollection = await fontCollection(pdfDoc, collectText(doc.blocks));
 
-  const { pageSetup, blocks } = doc;
+  const { pageSetup, blocks, media } = doc;
+  const embedded = new Map<string, Awaited<ReturnType<PDFDocument['embedPng']>> | null>();
   const pageWidth = pageSetup.widthPt;
   const pageHeight = pageSetup.heightPt;
   const marginLeft = pageSetup.marginLeftPt;
@@ -155,7 +156,7 @@ export async function convertDocxToPdf(
       const contentWidth = usableWidth - padding * 2;
 
       const lines = wrapRuns(para.runs, contentWidth, fonts);
-      if (lines.length === 0 && !isCallout) {
+      if (lines.length === 0 && !isCallout && !para.images?.length) {
         cursorY -= para.spaceAfterPt || 6;
         continue;
       }
@@ -226,6 +227,38 @@ export async function convertDocxToPdf(
           });
           runX += token.width;
         }
+      }
+
+      // Pictures go below the paragraph's text, scaled to fit the page's width and height.
+      for (const ref of para.images ?? []) {
+        const m = media.get(ref.id);
+        if (!m) continue;
+        if (!embedded.has(ref.id)) {
+          try {
+            // A copy: pdf-lib reads JPEGs from the start of the underlying buffer, which a view into the zip isn't.
+            const bytes = m.bytes.slice();
+            embedded.set(ref.id, m.type === 'png' ? await pdfDoc.embedPng(bytes) : await pdfDoc.embedJpg(bytes));
+          } catch {
+            embedded.set(ref.id, null); // a picture the PDF library can't read is left out
+          }
+        }
+        const img = embedded.get(ref.id);
+        if (!img) continue;
+        let w = ref.widthPt > 1 ? ref.widthPt : img.width * 0.75;
+        let h = ref.heightPt > 1 ? ref.heightPt : img.height * 0.75;
+        if (w > contentWidth) {
+          h = (h * contentWidth) / w;
+          w = contentWidth;
+        }
+        const maxH = pageHeight - marginTop - marginBottom;
+        if (h > maxH) {
+          w = (w * maxH) / h;
+          h = maxH;
+        }
+        ensureSpace(h);
+        const x = para.align === 'center' ? marginLeft + padding + (contentWidth - w) / 2 : para.align === 'right' ? marginLeft + padding + contentWidth - w : marginLeft + padding;
+        currentPage.drawImage(img, { x, y: cursorY - h, width: w, height: h });
+        cursorY -= h + 4;
       }
 
       if (isCallout) {

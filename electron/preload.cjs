@@ -20,6 +20,14 @@ contextBridge.exposeInMainWorld('ihpDesktop', {
     /** Frees images and caches the page no longer uses (native memory JS garbage collection can't reach). */
     relieve: () => webFrame.clearCache(),
   },
+  /** Local usage log (usageLog.cjs). Fixed fields only; never file names. */
+  log: {
+    tool: (tool) => ipcRenderer.send('ihp:log-tool', tool),
+    jobStart: (id, info) => ipcRenderer.send('ihp:job-start', id, info),
+    jobEnd: (id, result) => ipcRenderer.send('ihp:job-end', id, result),
+    info: () => ipcRenderer.invoke('ihp:log-info'),
+    setEnabled: (on) => ipcRenderer.invoke('ihp:log-set', on),
+  },
   showInFolder(file) {
     ipcRenderer.send('ihp:show-in-folder', file);
   },

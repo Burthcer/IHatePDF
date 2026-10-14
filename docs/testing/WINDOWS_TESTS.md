@@ -91,6 +91,29 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-10-14 · v1.4.0 (branch `claude/usage-log`) · Windows 11 26200, 31.4 GB
+
+Triggered by the principal's feedback (logging, 5 GB / 10,000-page stress, picture quality, PDF → Word). Details in `docs/TEST_REPORT.md` ("Version 1.4.0"). Commands for the new tests:
+
+```powershell
+$env:IHP_EXE = "<path to the unpacked or installed IHatePDF.exe>"
+$env:IHP_PROFILE_DIR = "<any empty folder>"          # own profile, so it can run next to another copy of the app
+node scripts/e2e/memory/usagelog.mjs                  # 21 checks on the usage log
+node scripts/generateQualityFixtures.mjs; node scripts/e2e/quality.mjs custom=100,300; py scripts/e2e/quality_score.py   # picture quality
+node --max-old-space-size=8192 scripts/generateStressFixtures.mjs; node scripts/e2e/memory/stress.mjs               # 5 GB and 10,000 pages
+npx tsx scripts/test-docx-images.ts                   # Word -> PDF keeps pictures (part of npm test)
+```
+
+**Results:** usage log 21/21; `npm test` 17 + 34 + 5; `all-tools.mjs` 29/29 (Edge); Word → PDF keeps pictures (a real Word file: 0 → 2 pictures); Compress keeps screenshots at 100% edge sharpness at Light and Balanced (was 44% at Balanced); files over 2 GB can't be previewed (typed arrays of 2 GB fail in the app's engine), now with a message; on a 5 GB, 1,436-page scan Watermark 86 s, Page numbers 56 s, Merge 65 s, Protect 62 s, PDF/A 71 s, all about 1 GB.
+
+**Things learned (read before the next session):**
+- Only **one copy of the app per profile** can run: a second launch quits at once, which looks like a hang in the harness. Set `IHP_PROFILE_DIR` (or the script's own `--user-data-dir`) when running a test next to another.
+- `readFileSync` can't read files of 2 GB or more; the harness now skips its cache warm-up for files over 512 MB.
+- Playwright's click on a huge file's page used a 30 s timeout and failed while the page was busy; the harness now waits as long as the test's own timeout and records `clickWaitS`.
+- Timings taken while another test (or the stress run) was using the PC are contaminated; tests of memory and success aren't.
+- pdf.js opens the 5 GB file fine in Node; only the browser engine can't (2 GB typed-array limit), so don't look for a bug in the file.
+
+
 ### 2026-09-30 · v1.3.1 released, tested as above
 
 Released from the same app code as 1.3.1-beta.3 (the commits after 6134285 change only tests, docs and the version number), so the 1.3.1-beta.3 run below is the 1.3.1 baseline. Open issue 1 (Compress stops within ~160 MB of the reserve) ships as a known limit, listed in the release notes. Not yet checked by hand: the SmartScreen flow, test F, Share to phone.
