@@ -1,99 +1,62 @@
-# IHatePDF v1.3.1
+# IHatePDF v1.4.0
 
-Big jobs now slow down instead of stopping, and IHatePDF leaves room for your other programs. It also fixes 1.3.0 on PCs with little memory, where even a small scan could be stopped. Tested on Linux and on a real Windows 11 PC: 200 of 200 tool runs finished, on every PC size tested.
+A **local usage log** (so a lab can measure how reliable and how heavy the app really is), **pictures in Word documents now survive Word → PDF**, **screenshots stay sharp when compressed**, and a clear message for files too big to preview.
 
 ## Install
 
 1. Download **IHatePDF-Setup.exe** below, under *Assets*.
 2. Run it. If Windows says *"Windows protected your PC"*, click **More info → Run anyway**. The installer isn't code-signed.
-3. It replaces 1.3.0 (or any earlier version) in place: one IHatePDF in *Settings → Apps*, shortcuts kept.
+3. It replaces 1.3.x (or any earlier version) in place.
 
-## What changed
+## Usage log
 
-**Only the job's memory counts.** IHatePDF itself uses 0.4–0.9 GB while idle on Windows. In 1.3.0 that counted against the memory budget, so on a 4 GB PC (1 GB budget) almost every job was stopped at once. Now the fail-safe measures only what the running job adds.
+The app now keeps a small log **on the PC** of what it did: tool, sizes, time, success or error, memory and CPU, temp files. It is **never uploaded**, holds **no file names and nothing from your documents**, is capped at **15 MB**, and can be switched off in the footer or by the lab. Full list of what it records, how to point it at a shared drive (for Deep Freeze labs), and the summary tool: [docs/USAGE_LOG.md](USAGE_LOG.md).
 
-**Slower, not stopped.** As a job nears its limit:
+- **Every job** is logged with its outcome (`ok`, `error`, `stopped` by the memory fail-safe, `cancelled`), time, input and output size, and the app's peak RAM and CPU (and the whole PC's).
+- **Temp files** are counted when created and deleted, and checked at quit and at the next start: "left after clean-up" must be 0.
+- **Usage:** anonymous PC and user ids (hashes), launches per day, tools opened.
+- **`node scripts/log-summary.mjs <folder>`** turns the logs into the tables for a report: success rate overall and per tool, error classes, median and 95th-percentile times, RAM and CPU, temp-file checks, and the log's growth per day.
+- Tested end to end on the real app (21 checks), including: no file name or path anywhere in the log, the 15 MB cap by rotation, the off switch, and the error classes (a damaged file is logged as `damaged-file`).
 
-| Job's memory | What happens |
-|---|---|
-| Under 70% of the limit | Normal speed |
-| 70% or more | Works in smaller pieces; the app shows **"Low on memory: taking longer"** |
-| Over the limit | Pauses at the next page or image, frees memory, and carries on |
+## Word → PDF keeps pictures
 
-**Room for Windows.** The budget is fixed from the PC's RAM (1 GB on 4 GB, 3 GB on 6 GB, 4 GB on 8 GB, 8 GB on 16 GB, 16 GB on 32 GB+). But a job may only use as much as keeps a reserve free for Windows: 10% of RAM, at least 1 GB. On a 16 GB PC where Windows uses 8 GB, a job's limit is about 6.4 GB instead of 8 GB; with only 2 GB free it's about 0.4 GB, and never below 0.25 GB. The steps above then start earlier, and the message says **"Windows is short of memory, so IHatePDF is working in smaller pieces to leave it room"**.
+Before, pictures in a .docx were **silently dropped**: a Word file with screenshots became a PDF of text only. Now PNG and JPEG pictures (inline or floating, and old-style ones) are placed in the PDF at the size Word gave them, scaled down only if wider than the page, with their original pixels (nothing is re-compressed). A real Word file with a 1385 × 779 screenshot and a 1384 × 922 photo now comes out with both. Pictures inside table cells are still left out.
 
-**Busy moments never lower quality.** Which images Compress re-encodes, how large pages are rendered for JPG and Word, and which images are refused depend on the PC's budget only. A busy moment makes a job slower, never worse.
+## Compress: screenshots and charts stay sharp
 
-**Stopping is the last resort,** with the same clear message and the app still usable:
-- Windows itself is almost out of memory (under 5% of RAM free), or has so little free that the job can't fit even after pausing, or
-- one piece of the job needs more than the budget even after pausing (for example a single enormous image).
+Compress used to shrink every picture the same way. A screenshot of a program, or a chart, pasted into Word is shown scaled down, so "150 dpi" cut its pixels roughly in half and the text in it went soft. Now the compressor recognises such pictures (mostly flat colour with sharp edges, not a full-page scan) and gives them more resolution and quality than photos at the same setting, and stores them losslessly when that is smaller than a JPEG. Measured on a 1920 × 1080 screenshot pasted at 16 cm (how much of the original's edge sharpness is left):
 
-**Less memory for scanned PDFs.**
-- Page previews pause while a job runs.
-- On 4 GB PCs, pages are decoded in a leaner way: the browser's own decoder kept every decoded 300 dpi page (35 MB each) in memory.
-- Memory the job has finished with is released straight away when memory is tight.
-
-**Also:** a window that starts grabbing memory right after the app opens is caught as fast as any other (about 1.5 s), and the memory tests are in the repository (`scripts/e2e/memory/`, Windows log in `docs/testing/WINDOWS_TESTS.md`).
-
-## Measured on Windows
-
-Windows 11 (build 26200), Intel Core Ultra 9 185H, 32 GB RAM, the installed app driven by the repository's memory tests. Scans are 300 dpi JPEG pages (~3.4 MB a page): 10, 50, 150 and 500 MB (144 pages). Smaller PCs are simulated by forcing their budget; 624 MB is a 4 GB PC with 400 MB less, for Windows' higher idle memory.
-
-**Every tool at every budget:** Compress, Watermark, Merge, Rotate, Page numbers and PDF → Word on the four scans (144 runs), and every tool on a normal student file at 624 MB and 1 GB (56 runs).
-
-| Budget (PC) | Finished (scans + student files) | Finished, slowed down | Stopped |
-|---|---|---|---|
-| 624 MB (4 GB, tight) | 10 + 19 | 14 + 9 | 0 |
-| 1 GB (4 GB) | 15 + 24 | 9 + 4 | 0 |
-| 3 GB (6 GB) | 24 | 0 | 0 |
-| 4 GB (8 GB) | 24 | 0 | 0 |
-| 8 GB (16 GB) | 24 | 0 | 0 |
-| 16 GB (this 32 GB PC) | 24 | 0 | 0 |
-
-Every Compress recompressed every image (3/3, 15/15, 44/44, 144/144).
-
-**Compress, and the change from 1.3.0 on the same PC:**
-
-| Scan | 4 GB PC, 1.3.0 | 4 GB PC, 1.3.1 | 6 GB PC | 8 GB PC |
-|---|---|---|---|---|
-| 10 MB | stopped | 831 KB, 3 s | 831 KB, 3 s | 831 KB, 3 s |
-| 50 MB | stopped | 4.0 MB, 11 s | 4.0 MB, 10 s | 4.0 MB, 10 s |
-| 150 MB | stopped | 11.7 MB, 31 s | 11.7 MB, 26 s | 11.7 MB, 27 s |
-| 500 MB | stopped | 38.4 MB, 121 s | 38.4 MB, 108 s | 38.4 MB, 91 s |
-
-Watermark on the 500 MB scan: stopped in 1.3.0 at a 1 GB budget; 3 s in 1.3.1.
-
-**Windows busy with other programs** (this PC's 16 GB budget; free memory shrinks as the job grows). Free memory is given above the 3.2 GB reserve, the same margins as 2,400 and 1,800 MB free on a 16 GB PC:
-
-| Windows leaves free | Compress 150 MB | PDF → Word 150 MB | Watermark 500 MB |
-|---|---|---|---|
-| 8 GB | finished, 34 s, 44/44 images | finished, 8 s | finished, 2 s |
-| reserve + 762 MB | slowed, 38 s, 44/44 images | slowed, 30 s | finished, 2 s |
-| reserve + 162 MB | **stopped** after 10 s: "Windows is almost out of memory" | slowed, 39 s | slowed, 4 s |
-
-**Last resorts:** a 300-megapixel image refused at once; Windows down to 300 MB free stopped the running job in 2.4 s; a window stuck grabbing memory restarted in 1.5 s with a notice. After each, the next job worked normally.
-
-**Also on Windows:** the app idles at 0.4 GB on its home screen (1.4 GB with a 500 MB scan open in Rotate). The first 12 page previews of a 50 MB scan take 7.4 s on a 4 GB PC and 0.9 s on bigger PCs. Hindi and Chinese text in Watermark and Edit PDF show correctly in Edge and, after PDF → Word, in Word. No internet requests. `npm test` 17/17 + 34/34, and every tool through the browser 29/29.
-
-## Measured on Linux
-
-Same kind of scans in the desktop app on a 16 GB Linux PC, with the budget of a 4 GB PC (1 GB) and 400 MB less (624 MB):
-
-| Tool | 10 / 50 / 150 / 500 MB scan, 624 MB budget | 500 MB scan, 1 GB budget |
+| Setting | Before | Now |
 |---|---|---|
-| Compress | all finished (4 s / 12 s / 32 s / 107 s) | finished, 100 s |
-| Watermark | all finished (1–5 s) | finished, 5 s |
-| Merge (+ a 20-page journal) | all finished (0–4 s) | finished, 4 s |
-| Rotate | all finished (0–4 s) | finished, 4 s |
-| Page numbers | all finished (1–4 s) | finished, 4 s |
-| PDF → Word | all finished; the 500 MB scan slowed down and paused, 123 s | finished, 110 s |
+| Light | 100% | 100% |
+| Balanced | 44% (resized to 945 × 531) | **100%** (kept as it was: it can't be made smaller without softening it) |
+| Smallest | 34% | 43% |
+| Custom, 100 KB | 39% | 41% |
 
-- **Every tool** finished a 50 MB scan or a 10–20 page journal at both a 624 MB and a 1 GB budget (60 of 60).
-- **Stopped only when it had to:** a single 300-megapixel image is refused before anything starts; when Windows reports almost no free memory, the running job stops in 3 s; a window stuck grabbing memory is restarted in 1.5 s. After each, the app carried on working normally.
+A chart at Balanced went from 81% to 100%. Photos and full-page scans are compressed as before (a 300 dpi scanned text page at Balanced: 220 KB, the same as before). **Custom size** now says so when the target forces the pictures below 100 dpi: *"At this size small text inside pictures may be hard to read."*
+
+## Files over 2 GB
+
+The app's page engine can't hold a 2 GB block of memory, so **page previews can't open files over 2 GB** (Rotate, Organize, Crop, Split, Edit PDF, Sign, Redact, PDF → JPG: every tool that shows pages). Before, those tools showed "Loading pages…" forever. Now a message explains: *"This PDF is 5.0 GB. Page previews work up to 2 GB. You can still use Merge, Compress, Watermark, Page numbers, Protect and PDF/A on it, or split it into smaller parts first."* Those tools do work on a 5 GB file, measured on Windows (1,436 scanned pages, 5.0 GB):
+
+| Tool | Time | Most memory used by the app |
+|---|---|---|
+| Watermark | 86 s | 924 MB |
+| Page numbers | 56 s | 1.0 GB |
+| Merge (+ 20 pages) | 65 s | 1.0 GB |
+| Protect (AES-256) | 62 s | 990 MB |
+| PDF/A | 71 s | 983 MB |
+
+## Also
+
+- The memory tests and the Windows test log (`scripts/e2e/memory/`, `docs/testing/WINDOWS_TESTS.md`) now include `usagelog.mjs`, `stress.mjs` (5 GB and 10,000-page files) and `quality.mjs` (picture quality, scored by `quality_score.py`).
+- 85 automated checks (17 + 34 + 5 + 29).
 
 ## Known limits
 
-- **Compress on a PC that's almost full.** When Windows is within about 160 MB of the reserve it keeps free, Compress can stop with *"Windows is almost out of memory"* instead of slowing down (other tools slow down and finish). Nothing crashes; closing other programs lets it run.
-- **PDF → Word** builds the Word file in one piece at the end. If Windows is already below its reserve, the window may be restarted (with a notice) instead of showing the stop message. It also leaves out sideways (rotated) text.
-- **Page previews** of scanned PDFs draw more slowly on 4 GB PCs (the leaner decoder). The tools themselves aren't slowed.
-- Everything else as in 1.3.0: see the [1.3.0 release notes](https://github.com/Burthcer/IHatePDF/releases/tag/v1.3.0).
+- Previews and the tools that need them don't open files over 2 GB (above).
+- Pictures in Word table cells are not carried into the PDF; Word's EMF/WMF pictures are left out.
+- PDF → Word leaves out sideways (rotated) text and can misplace images inside tables or multi-column pages.
+- Compress can stop with *"Windows is almost out of memory"* when Windows is within ~160 MB of the memory it keeps free (other tools slow down and finish).
+- Scanned pages have no text (no OCR); signatures are visible, not certificate-based.
+- Earlier limits: see the [1.3.1 release notes](https://github.com/Burthcer/IHatePDF/releases/tag/v1.3.1).

@@ -17,6 +17,7 @@ import type {
 } from '../types/worker';
 import { OutputCollector } from '../services/toolOutput';
 import { attachWorker, registerJob } from '../services/memoryGuard';
+import { inputSize, logJob, outcomeOf, outputSize } from '../services/usageLog';
 
 /** What the page gives back to a worker's `ask` (see workerTask.ts). */
 export interface AskAnswer {
@@ -101,7 +102,7 @@ export function useWorkerBridge<TResult = unknown>(
    * @param payload Request payload data
    * @param transferables Optional list of Transferable objects (ArrayBuffers) for zero-copy transfer
    */
-  const runTask = useCallback(
+  const runTaskRaw = useCallback(
     <TPayload>(
       action: WorkerAction | string,
       payload: TPayload,
@@ -252,6 +253,25 @@ export function useWorkerBridge<TResult = unknown>(
       });
     },
     [getOrCreateWorker, options.timeoutMs, terminateWorker]
+  );
+
+  /** The task, with its start, end and outcome written to the local usage log (sizes only; see usageLog.ts). */
+  const runTask = useCallback(
+    <TPayload>(action: WorkerAction | string, payload: TPayload, transferables: Transferable[] = []): Promise<TResult> => {
+      const { bytes, files } = inputSize(payload); // before the buffers are transferred away
+      const job = logJob({ inputBytes: bytes, inputFiles: files });
+      return runTaskRaw<TPayload>(action, payload, transferables).then(
+        (result) => {
+          job.end('ok', { outputBytes: outputSize(result) });
+          return result;
+        },
+        (err) => {
+          job.end(outcomeOf(err), { error: err });
+          throw err;
+        }
+      );
+    },
+    [runTaskRaw]
   );
 
   return {

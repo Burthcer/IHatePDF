@@ -6,6 +6,7 @@
  * what's looked at is ever rendered.
  */
 
+import { showNotice } from '../services/notices';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { openPdfJsDocument } from '../services/pdfWorkerSetup';
@@ -158,7 +159,11 @@ export function usePageThumbnails(data: Blob | ArrayBuffer | null | undefined, t
           if (changed.size) setPages((prev) => prev.map((p, i) => (changed.has(i) ? { ...changed.get(i)!, url: p.url } : p)));
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        // The tools show a spinner until the grid appears; say why it never will.
+        if (/Page previews work up to/.test(message)) showNotice(message);
       }
     })();
 

@@ -15,6 +15,8 @@
  *   near it work in smaller pieces and pause, and are stopped cleanly only
  *   as a last resort, instead of freezing Windows.
  * - If the page's process dies, the window reloads and says what happened.
+ * - Local usage log (usageLog.cjs): tool, sizes, time, success/error, memory, CPU
+ *   and temp files per job, on this PC only, never uploaded, no file names.
  */
 
 const { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, net, protocol, shell } = require('electron');
@@ -25,6 +27,7 @@ const { pathToFileURL } = require('url');
 const share = require('./share.cjs');
 const { createZip } = require('./zip.cjs');
 const memoryGuard = require('./memoryGuard.cjs');
+const usageLogModule = require('./usageLog.cjs');
 
 // Hotspot and Bluetooth call Windows through a native FFI; load them only when used.
 const natives = {};
@@ -158,6 +161,7 @@ function createWindow() {
     item.setSavePath(target);
     item.once('done', (e, state) => {
       if (state === 'completed' && mainWindow && !mainWindow.isDestroyed()) {
+        usageLog?.saved({ bytes: item.getReceivedBytes(), ext: path.extname(target).slice(1) });
         mainWindow.webContents.send('ihp:saved', { name: path.basename(target), path: target });
       }
     });
@@ -175,6 +179,7 @@ function createWindow() {
       return;
     }
     const why = endedForMemory || details.reason === 'oom' ? 'memory' : 'crash';
+    usageLog?.log(why === 'memory' ? 'window_restarted' : 'crash', { reason: details.reason });
     endedForMemory = false;
     mainWindow.loadURL(`${HOST}/index.html?recovered=${why}`);
   });
@@ -188,10 +193,20 @@ function createWindow() {
 let recentCrashes = [];
 let endedForMemory = false;
 let watchdog = null;
+let usageLog = null;
 
 ipcMain.handle('ihp:mem-info', () => (watchdog ? watchdog.state() : memoryGuard.info()));
 ipcMain.on('ihp:mem-ack', () => watchdog?.ack());
 ipcMain.on('ihp:mem-jobs', (event, n) => watchdog?.setJobs(Math.max(0, Number(n) || 0)));
+
+// ---- Usage log (page → main) ----
+// Only fixed fields are accepted, so a page can't write arbitrary text (or file names) into the log.
+const str = (v, n = 40) => String(v ?? '').slice(0, n);
+ipcMain.on('ihp:log-tool', (event, tool) => usageLog?.tool(str(tool)));
+ipcMain.on('ihp:job-start', (event, id, info = {}) => usageLog?.jobStart(str(id, 64), { tool: str(info.tool), inputBytes: info.inputBytes, inputFiles: info.inputFiles }));
+ipcMain.on('ihp:job-end', (event, id, result = {}) => usageLog?.jobEnd(str(id, 64), { outcome: str(result.outcome, 12), outputBytes: result.outputBytes, error: str(result.error, 300) }));
+ipcMain.handle('ihp:log-info', () => ({ enabled: !!usageLog?.enabled(), dir: usageLog?.dir ?? null }));
+ipcMain.handle('ihp:log-set', (event, on) => usageLog?.setEnabled(!!on) ?? false);
 
 ipcMain.on('ihp:show-in-folder', (event, file) => {
   if (typeof file === 'string' && path.normalize(file).startsWith(saveDir())) shell.showItemInFolder(file);
@@ -204,6 +219,21 @@ ipcMain.on('ihp:show-in-folder', (event, file) => {
 const WORK_DIR = path.join(os.tmpdir(), 'IHatePDF-work');
 const outputs = new Map(); // handle -> { fd, path, size }
 const inWorkDir = (p) => typeof p === 'string' && path.normalize(p).startsWith(WORK_DIR + path.sep);
+
+/** Files (and bytes) in the work folder right now. */
+function workDirState() {
+  let files = 0;
+  let bytes = 0;
+  try {
+    for (const f of fs.readdirSync(WORK_DIR)) {
+      files++;
+      bytes += fs.statSync(path.join(WORK_DIR, f)).size;
+    }
+  } catch {
+    // no folder: nothing there
+  }
+  return { files, bytes };
+}
 
 function cleanWorkDir() {
   try {
@@ -218,6 +248,7 @@ ipcMain.handle('ihp:out-create', () => {
   const handle = require('crypto').randomUUID();
   const file = path.join(WORK_DIR, `${handle}.tmp`);
   outputs.set(handle, { fd: fs.openSync(file, 'w'), path: file, size: 0 });
+  usageLog?.tempCreated();
   return handle;
 });
 ipcMain.handle('ihp:out-write', (event, handle, chunk) => {
@@ -233,18 +264,27 @@ ipcMain.handle('ihp:out-close', (event, handle, discard) => {
   if (!o) throw new Error('Unknown output.');
   outputs.delete(handle);
   fs.closeSync(o.fd);
-  if (discard) fs.rmSync(o.path, { force: true });
+  usageLog?.tempClosed(o.size);
+  if (discard) {
+    fs.rmSync(o.path, { force: true });
+    usageLog?.tempDeleted();
+  }
   return { path: o.path, size: o.size };
 });
 ipcMain.handle('ihp:out-save', (event, file, name) => {
   if (!inWorkDir(file)) throw new Error('Not an output file.');
   const target = uniquePath(saveDir(), String(name));
   fs.copyFileSync(file, target);
+  usageLog?.saved({ bytes: fs.statSync(target).size, ext: path.extname(target).slice(1) });
   if (!event.sender.isDestroyed()) event.sender.send('ihp:saved', { name: path.basename(target), path: target });
   return target;
 });
 ipcMain.handle('ihp:out-discard', (event, file) => {
-  if (inWorkDir(file)) fs.rmSync(file, { force: true });
+  if (inWorkDir(file)) {
+    const existed = fs.existsSync(file);
+    fs.rmSync(file, { force: true });
+    if (existed) usageLog?.tempDeleted();
+  }
 });
 ipcMain.handle('ihp:out-read', (event, file) => {
   if (!inWorkDir(file)) throw new Error('Not an output file.');
@@ -319,6 +359,9 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(() => {
+  usageLog = usageLogModule.create({ app });
+  // What the last run left behind (it should be nothing) is logged, then cleaned.
+  usageLog.start({ version: app.getVersion(), budgetMB: memoryGuard.info().budgetMB, workDir: WORK_DIR, leftover: workDirState() });
   cleanWorkDir();
   Menu.setApplicationMenu(null);
   serveApp();
@@ -343,7 +386,9 @@ app.on('will-quit', () => {
       // already closed
     }
   }
+  const before = workDirState();
   cleanWorkDir();
+  usageLog?.quit({ before, after: workDirState() });
   share.stop();
   natives.bluetooth?.cancel();
   void stopHotspot();

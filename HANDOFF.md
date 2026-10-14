@@ -68,6 +68,10 @@ Workers are written with `serveTask(action, (payload, ctx) => …)` (`services/w
 
 `services/memoryManager.ts` owns object URLs (revoked after download), a canvas pool (canvases are zeroed on release), and pdf.js document destruction (`destroyPdfDocument`; pdf.js 6 has no `doc.destroy()`, it goes through the loading task).
 
+## Usage log
+
+`electron/usageLog.cjs` writes a local JSON-lines log (see `docs/USAGE_LOG.md` for what's in it and how a lab configures it). Rules: **never log a file name, path or content** (the page can only send fixed fields; error text goes through `describeError`, which strips file-like strings; `usagelog.mjs` checks the log for names), cap the size (3 files × 5 MB), never let a logging failure reach the app. Jobs are logged in `useWorkerBridge.runTask` (`logJob` before the buffers are transferred, `end` on the result); the main process samples RAM and CPU every 500 ms while a job runs; temp files are counted in the `ihp:out-*` handlers and checked at start and quit. The summary tool is `scripts/log-summary.mjs`. When you add a tool that doesn't go through `useWorkerBridge`, log its jobs with `logJob` from `src/services/usageLog.ts`.
+
 ## Subsystems
 
 **Loading PDFs** — never call `PDFDocument.load` directly. Use `openPdf()` from `src/services/pdfLoader.ts`: it handles every Standard-security revision (RC4 40/128, AES-128, AES-256; `pdfSecurity.ts` + `legacyCrypto.ts` for MD5/RC4), decrypts encrypted object streams during parsing (by temporarily wrapping two pdf-lib parser methods), and loads with `updateMetadata: false`. Password-protected files are decrypted once at ingestion (`src/hooks/useFileIngestion.tsx` prompts, `unlock.worker.ts` decrypts), so tools receive plain PDFs.

@@ -8,6 +8,7 @@
  * - Callout boxes with background shading (<w:shd>) and accent borders (<w:pBdr>)
  * - Tables (<w:tbl>) with grid column widths, cell fills, borders, and nested content
  * - Explicit page breaks (<w:br w:type="page"/>, <w:pageBreakBefore/>)
+ * - Pictures (<w:drawing> and old-style <w:pict>): PNG and JPEG as they are, GIF/BMP/WebP converted
  */
 
 import { readZip } from '../../services/zipReader';
@@ -42,6 +43,21 @@ export interface DocxParagraph {
   spaceAfterPt: number;
   pageBreakBefore?: boolean;
   hasPageBreak?: boolean;
+  /** Pictures in this paragraph, in order (drawn after its text). */
+  images?: DocxImageRef[];
+}
+
+/** A picture in a paragraph. Its bytes live in ParsedDocxDocument.media, so scanning the blocks for text stays cheap. */
+export interface DocxImageRef {
+  id: string;
+  /** Size on the page in points; 0 when the document doesn't say (the picture's own size is used). */
+  widthPt: number;
+  heightPt: number;
+}
+
+export interface DocxMedia {
+  bytes: Uint8Array;
+  type: 'png' | 'jpg';
 }
 
 export interface DocxTableCell {
@@ -77,6 +93,8 @@ export interface DocxPageSetup {
 export interface ParsedDocxDocument {
   pageSetup: DocxPageSetup;
   blocks: DocxBlock[];
+  /** Picture id to bytes. */
+  media: Map<string, DocxMedia>;
 }
 
 const TWIPS_PER_PT = 20;
@@ -100,6 +118,56 @@ export function unescapeXml(s: string): string {
     .replace(/&amp;/g, '&');
 }
 
+const EMU_PER_PT = 12700;
+
+/** Picture ids that exist in the document being parsed (set for the synchronous parse below). */
+let knownImages = new Set<string>();
+
+function imageType(b: Uint8Array): 'png' | 'jpg' | null {
+  if (b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'png';
+  if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8) return 'jpg';
+  return null;
+}
+
+/** GIF, BMP, WebP and the like to PNG, where the browser can decode them (not in Node). */
+async function toPng(bytes: Uint8Array): Promise<Uint8Array | null> {
+  if (typeof createImageBitmap === 'undefined' || typeof OffscreenCanvas === 'undefined') return null;
+  try {
+    const bmp = await createImageBitmap(new Blob([bytes as unknown as BlobPart]));
+    const canvas = new OffscreenCanvas(bmp.width, bmp.height);
+    canvas.getContext('2d')!.drawImage(bmp, 0, 0);
+    bmp.close();
+    return new Uint8Array(await (await canvas.convertToBlob({ type: 'image/png' })).arrayBuffer());
+  } catch {
+    return null; // EMF/WMF and other formats the browser can't read: left out
+  }
+}
+
+/** The pictures the document refers to (word/_rels/document.xml.rels), by relationship id. */
+async function loadMedia(entries: Map<string, Uint8Array>, decoder: TextDecoder): Promise<Map<string, DocxMedia>> {
+  const media = new Map<string, DocxMedia>();
+  const rels = entries.get('word/_rels/document.xml.rels');
+  if (!rels) return media;
+  for (const m of decoder.decode(rels).matchAll(/<Relationship\b[^>]*>/g)) {
+    const tag = m[0];
+    if (!/\/image"/.test(tag) || /TargetMode="External"/i.test(tag)) continue;
+    const id = tag.match(/\bId="([^"]+)"/)?.[1];
+    const target = tag.match(/\bTarget="([^"]+)"/)?.[1];
+    if (!id || !target) continue;
+    const path = target.startsWith('/') ? target.slice(1) : `word/${target.replace(/^\.\//, '')}`;
+    const bytes = entries.get(path);
+    if (!bytes) continue;
+    let type = imageType(bytes);
+    let data: Uint8Array | null = bytes;
+    if (!type) {
+      data = await toPng(bytes);
+      type = data ? 'png' : null;
+    }
+    if (type && data) media.set(id, { bytes: data, type });
+  }
+  return media;
+}
+
 /** Parses `word/document.xml` into a structured document representation */
 export async function parseDocx(fileBuffer: ArrayBuffer): Promise<ParsedDocxDocument> {
   const entries = await readZip(new Uint8Array(fileBuffer));
@@ -111,6 +179,7 @@ export async function parseDocx(fileBuffer: ArrayBuffer): Promise<ParsedDocxDocu
   }
 
   const docXml = decoder.decode(docXmlBytes);
+  const media = await loadMedia(entries, decoder);
 
   // 1. Page Setup (<w:sectPr>)
   const pageSetup: DocxPageSetup = {
@@ -144,11 +213,12 @@ export async function parseDocx(fileBuffer: ArrayBuffer): Promise<ParsedDocxDocu
   // 2. Extract Document Body Blocks
   const bodyMatch = docXml.match(/<w:body>([\s\S]*?)<\/w:body>/);
   if (!bodyMatch) {
-    return { pageSetup, blocks: [] };
+    return { pageSetup, blocks: [], media };
   }
 
   const bodyContent = bodyMatch[1];
   const blocks: DocxBlock[] = [];
+  knownImages = new Set(media.keys());
 
   // Match either <w:p> or <w:tbl> sequentially
   const blockRegex = /(<w:p\b[\s\S]*?<\/w:p>|<w:tbl\b[\s\S]*?<\/w:tbl>)/g;
@@ -165,7 +235,8 @@ export async function parseDocx(fileBuffer: ArrayBuffer): Promise<ParsedDocxDocu
     }
   }
 
-  return { pageSetup, blocks };
+  knownImages = new Set();
+  return { pageSetup, blocks, media };
 }
 
 function parseParagraphNode(pXml: string): DocxParagraph | null {
@@ -277,6 +348,23 @@ function parseParagraphNode(pXml: string): DocxParagraph | null {
     }
   }
 
+  // Pictures: modern <w:drawing> (inline or anchored); old <w:pict> only when there is none (Word often writes both).
+  const images: DocxImageRef[] = [];
+  for (const d of pXml.matchAll(/<w:drawing\b[\s\S]*?<\/w:drawing>/g)) {
+    const id = d[0].match(/<a:blip\b[^>]*\br:embed="([^"]+)"/)?.[1];
+    if (!id || !knownImages.has(id)) continue;
+    const ext = d[0].match(/<wp:extent\b[^>]*\bcx="(\d+)"[^>]*\bcy="(\d+)"/);
+    images.push({ id, widthPt: ext ? parseInt(ext[1], 10) / EMU_PER_PT : 0, heightPt: ext ? parseInt(ext[2], 10) / EMU_PER_PT : 0 });
+  }
+  if (!images.length) {
+    for (const v of pXml.matchAll(/<v:shape\b[^>]*?style="([^"]*)"[\s\S]*?<v:imagedata\b[^>]*\br:id="([^"]+)"/g)) {
+      if (!knownImages.has(v[2])) continue;
+      const w = v[1].match(/width:([\d.]+)pt/)?.[1];
+      const h = v[1].match(/height:([\d.]+)pt/)?.[1];
+      images.push({ id: v[2], widthPt: w ? parseFloat(w) : 0, heightPt: h ? parseFloat(h) : 0 });
+    }
+  }
+
   return {
     type: 'paragraph',
     styleName: styleVal || undefined,
@@ -291,6 +379,7 @@ function parseParagraphNode(pXml: string): DocxParagraph | null {
     spaceAfterPt,
     pageBreakBefore,
     hasPageBreak,
+    images: images.length ? images : undefined,
   };
 }
 

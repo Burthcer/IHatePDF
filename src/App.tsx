@@ -5,6 +5,8 @@ import { Footer } from './components/common/Footer';
 import { SystemNotice } from './components/common/SystemNotice';
 import { Home } from './components/home/Home';
 import { memoryManager } from './services/memoryManager';
+import { logToolOpen } from './services/usageLog';
+import { clearNotice } from './services/notices';
 import { TOOLS, getTool, takesPdf } from './constants/tools';
 import type { ToolType, PDFFile } from './types/pdf';
 
@@ -102,6 +104,8 @@ export function App() {
   useEffect(() => {
     document.title = activeTool ? `${getTool(activeTool).title} · IHatePDF` : 'IHatePDF — PDF tools that stay on your computer';
     window.scrollTo({ top: 0 });
+    clearNotice();
+        logToolOpen(activeTool ?? 'home');
   }, [activeTool]);
 
   const openTool = useCallback((id: ToolType, withFiles?: PDFFile[]) => {
