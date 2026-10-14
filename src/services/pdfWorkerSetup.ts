@@ -88,7 +88,22 @@ async function looksComplete(blob: Blob): Promise<boolean> {
   return tail.includes('startxref') && tail.includes('%%EOF');
 }
 
+/**
+ * The page engine can't hold a typed array of 2 GB or more (pdf.js keeps one the size of the file
+ * to track which parts it has read), so previews of bigger files can't open. Tools that don't need
+ * previews (Merge, Watermark, Compress, Protect, Page numbers, PDF/A...) are not affected.
+ */
+export const MAX_PREVIEW_BYTES = 2_000_000_000;
+
 export function openPdfJsDocument(data: PdfJsSource, password?: string): PdfJsTask {
+  const size = data instanceof Blob ? data.size : data.byteLength;
+  if (size > MAX_PREVIEW_BYTES) {
+    const gb = (size / 1024 ** 3).toFixed(1);
+    return {
+      promise: Promise.reject(new Error(`This PDF is ${gb} GB. Page previews work up to 2 GB. You can still use Merge, Compress, Watermark, Page numbers, Protect and PDF/A on it, or split it into smaller parts first.`)),
+      destroy: async () => undefined,
+    };
+  }
   if (data instanceof Blob && data.size >= FETCH_ON_DEMAND_BYTES) {
     let task: ReturnType<typeof pdfjsLib.getDocument> | null = null;
     let destroyed = false;
