@@ -1,6 +1,6 @@
-# IHatePDF v2.0.0
+# IHatePDF v2.0.0-beta.1 (pre-release)
 
-The desktop app is rebuilt on **Tauri** with a **Rust core**. Same screens and tools; a much smaller installer, a faster start, and the heaviest tools moved off the page into Rust.
+**This is a beta.** The stable version is still 1.4.0. The desktop app is rebuilt on **Tauri** with a **Rust core**. Same screens and tools; a much smaller installer, a faster start, and the heaviest tools moved off the page into Rust.
 
 ## Install
 
