@@ -22,6 +22,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("This PDF is password-protected: unlock it first.")]
     Encrypted,
+    #[error("This text needs an embedded Unicode font.")]
+    NeedsUnicodeFont,
     #[error("{0}")]
     Msg(String),
 }

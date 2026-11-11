@@ -124,6 +124,17 @@ pub async fn run_tool(app: AppHandle, id: String, tool: String, inputs: Vec<Stri
                 };
                 images_to_pdf(&pairs, &opts, &out2, &mut prog).map(|n| (n, None)).map_err(e)
             }
+            "pagenumbers" => ihp_core::stamp::page_numbers(first, &out2, &args, &mut prog).map(|n| (n, None)).map_err(e),
+            "watermark" | "sign" => {
+                let img = ins.get(1).map(|p| std::fs::read(p).map_err(|x| x.to_string())).transpose()?;
+                let is_png = args["imageType"].as_str().map_or(true, |t| t == "png");
+                if tool == "sign" {
+                    let png = img.ok_or("No signature image provided.")?;
+                    ihp_core::stamp::sign(first, &out2, &png, &args["placements"], &mut prog).map(|n| (n, None)).map_err(e)
+                } else {
+                    ihp_core::stamp::watermark(first, &out2, &args, img.as_deref().map(|b| (b, is_png)), &mut prog).map(|n| (n, None)).map_err(e)
+                }
+            }
             other => Err(format!("Unknown tool {other}")),
         }
     })

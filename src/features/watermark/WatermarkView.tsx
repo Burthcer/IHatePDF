@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { nativeFirst } from '../../services/nativeWorker';
+import { watermarkNative } from '../pageTools.native';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
 import { PositionGrid } from '../../components/common/PositionGrid';
@@ -50,7 +52,9 @@ export const WatermarkView: React.FC<WatermarkViewProps> = ({ initialFiles = [],
   const [imageScale, setImageScale] = useState(0.4);
   const [pagesText, setPagesText] = useState('');
   const [preview, setPreview] = useState<string | null>(null);
-  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./watermark.worker.ts', import.meta.url), { type: 'module' }));
+  const runner = useToolRunner<ProcessedPdfResult>(
+    nativeFirst(() => new Worker(new URL('./watermark.worker.ts', import.meta.url), { type: 'module' }), { WATERMARK_PDF: watermarkNative })
+  );
   const { renderThumbnail } = usePdfRenderer();
   const file = files[0];
   const { pages } = usePageThumbnails(file?.data, 40, 0); // sizes only

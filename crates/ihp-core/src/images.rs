@@ -29,10 +29,15 @@ pub struct Options {
     pub margin_pt: f64,
 }
 
-struct Embedded {
-    id: ObjectId,
-    w: f64,
-    h: f64,
+pub(crate) struct Embedded {
+    pub(crate) id: ObjectId,
+    pub(crate) w: f64,
+    pub(crate) h: f64,
+}
+
+/// Embeds a PNG or JPEG as an image XObject.
+pub(crate) fn embed_image(doc: &mut Document, bytes: &[u8], png: bool) -> Result<Embedded> {
+    if png { embed_png(doc, bytes) } else { embed_jpeg(doc, bytes.to_vec()) }
 }
 
 fn name(n: &str) -> Object {
