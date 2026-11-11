@@ -323,6 +323,17 @@ mod tests {
     }
 
     #[test]
+    fn busy_windows_shrinks_the_limit_and_blames_windows() {
+        let x = l(16); // budget 8 GB
+        assert_eq!(x.limit_for(0, 16 * GB), x.budget, "plenty free: the full budget");
+        assert_eq!(x.limit_for(200 * MB, x.reserve + 300 * MB), 500 * MB, "what the job holds + free - reserve");
+        assert_eq!(x.limit_for(0, 100 * MB), 256 * MB, "never below the floor");
+        assert_eq!(x.level_for(600 * MB, 500 * MB, false, 0).0, Level::Over, "over a shrunk limit pauses first");
+        assert_eq!(x.level_for(600 * MB, 500 * MB, false, 9000), (Level::Critical, Some("system")));
+        assert_eq!(x.level_for(1100 * MB, GB, false, 5000).0, Level::Over, "still pausing after 5 s");
+    }
+
+    #[test]
     fn the_limit_shrinks_when_windows_is_short() {
         let x = l(16);
         assert_eq!(x.limit_for(0, 16 * GB), x.budget);
