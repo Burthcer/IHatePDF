@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { nativeFirst } from '../../services/nativeWorker';
+import { cropNative } from '../pageTools.native';
 import { ScanSearch } from 'lucide-react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
@@ -33,7 +35,9 @@ export const CropView: React.FC<CropViewProps> = ({ initialFiles = [], onBack })
   const file = files[0];
   const { pages } = usePageThumbnails(file?.data, 60, 0); // sizes only
   const { renderThumbnail } = usePdfRenderer();
-  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./crop.worker.ts', import.meta.url), { type: 'module' }));
+  const runner = useToolRunner<ProcessedPdfResult>(
+    nativeFirst(() => new Worker(new URL('./crop.worker.ts', import.meta.url), { type: 'module' }), { CROP_PAGES: cropNative })
+  );
 
   const page = pages[pageIndex];
   const scale = page ? PREVIEW_W / page.width : 1; // px per pt
