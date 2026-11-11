@@ -23,8 +23,8 @@ if (tauri && !window.ihpDesktop) {
     memory: {
       info: () => invoke('mem_info'),
       onChange: listen('ihp:mem'),
-      ack: () => send('noop'),
-      jobs: (n: number) => send('noop'),
+      ack: () => send('mem_ack'),
+      jobs: (n: number) => send('mem_jobs', { n }),
       relieve: () => undefined,
     },
     // log (usage log): not in the Tauri build, so the page shows no usage-log controls.

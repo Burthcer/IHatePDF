@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod native;
+mod watchdog;
 mod output;
 
 use std::path::PathBuf;
@@ -23,17 +24,16 @@ fn show_in_folder(app: tauri::AppHandle, file: String) {
 }
 
 #[tauri::command]
-fn mem_info() -> serde_json::Value {
-    use sysinfo::{MemoryRefreshKind, RefreshKind, System};
-    const MB: u64 = 1024 * 1024;
-    let sys = System::new_with_specifics(RefreshKind::nothing().with_memory(MemoryRefreshKind::nothing().with_ram()));
-    let total = sys.total_memory();
-    let gb = 1024 * MB;
-    let budget = (total / 2).min(total.saturating_sub(3 * gb)).min(16 * gb).max(gb);
-    serde_json::json!({
-        "level": "normal", "usedMB": 0, "budgetMB": budget / MB,
-        "totalMB": total / MB, "availableMB": sys.available_memory() / MB
-    })
+fn mem_info(wd: tauri::State<watchdog::Watchdog>) -> serde_json::Value {
+    wd.state()
+}
+#[tauri::command]
+fn mem_ack(wd: tauri::State<watchdog::Watchdog>) {
+    wd.ack();
+}
+#[tauri::command]
+fn mem_jobs(wd: tauri::State<watchdog::Watchdog>, n: u32) {
+    wd.set_jobs(n, watchdog::current_app_memory());
 }
 
 // Usage log / memory watchdog commands: ported next; no-ops keep the page working meanwhile.
@@ -64,6 +64,8 @@ fn main() {
             log_info,
             log_set,
             mem_info,
+            mem_ack,
+            mem_jobs,
             output::out_create,
             output::out_write,
             output::out_close,
@@ -79,6 +81,8 @@ fn main() {
         ])
         .setup(|app| {
             output::clean_work_dir();
+            let wd = watchdog::Watchdog::start(app.handle().clone());
+            app.manage(wd.clone());
             let handle = app.handle().clone();
             let cfg = app.config().app.windows[0].clone();
             let win = WebviewWindowBuilder::from_config(app.handle(), &cfg)?
@@ -101,6 +105,11 @@ fn main() {
                             true
                         }
                         _ => true,
+                    }
+                })
+                .on_page_load(move |_w, payload| {
+                    if let tauri::webview::PageLoadEvent::Finished = payload.event() {
+                        wd.page_loaded();
                     }
                 })
                 .build()?;
