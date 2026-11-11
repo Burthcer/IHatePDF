@@ -27,13 +27,7 @@ if (tauri && !window.ihpDesktop) {
       jobs: (n: number) => send('noop'),
       relieve: () => undefined,
     },
-    log: {
-      tool: (tool: string) => send('noop'),
-      jobStart: (id: string, info: unknown) => send('noop'),
-      jobEnd: (id: string, result: unknown) => send('noop'),
-      info: () => invoke('log_info'),
-      setEnabled: (on: boolean) => invoke('log_set', { on }),
-    },
+    // log (usage log): not in the Tauri build, so the page shows no usage-log controls.
     showInFolder: (file: string) => send('show_in_folder', { file }),
     output: {
       create: () => invoke('out_create'),
@@ -43,22 +37,7 @@ if (tauri && !window.ihpDesktop) {
       discard: (file: string) => invoke('out_discard', { file }),
       read: async (file: string) => new Uint8Array(await invoke('out_read', { file })),
     },
-    share: {
-      pick: (kind: string) => invoke('share_pick', { kind }),
-      pathsOf: (files: File[]) => files.map((f) => (f as File & { path?: string }).path).filter(Boolean) as string[],
-      describe: (paths: string[]) => invoke('share_describe', { paths }),
-      start: (paths: string[], minutes: number, mode: string) => invoke('share_start', { paths, minutes, mode }),
-      setMinutes: (minutes: number) => invoke('share_minutes', { minutes }),
-      stop: () => invoke('share_stop'),
-      onEnded: listen('ihp:share-ended'),
-    },
-    bluetooth: {
-      scan: () => invoke('bt_scan'),
-      send: (deviceId: string, paths: string[]) => invoke('bt_send', { deviceId, paths }),
-      cancel: () => invoke('bt_cancel'),
-      onEvent: listen('ihp:bt-event'),
-      openSettings: () => send('bt_settings'),
-    },
+    // share / bluetooth: not in the Tauri build yet (ShareView shows a notice).
   };
   window.ihpDesktop = bridge as unknown as typeof window.ihpDesktop;
 }
