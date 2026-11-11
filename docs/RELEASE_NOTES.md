@@ -6,7 +6,7 @@ The desktop app is rebuilt on **Tauri** with a **Rust core**. Same screens and t
 
 1. Download **IHatePDF-Setup.exe** below, under *Assets* (about 24 MB, was 130 MB).
 2. Run it. If Windows says *"Windows protected your PC"*, click **More info → Run anyway**. The installer isn't code-signed.
-3. It replaces 1.x in place. It needs Microsoft Edge WebView2, which is part of Windows 10 and 11.
+3. It installs for your Windows account only (no administrator permission) and does **not** replace 1.x: uninstall 1.x first from *Settings → Apps*. Your saved files are never touched. It needs Microsoft Edge WebView2, which is part of Windows 10 and 11.
 
 ## What changed
 

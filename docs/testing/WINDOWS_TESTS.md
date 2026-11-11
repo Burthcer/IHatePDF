@@ -103,7 +103,11 @@ Tauri shell + Rust Compress engine (`crates/ihp-core`). Not a release.
   It found one real bug (wrong `/Length` on re-encoded images), fixed.
 - **Speed in the app** (click to result, `scripts/e2e/bench-compress.mjs`): 10 MB scan 811 ms vs 2283 ms; photo 91 vs 313 ms; duplicates 142 vs 393 ms; 4.8 MB alpha 280 vs 331 ms.
 - Images the Rust engine can't decode (JPEG 2000, CMYK, Lab/Separation, odd /Decode) and files over 1 GB go to the TypeScript engine (never worse than 1.4.0).
-- `npm test`: 34 + 5 checks pass. Not yet ported: Share to phone, memory watchdog, usage log; all other tools still run in the TypeScript workers.
+- `npm test`: 34 + 5 checks pass.
+- **2.0.0 build** (`npm run build:exe`, 24 MB, per-user NSIS): silently installed to a temp folder and run from there: 26 of 27 non-Compress tools pass end to end (`all-tools.mjs`, `E2E_CDP`), Compress runs on Rust (pdfium.dll found in `resources/`), uninstalled cleanly. Page-tool checks (`test-pages-rust.py`): 23/23. Compress regression: all pass.
+- **Startup/memory** (`bench-startup.mjs`, median of 3): Electron 1193 ms / 408 MB working set / 4 processes; Tauri 909 ms / 423 MB / 7 processes (WebView2). Compress on a 10 MB scan, extra peak memory: TypeScript +706 MB, Rust +130 MB.
+- Found by the app-level run: blob (in-memory) results never saved in the Tauri shell (the webview download hook didn't fire); now written through the app. PDFium initialised twice (fixed).
+- Not ported: Share to phone, memory watchdog, usage log. Tools still on the TS engines: Edit PDF, Sign, Forms, Watermark, Page numbers, Redact, Repair, PDF/A, Protect, Unlock, Compare, all Office conversions.
 
 ### 2026-10-14 · v1.4.0 (branch `claude/usage-log`) · Windows 11 26200, 31.4 GB
 

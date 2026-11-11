@@ -54,7 +54,7 @@
 3. **Click through the setup.** You can choose the install folder and whether you want desktop and Start-menu shortcuts.
 4. **Open IHatePDF** from the desktop or the Start menu.
 
-**Updating:** download the new setup and run it. It replaces the old version in place (1.1.0 and 1.2.0 included), and your saved files are never touched. The one exception: a 1.1.0 installed under a *different* Windows account stays in that account's *Settings → Apps*; uninstall it there.
+**Updating from 1.x:** 2.0.0 installs for your Windows account only, so it needs no administrator permission, but it doesn't replace an older 1.x. Uninstall 1.x first (*Settings → Apps → IHatePDF → Uninstall*); your saved files are never touched. Later 2.x versions replace 2.0.0 in place.
 **Uninstalling:** *Settings → Apps → IHatePDF → Uninstall*.
 
 ### System requirements
