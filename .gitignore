@@ -34,3 +34,7 @@ test-fixtures
 *.sln
 *.sw?
 public/pdfjs/
+
+# Tauri / Rust
+src-tauri/target
+src-tauri/gen
