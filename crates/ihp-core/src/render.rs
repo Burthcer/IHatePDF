@@ -134,3 +134,29 @@ pub fn thumbnail(dll: &Path, input: &Path, index: usize, width_px: u32, quality:
     }
     encode_jpeg(&rgb, w, h, quality)
 }
+
+/// One page rendered at `scale` with black boxes burned into the pixels (viewer-space points,
+/// origin top-left of the page as displayed): [x, y, w, h]. Returns (jpeg, width_px, height_px).
+pub fn render_redacted(dll: &Path, input: &Path, index: usize, scale: f32, boxes: &[[f64; 4]], quality: f64) -> Result<(Vec<u8>, usize, usize)> {
+    let pdfium = shared(dll)?;
+    let doc = pdfium.load_pdf_from_file(input, None).map_err(msg)?;
+    let page = doc.pages().get(index as i32).map_err(msg)?;
+    let cfg = PdfRenderConfig::new().scale_page_by_factor(scale).set_clear_color(PdfColor::WHITE).render_form_data(true);
+    let bitmap = page.render_with_config(&cfg).map_err(msg)?;
+    let (w, h) = (bitmap.width() as usize, bitmap.height() as usize);
+    let mut rgb = Vec::with_capacity(w * h * 3);
+    for p in bitmap.as_raw_bytes().chunks_exact(4) {
+        rgb.extend_from_slice(&[p[2], p[1], p[0]]);
+    }
+    for b in boxes {
+        let s = scale as f64;
+        let x0 = ((b[0] * s).floor().max(0.0) as usize).min(w);
+        let y0 = ((b[1] * s).floor().max(0.0) as usize).min(h);
+        let x1 = (((b[0] + b[2]) * s).ceil().max(0.0) as usize).min(w);
+        let y1 = (((b[1] + b[3]) * s).ceil().max(0.0) as usize).min(h);
+        for y in y0..y1 {
+            rgb[(y * w + x0) * 3..(y * w + x1) * 3].fill(0);
+        }
+    }
+    Ok((encode_jpeg(&rgb, w, h, quality)?, w, h))
+}

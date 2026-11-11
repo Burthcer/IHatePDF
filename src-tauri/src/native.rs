@@ -196,3 +196,31 @@ pub async fn render_thumb(app: AppHandle, path: String, index: usize, width: u32
         .map_err(|e| e.to_string())??;
     Ok(tauri::ipc::Response::new(bytes))
 }
+
+/// Redaction: pages with boxes become images with the boxes burned in; the rest are copied.
+/// pages: [{pageIndex, widthPt, heightPt}], boxes: [{pageIndex, x, y, width, height}].
+#[tauri::command]
+pub async fn redact_pdf(app: AppHandle, id: String, path: String, pages: serde_json::Value, boxes: serde_json::Value, strip_metadata: bool) -> Result<serde_json::Value, String> {
+    use ihp_core::pages::{redact, RedactPage};
+    let input = crate::output::in_work_dir(&path)?;
+    let dll = pdfium_path(&app)?;
+    let output = crate::output::work_dir().join(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let out2 = output.clone();
+    let pg: Vec<RedactPage> = pages.as_array().map(|a| a.iter().filter_map(|p| Some(RedactPage { index: p["pageIndex"].as_u64()? as usize, width_pt: p["widthPt"].as_f64()?, height_pt: p["heightPt"].as_f64()? })).collect()).unwrap_or_default();
+    let bx: Vec<(usize, [f64; 4])> = boxes.as_array().map(|a| a.iter().filter_map(|b| Some((b["pageIndex"].as_u64()? as usize, [b["x"].as_f64()?, b["y"].as_f64()?, b["width"].as_f64()?, b["height"].as_f64()?]))).collect()).unwrap_or_default();
+    let (n, total) = tauri::async_runtime::spawn_blocking(move || {
+        let mut last = 0u32;
+        let mut prog = move |p: u32, stage: &str| {
+            if p >= last {
+                last = p;
+                let _ = app.emit("ihp:progress", serde_json::json!({ "id": id, "progress": p, "stage": stage }));
+            }
+        };
+        let total = redact(&dll, &input, &out2, &pg, &bx, strip_metadata, &mut prog).map_err(|e| e.to_string())?;
+        Ok::<_, String>((pg.len(), total))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
+    Ok(serde_json::json!({ "path": output, "size": size, "pages": total, "redacted": n }))
+}

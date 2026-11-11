@@ -414,3 +414,78 @@ pub fn crop(input: &Path, out: &Path, top: f64, right: f64, bottom: f64, left: f
     save(&mut doc, out)?;
     Ok(pages.len())
 }
+
+// ------------------------------------------------------------------ redact
+
+pub struct RedactPage {
+    pub index: usize,
+    pub width_pt: f64,
+    pub height_pt: f64,
+}
+
+/// Redacted pages become images with the boxes burned in (nothing underneath survives);
+/// every other page is copied untouched. `boxes`: (page index, [x, y, w, h]) in displayed points.
+pub fn redact(dll: &Path, input: &Path, out: &Path, pages: &[RedactPage], boxes: &[(usize, [f64; 4])], strip_metadata: bool, progress: &mut dyn FnMut(u32, &str)) -> Result<usize> {
+    if pages.is_empty() {
+        return Err(Error::Msg("Mark at least one area to redact.".into()));
+    }
+    progress(10, "Loading document...");
+    let src = load(input)?;
+    let src_pages = page_ids(&src);
+    let total = src_pages.len();
+    let mut dst = new_doc();
+    let mut imp = Importer::new(&src);
+    let by_index: HashMap<usize, &RedactPage> = pages.iter().map(|p| (p.index, p)).collect();
+    let mut ids: Vec<ObjectId> = Vec::with_capacity(total);
+    let mut done = 0usize;
+    for (i, page) in src_pages.iter().enumerate() {
+        match by_index.get(&i) {
+            None => ids.push(imp.import_page(&mut dst, *page)?.0),
+            Some(r) => {
+                done += 1;
+                progress(10 + (done * 80 / pages.len()) as u32, &format!("Redacting page {} ({} of {})...", i + 1, done, pages.len()));
+                let bx: Vec<[f64; 4]> = boxes.iter().filter(|(p, _)| *p == i).map(|(_, b)| *b).collect();
+                let (jpeg, w, h) = crate::render::render_redacted(dll, input, i, 2.5, &bx, 0.9)?;
+                let mut d = Dictionary::new();
+                d.set("Type", Object::Name(b"XObject".to_vec()));
+                d.set("Subtype", Object::Name(b"Image".to_vec()));
+                d.set("Width", w as i64);
+                d.set("Height", h as i64);
+                d.set("ColorSpace", Object::Name(b"DeviceRGB".to_vec()));
+                d.set("BitsPerComponent", 8i64);
+                d.set("Filter", Object::Name(b"DCTDecode".to_vec()));
+                d.set("Length", jpeg.len() as i64);
+                let mut s = lopdf::Stream::new(d, jpeg);
+                s.allows_compression = false;
+                let img = dst.add_object(Object::Stream(s));
+                let content = format!("q {:.4} 0 0 {:.4} 0 0 cm /Im0 Do Q", r.width_pt, r.height_pt);
+                let cid = dst.add_object(Object::Stream(lopdf::Stream::new(Dictionary::new(), content.into_bytes())));
+                let mut xo = Dictionary::new();
+                xo.set("Im0", Object::Reference(img));
+                let mut res = Dictionary::new();
+                res.set("XObject", Object::Dictionary(xo));
+                let mut pd = Dictionary::new();
+                pd.set("Type", Object::Name(b"Page".to_vec()));
+                pd.set("MediaBox", Object::Array(vec![0.into(), 0.into(), real(r.width_pt), real(r.height_pt)]));
+                pd.set("Resources", Object::Dictionary(res));
+                pd.set("Contents", Object::Reference(cid));
+                ids.push(dst.add_object(Object::Dictionary(pd)));
+            }
+        }
+    }
+    finish_tree(&mut dst, &ids);
+    if !strip_metadata {
+        // Only the title survives, as before.
+        let title = src.trailer.get(b"Info").ok().and_then(|o| src.dereference(o).ok()).and_then(|(_, o)| o.as_dict().ok()).and_then(|d| d.get(b"Title").ok()).cloned();
+        if let Some(t) = title {
+            let mut info = Dictionary::new();
+            info.set("Title", t);
+            let iid = dst.add_object(Object::Dictionary(info));
+            dst.trailer.set("Info", Object::Reference(iid));
+        }
+    }
+    dst.compress();
+    progress(95, "Saving PDF...");
+    save(&mut dst, out)?;
+    Ok(total)
+}
