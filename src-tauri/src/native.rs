@@ -270,3 +270,17 @@ pub fn trace(what: &str, since: std::time::Instant) {
         }
     }
 }
+
+/// Repair with PDFium: reads the damaged file tolerantly and writes a clean copy. { path, size, pages }.
+#[tauri::command]
+pub async fn repair_pdf(app: AppHandle, path: String) -> Result<serde_json::Value, String> {
+    let input = crate::output::in_work_dir(&path)?;
+    let dll = pdfium_path(&app)?;
+    let output = crate::output::work_dir().join(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let out2 = output.clone();
+    let pages = tauri::async_runtime::spawn_blocking(move || ihp_core::render::repair(&dll, &input, &out2).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())??;
+    let size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
+    Ok(serde_json::json!({ "path": output, "size": size, "pages": pages }))
+}

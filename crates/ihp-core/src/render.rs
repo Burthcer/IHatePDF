@@ -219,3 +219,25 @@ pub fn probe(dll: &Path, input: &Path, password: Option<&str>) -> Result<Probe> 
         Err(e) => Err(msg(e)),
     }
 }
+
+/// Repair: PDFium reads damaged files tolerantly (it rebuilds a broken xref and skips what it can't
+/// read); saving the open document writes a fresh, consistent file with the original text and
+/// graphics. Returns the page count of the repaired copy.
+pub fn repair(dll: &Path, input: &Path, out: &Path) -> Result<usize> {
+    let pdfium = shared(dll)?;
+    let n = {
+        let doc = pdfium.load_pdf_from_file(input, None).map_err(msg)?;
+        let n = doc.pages().len() as usize;
+        if n == 0 {
+            return Err(Error::Msg("No readable pages were recovered from this file.".into()));
+        }
+        doc.save_to_file(out).map_err(msg)?;
+        n
+    };
+    // The copy must read back with the same pages.
+    let again = pdfium.load_pdf_from_file(out, None).map_err(msg)?;
+    if again.pages().len() as usize != n {
+        return Err(Error::Msg("The repaired copy lost pages.".into()));
+    }
+    Ok(n)
+}

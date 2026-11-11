@@ -1941,7 +1941,7 @@ dependencies = [
 
 [[package]]
 name = "ihatepdf"
-version = "2.0.0"
+version = "2.0.0-beta.1"
 dependencies = [
  "ihp-core",
  "serde",
