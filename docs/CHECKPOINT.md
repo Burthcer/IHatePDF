@@ -1,4 +1,4 @@
-# Checkpoint: 2.0 Rust port (written 2026-11-11, usage at ~90% of the 5-hour limit)
+# Checkpoint: 2.0 Rust port (first written 2026-11-11 at ~90% usage; updated 2026-11-12)
 
 Branch `claude/rust-port`, published as pre-release **v2.0.0-beta.1**. To continue, say "continue from docs/CHECKPOINT.md".
 
@@ -13,15 +13,20 @@ Branch `claude/rust-port`, published as pre-release **v2.0.0-beta.1**. To contin
 
 - **Protect / Unlock**: security-critical (AES-256 R6, RC4, AES-128, tested against independent encryptors); no measured speed or memory problem; a rewrite adds risk. Revisit only if lopdf's crypto passes the same fixtures (`test-fixtures/complex/aes128_user_pw.pdf`, `rc4_owner_only.pdf`, files from the TS Protect) and MuPDF opens the output with the password.
 
+## Done since the first checkpoint (2026-11-12)
+
+- **Repair**: PDFium opens the damaged file tolerantly and saves a clean copy (`render::repair`, `repair_pdf`); TypeScript runs when PDFium can't open it. A/B on 36 damaged files (`scripts/test-repair-rust.ts`): same pages in 30 cases, Rust better in 1, and the 5 "worse" ones are Rust failures that fall back to TS, so the combination never recovers less.
+- **Forms and PDF/A: kept on TypeScript on purpose** (appearance-stream generation and compliance details; tiny files, no measured problem).
+- Single-page previews (`usePdfRenderer.renderThumbnail`) use PDFium.
+- **PDF to Markdown/Word/Excel**: text runs and picture boxes now come from PDFium (`render::page_runs`, `pdf_runs`, `src/services/textLayoutNative.ts`) into the unchanged layout code (`analyzeLayout`); falls back to pdf.js on rotated pages. A/B harness: `scripts/e2e/layout-ab.mjs` + `scripts/layout-ab-compare.py`. If the A/B shows a real difference, keep pdf.js and drop `useLayoutAnalysis`'s native branch.
+
 ## Next, in order (code first; each needs a Rust-vs-TS comparison test before it ships, TS stays as fallback)
 
-1. **Forms** (`forms.worker.ts`, 127 lines): field fill + flatten; needs appearance streams.
-2. **Repair** (`repair/salvage.ts`): try lopdf's tolerant load + page rebuild; compare success rate against the TS repair on truncated / bad-xref / junk-before-header files before switching.
-3. **PDF/A**, **Compare** (needs PDFium text extraction + diff).
-4. **PDF to Markdown / Word / Excel / PowerPoint**: text layout recovery (`textLayout.ts`, `layoutToMarkdown.ts`) on PDFium char data.
-5. **Word / PowerPoint / Excel / HTML to PDF**: port the OOXML parsing by hand (no Rust equivalent of the libraries); picture fidelity tests first (`scripts/test-docx-images.ts`, quality fixtures).
-6. **Edit PDF engine** (`features/editPdf/engine`, ~5k lines): largest; last.
-7. Later: Share to phone (Wi-Fi server + zip, hotspot via WinRT, Bluetooth OBEX), usage log.
+1. **Compare** (PDFium text + render for the overlay).
+2. **PDF to PowerPoint** (uses the Edit engine's page analysis; goes with Edit PDF).
+3. **Word / PowerPoint / Excel / HTML to PDF**: port the OOXML parsing by hand (no Rust equivalent of the libraries); picture fidelity tests first (`scripts/test-docx-images.ts`, quality fixtures).
+4. **Edit PDF engine** (`features/editPdf/engine`, ~5k lines): largest; last.
+5. Later: Share to phone (Wi-Fi server + zip, hotspot via WinRT, Bluetooth OBEX), usage log.
 
 ## Known gaps / ideas
 

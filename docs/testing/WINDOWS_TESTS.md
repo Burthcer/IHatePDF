@@ -91,6 +91,13 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-11-12 · 2.0.0-beta.1 work on `claude/rust-port` · Windows 11 26200
+
+- **Repair** (`scripts/test-repair-rust.ts`, 36 damaged files: truncated 97/80/50%, bad startxref, no trailer, junk prefix, flipped bytes, zeroed block, broken catalog, on 4 PDFs): same pages in 30 cases, PDFium better in 1, and in 5 PDFium can't open the file and the TypeScript repair takes over, so the combination never recovers less. Outputs that read back with MuPDF warnings (3) are the files whose own stream data was corrupted.
+- **PDF to Markdown/Word/Excel with text from PDFium** (`scripts/e2e/layout-ab.mjs` + `layout-ab-compare.py`, 6 files x 3 tools, both routes in the running app): 17 of 18 outputs identical to the pdf.js route; the one other (word.md/docx, a Word-made invoice) differs by one word joined in a table cell (0.991). First try joined words across small gaps (Word PDFs draw each word separately); fixed by breaking runs at gaps over 0.04 em.
+- 10,000-page PDF to Markdown: 39 s (PDFium) vs 35 s (pdf.js); peak extra memory +1532 MB vs +1958 MB (fresh app each). The layout code, not text extraction, dominates the time.
+- All 27 non-Compress tools pass in the app after these changes; `npm test` 33 + 5 + 17.
+
 ### 2026-11-11 · 2.0 work in progress (branch `claude/rust-port`) · Windows 11 26200
 
 Tauri shell + Rust Compress engine (`crates/ihp-core`). Not a release.

@@ -241,3 +241,106 @@ pub fn repair(dll: &Path, input: &Path, out: &Path) -> Result<usize> {
     }
     Ok(n)
 }
+
+// ------------------------------------------------------------------ text runs (PDF to Word / Excel / Markdown)
+
+pub struct RunOut {
+    pub text: String,
+    pub x: f32,
+    /// Baseline, top-down (viewer space).
+    pub y: f32,
+    pub w: f32,
+    pub size: f32,
+    pub bold: bool,
+    pub italic: bool,
+    pub font: String,
+    pub mono: bool,
+    pub serif: bool,
+}
+
+pub struct PageRuns {
+    pub width: f32,
+    pub height: f32,
+    pub runs: Vec<RunOut>,
+    /// [x0, y0, x1, y1] in viewer space.
+    pub images: Vec<[f32; 4]>,
+}
+
+fn strip_subset(name: &str) -> String {
+    let b = name.as_bytes();
+    if b.len() > 7 && b[6] == b'+' && b[..6].iter().all(|c| c.is_ascii_uppercase()) { name[7..].to_string() } else { name.to_string() }
+}
+
+/// Text runs and picture boxes of pages start..start+count, in viewer space (origin top-left).
+/// Rotated pages return an error: the caller then uses the pdf.js route.
+pub fn page_runs(dll: &Path, input: &Path, start: usize, count: usize) -> Result<Vec<PageRuns>> {
+    with_doc(dll, input, |doc| {
+        let total = doc.pages().len() as usize;
+        let mut out = Vec::new();
+        for i in start..(start + count).min(total) {
+            let page = doc.pages().get(i as i32).map_err(msg)?;
+            if !matches!(page.rotation().map_err(msg)?, PdfPageRenderRotation::None) {
+                return Err(Error::Msg("rotated page".into()));
+            }
+            let (pw, ph) = (page.width().value, page.height().value);
+            let mut runs: Vec<RunOut> = Vec::new();
+            let text = page.text().map_err(msg)?;
+            // Runs: neighbouring characters with the same font, size and baseline.
+            let mut cur: Option<(RunOut, f32)> = None; // (run, right edge)
+            for ch in text.chars().iter() {
+                if ch.is_generated().unwrap_or(false) {
+                    continue;
+                }
+                let Some(c) = ch.unicode_char() else { continue };
+                if c == '\r' || c == '\n' || c == '\u{2}' {
+                    if let Some((r, _)) = cur.take() { runs.push(r); }
+                    continue;
+                }
+                let angle = ch.angle_degrees().unwrap_or(0.0).abs();
+                if angle > 5.0 && (angle - 360.0).abs() > 5.0 {
+                    if let Some((r, _)) = cur.take() { runs.push(r); }
+                    continue;
+                }
+                let size = ch.scaled_font_size().value;
+                let (ox, oy) = ch.origin().map(|(x, y)| (x.value, y.value)).unwrap_or((0.0, 0.0));
+                let (left, right) = ch.loose_bounds().map(|b| (b.left().value, b.right().value)).unwrap_or((ox, ox + size * 0.5));
+                let font = strip_subset(&ch.font_name());
+                let lower = font.to_lowercase();
+                let bold = ch.font_weight().map_or(false, |w| matches!(w, PdfFontWeight::Weight700Bold | PdfFontWeight::Weight800 | PdfFontWeight::Weight900) || matches!(w, PdfFontWeight::Custom(v) if v >= 700)) || ["bold", "black", "heavy", "semibold", "demi"].iter().any(|k| lower.contains(k));
+                let italic = ch.font_is_italic() || lower.contains("italic") || lower.contains("oblique");
+                let mono = ch.font_is_fixed_pitch() || ["mono", "courier", "consol", "code"].iter().any(|k| lower.contains(k));
+                let serif = !mono && ((["times", "serif", "roman", "georgia", "garamond", "cambria", "minion", "book"].iter().any(|k| lower.contains(k)) && !lower.contains("sans")) || ch.font_is_serif());
+                let y = ph - oy;
+                let joins = cur.as_ref().map_or(false, |(r, edge)| r.font == font && (r.size - size).abs() < 0.1 && (r.y - y).abs() < size * 0.1 && (left - edge).abs() < size * 0.04 && r.bold == bold && r.italic == italic);
+                if joins {
+                    let (r, edge) = cur.as_mut().unwrap();
+                    r.text.push(c);
+                    r.w = right - r.x;
+                    *edge = right;
+                } else {
+                    if let Some((r, _)) = cur.take() { runs.push(r); }
+                    cur = Some((RunOut { text: c.to_string(), x: ox, y, w: right - ox, size, bold, italic, font, mono, serif }, right));
+                }
+            }
+            if let Some((r, _)) = cur.take() { runs.push(r); }
+            // Pictures: boxes of image objects (at least 24 pt each way, no near-duplicates).
+            let mut images: Vec<[f32; 4]> = Vec::new();
+            for obj in page.objects().iter() {
+                if obj.as_image_object().is_none() {
+                    continue;
+                }
+                let Ok(b) = obj.bounds() else { continue };
+                let bx = [b.left().value.max(0.0), (ph - b.top().value).max(0.0), b.right().value.min(pw), (ph - b.bottom().value).min(ph)];
+                if bx[2] - bx[0] < 24.0 || bx[3] - bx[1] < 24.0 {
+                    continue;
+                }
+                if images.iter().any(|o| (o[0] - bx[0]).abs() < 1.0 && (o[1] - bx[1]).abs() < 1.0 && (o[2] - bx[2]).abs() < 1.0 && (o[3] - bx[3]).abs() < 1.0) {
+                    continue;
+                }
+                images.push(bx);
+            }
+            out.push(PageRuns { width: pw, height: ph, runs, images });
+        }
+        Ok(out)
+    })
+}

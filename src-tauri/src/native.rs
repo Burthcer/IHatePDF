@@ -284,3 +284,32 @@ pub async fn repair_pdf(app: AppHandle, path: String) -> Result<serde_json::Valu
     let size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
     Ok(serde_json::json!({ "path": output, "size": size, "pages": pages }))
 }
+
+/// Text runs and picture boxes for pages start..start+count (viewer space). Errors on rotated pages.
+#[tauri::command]
+pub async fn pdf_runs(app: AppHandle, path: String, start: usize, count: usize) -> Result<serde_json::Value, String> {
+    let input = crate::output::in_work_dir(&path)?;
+    let dll = pdfium_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        ihp_core::render::page_runs(&dll, &input, start, count)
+            .map(|pages| {
+                serde_json::Value::Array(
+                    pages
+                        .into_iter()
+                        .map(|p| {
+                            serde_json::json!({
+                                "width": p.width, "height": p.height, "images": p.images,
+                                "runs": p.runs.into_iter().map(|r| serde_json::json!({
+                                    "text": r.text, "x": r.x, "y": r.y, "w": r.w, "size": r.size, "bold": r.bold,
+                                    "italic": r.italic, "fontName": r.font, "mono": r.mono, "serif": r.serif
+                                })).collect::<Vec<_>>()
+                            })
+                        })
+                        .collect(),
+                )
+            })
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

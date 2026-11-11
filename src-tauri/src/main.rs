@@ -79,7 +79,8 @@ fn main() {
             native::render_thumb,
             native::redact_pdf,
             native::pdf_probe,
-            native::repair_pdf
+            native::repair_pdf,
+            native::pdf_runs
         ])
         .setup(|app| {
             output::clean_work_dir();
