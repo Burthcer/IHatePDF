@@ -72,7 +72,9 @@ fn main() {
             output::out_read,
             native::compress_pdf,
             native::run_tool,
-            native::render_pdf
+            native::render_pdf,
+            native::pdf_info,
+            native::render_thumb
         ])
         .setup(|app| {
             output::clean_work_dir();

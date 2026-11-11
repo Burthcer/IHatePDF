@@ -1,6 +1,6 @@
 /** Rust versions of the page tools (crates/ihp-core/src/pages.rs). Same inputs and result names as the workers. */
 import { nativeTool } from '../services/nativeTools';
-import type { CropPayload, MergePayload, OrganizePayload, RotatePayload, SplitPayload } from '../types/worker';
+import type { CropPayload, ImagesToPdfPayload, MergePayload, OrganizePayload, RotatePayload, SplitPayload } from '../types/worker';
 
 const base = (n: string) => n.replace(/\.[^/.]+$/, '');
 
@@ -49,4 +49,14 @@ export const splitNative = nativeTool<SplitPayload>({
     ranges: Array.isArray(p.ranges) ? p.ranges : undefined,
   }),
   name: (p, rust) => ({ fileName: rust ?? `${base(p.fileName)}_split.pdf`, mimeType: rust?.endsWith('.zip') ? 'application/zip' : undefined }),
+});
+
+const MARGINS = { none: 0, small: 18, big: 54 } as const;
+
+/** Images to PDF (also used by Scan to PDF). */
+export const imagesNative = nativeTool<ImagesToPdfPayload>({
+  tool: 'images',
+  inputs: (p) => p.images.map((i) => i.bytes),
+  args: (p) => ({ png: p.images.map((i) => i.type === 'png'), pageSize: p.pageSize, orientation: p.orientation, marginPt: MARGINS[p.margin] }),
+  name: (p) => ({ fileName: `${base(p.fileName) || 'images'}.pdf` }),
 });

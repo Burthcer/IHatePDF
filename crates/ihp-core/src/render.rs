@@ -46,7 +46,7 @@ fn encode_png(rgba: &[u8], w: usize, h: usize) -> Result<Vec<u8>> {
 /// Renders `pages` (1-based) of `input` at `dpi`. One page: the image itself; several: a .zip
 /// (`{base}_page_{n}.{ext}`). Returns the number of pages rendered.
 pub fn render_pages(dll: &Path, input: &Path, pages: &[usize], dpi: f64, png: bool, quality: f64, base: &str, out: &Path, progress: &mut dyn FnMut(u32, &str)) -> Result<usize> {
-    let pdfium = bind(dll)?;
+    let pdfium = shared(dll)?;
     let doc = pdfium.load_pdf_from_file(input, None).map_err(msg)?;
     let count = doc.pages().len() as usize;
     let todo: Vec<usize> = pages.iter().copied().filter(|&p| p >= 1 && p <= count).collect();
@@ -95,4 +95,42 @@ pub fn render_pages(dll: &Path, input: &Path, pages: &[usize], dpi: f64, png: bo
         z.finish().map_err(msg)?;
     }
     Ok(todo.len())
+}
+
+fn shared(dll: &Path) -> Result<&'static Pdfium> {
+    use std::sync::OnceLock;
+    static P: OnceLock<std::result::Result<Pdfium, String>> = OnceLock::new();
+    P.get_or_init(|| bind(dll).map_err(|e| e.to_string())).as_ref().map_err(|e| Error::Msg(e.clone()))
+}
+
+/// Displayed size (points, after /Rotate) and /Rotate of every page: [[w, h, rotation], ...].
+pub fn page_infos(dll: &Path, input: &Path) -> Result<Vec<[f32; 3]>> {
+    let pdfium = shared(dll)?;
+    let doc = pdfium.load_pdf_from_file(input, None).map_err(msg)?;
+    let mut out = Vec::new();
+    for page in doc.pages().iter() {
+        let rot = match page.rotation().map_err(msg)? {
+            PdfPageRenderRotation::None => 0.0,
+            PdfPageRenderRotation::Degrees90 => 90.0,
+            PdfPageRenderRotation::Degrees180 => 180.0,
+            PdfPageRenderRotation::Degrees270 => 270.0,
+        };
+        out.push([page.width().value, page.height().value, rot]);
+    }
+    Ok(out)
+}
+
+/// One page as a JPEG `width_px` wide (white background).
+pub fn thumbnail(dll: &Path, input: &Path, index: usize, width_px: u32, quality: f64) -> Result<Vec<u8>> {
+    let pdfium = shared(dll)?;
+    let doc = pdfium.load_pdf_from_file(input, None).map_err(msg)?;
+    let page = doc.pages().get(index as i32).map_err(msg)?;
+    let cfg = PdfRenderConfig::new().set_target_width(width_px as i32).set_clear_color(PdfColor::WHITE);
+    let bitmap = page.render_with_config(&cfg).map_err(msg)?;
+    let (w, h) = (bitmap.width() as usize, bitmap.height() as usize);
+    let mut rgb = Vec::with_capacity(w * h * 3);
+    for p in bitmap.as_raw_bytes().chunks_exact(4) {
+        rgb.extend_from_slice(&[p[2], p[1], p[0]]);
+    }
+    encode_jpeg(&rgb, w, h, quality)
 }

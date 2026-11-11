@@ -113,6 +113,17 @@ pub async fn run_tool(app: AppHandle, id: String, tool: String, inputs: Vec<Stri
                 }
                 pages::split_one(first, &out2, &idx, &mut prog).map(|n| (n, Some(format!("{base}_split.pdf")))).map_err(e)
             }
+            "images" => {
+                use ihp_core::images::{images_to_pdf, Options, Orientation, PageSize};
+                let is_png: Vec<bool> = args["png"].as_array().map(|a| a.iter().map(|v| v.as_bool().unwrap_or(false)).collect()).unwrap_or_default();
+                let pairs: Vec<(&std::path::Path, bool)> = ins.iter().enumerate().map(|(i, p)| (p.as_path(), is_png.get(i).copied().unwrap_or(false))).collect();
+                let opts = Options {
+                    page_size: match args["pageSize"].as_str() { Some("letter") => PageSize::Letter, Some("fit") => PageSize::Fit, _ => PageSize::A4 },
+                    orientation: match args["orientation"].as_str() { Some("landscape") => Orientation::Landscape, Some("portrait") => Orientation::Portrait, _ => Orientation::Auto },
+                    margin_pt: args["marginPt"].as_f64().unwrap_or(0.0),
+                };
+                images_to_pdf(&pairs, &opts, &out2, &mut prog).map(|n| (n, None)).map_err(e)
+            }
             other => Err(format!("Unknown tool {other}")),
         }
     })
@@ -165,4 +176,23 @@ pub async fn render_pdf(app: AppHandle, id: String, path: String, pages: Vec<usi
     let name = if single || n == 1 { format!("{base}_page_{first}.{ext}") } else { format!("{base}_pages.zip") };
     let size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
     Ok(serde_json::json!({ "path": output, "size": size, "pages": n, "fileName": name }))
+}
+
+/// [[w, h, rotation], ...] for every page.
+#[tauri::command]
+pub async fn pdf_info(app: AppHandle, path: String) -> Result<Vec<[f32; 3]>, String> {
+    let input = crate::output::in_work_dir(&path)?;
+    let dll = pdfium_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || ihp_core::render::page_infos(&dll, &input).map_err(|e| e.to_string())).await.map_err(|e| e.to_string())?
+}
+
+/// One page as JPEG bytes (raw response, no base64).
+#[tauri::command]
+pub async fn render_thumb(app: AppHandle, path: String, index: usize, width: u32, quality: f64) -> Result<tauri::ipc::Response, String> {
+    let input = crate::output::in_work_dir(&path)?;
+    let dll = pdfium_path(&app)?;
+    let bytes = tauri::async_runtime::spawn_blocking(move || ihp_core::render::thumbnail(&dll, &input, index, width, quality).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(tauri::ipc::Response::new(bytes))
 }

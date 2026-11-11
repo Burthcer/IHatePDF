@@ -580,7 +580,7 @@ fn resample(img: &Decoded, w: usize, h: usize) -> Option<Vec<u8>> {
 /// Flate with PNG predictors chosen per row (the usual "smallest sum of absolute values"
 /// rule): flat artwork shrinks far more than with plain Flate. Falls back to no predictor
 /// when that happens to be smaller. Returns (bytes, predictor used?).
-fn flate_encode(px: &[u8], w: usize, h: usize, channels: usize) -> (Vec<u8>, bool) {
+pub(crate) fn flate_encode(px: &[u8], w: usize, h: usize, channels: usize) -> (Vec<u8>, bool) {
     let row = w * channels;
     let bpp = channels;
     let mut filtered = Vec::with_capacity((row + 1) * h);
