@@ -3,6 +3,8 @@ import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
 import { Field, Panel, cn, formatBytes } from '../../components/ui';
 import { useToolRunner } from '../../hooks/useToolRunner';
+import { nativeFirst } from '../../services/nativeWorker';
+import { compressNative } from './compress.native';
 import { getTool } from '../../constants/tools';
 import type { PDFFile } from '../../types/pdf';
 import type { CompressPayload, ProcessedPdfResult } from '../../types/worker';
@@ -26,7 +28,9 @@ export const CompressView: React.FC<CompressViewProps> = ({ initialFiles = [], o
   const [level, setLevel] = useState<Level>('recommended');
   const [targetValue, setTargetValue] = useState('');
   const [unit, setUnit] = useState<'MB' | 'KB'>('MB');
-  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./compress.worker.ts', import.meta.url), { type: 'module' }));
+  const runner = useToolRunner<ProcessedPdfResult>(
+    nativeFirst(() => new Worker(new URL('./compress.worker.ts', import.meta.url), { type: 'module' }), { COMPRESS_PDF: compressNative })
+  );
   const file = files[0];
 
   const targetBytes = Math.round((parseFloat(targetValue) || 0) * (unit === 'MB' ? 1024 * 1024 : 1024));

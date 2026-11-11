@@ -8,6 +8,7 @@ description = "IHatePDF: offline PDF tools"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+ihp-core = { path = "../crates/ihp-core" }
 tauri = { version = "2", features = [] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-opener = "2"

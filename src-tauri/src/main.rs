@@ -1,6 +1,7 @@
 // IHatePDF desktop shell (Tauri): serves dist/, owns the work folder, saving, and memory info.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod native;
 mod output;
 
 use std::path::PathBuf;
@@ -68,7 +69,8 @@ fn main() {
             output::out_close,
             output::out_save,
             output::out_discard,
-            output::out_read
+            output::out_read,
+            native::compress_pdf
         ])
         .setup(|app| {
             output::clean_work_dir();

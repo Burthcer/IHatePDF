@@ -18,13 +18,13 @@ struct Out {
 #[derive(Default)]
 pub struct Outputs(Mutex<HashMap<String, Out>>);
 
-fn work_dir() -> PathBuf {
+pub fn work_dir() -> PathBuf {
     std::env::temp_dir().join("IHatePDF-work")
 }
 pub fn clean_work_dir() {
     let _ = std::fs::remove_dir_all(work_dir());
 }
-fn in_work_dir(p: &str) -> Result<PathBuf, String> {
+pub fn in_work_dir(p: &str) -> Result<PathBuf, String> {
     let p = PathBuf::from(p);
     if p.components().any(|c| c.as_os_str() == "..") || !p.starts_with(work_dir()) {
         return Err("Not an output file.".into());
