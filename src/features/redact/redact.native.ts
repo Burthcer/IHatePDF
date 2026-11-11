@@ -14,7 +14,6 @@ export async function redactNative(
   progress: (p: number, stage: string) => void
 ): Promise<ProcessedPdfResult | null> {
   if (!hasNative() || inputBytes(input) > MAX_NATIVE_BYTES) return null;
-  const desktop = window.ihpDesktop!;
   const id = crypto.randomUUID();
   const path = await stageInput(input);
   const stop = await onNativeProgress(id, progress);
@@ -35,6 +34,5 @@ export async function redactNative(
     };
   } finally {
     stop();
-    void desktop.output.discard(path);
   }
 }

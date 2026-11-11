@@ -36,7 +36,6 @@ export function nativeTool<P>(spec: NativeToolSpec<P>): NativeHandler {
       r = await tauri().core.invoke('run_tool', { id, tool: spec.tool, inputs: staged, args: spec.args?.(p) ?? {} });
     } finally {
       stop();
-      staged.forEach((s) => void desktop.output.discard(s));
     }
     if (ctx.signal.aborted) {
       void desktop.output.discard(r.path);

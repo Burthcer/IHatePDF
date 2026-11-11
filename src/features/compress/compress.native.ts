@@ -24,7 +24,6 @@ export const compressNative: NativeHandler = async (p: CompressPayload, ctx) => 
     r = await invoke('compress_pdf', { id, path: input, level: p.level, targetBytes: p.targetBytes ?? null });
   } finally {
     stop();
-    void desktop.output.discard(input);
   }
   if (ctx.signal.aborted || r.skipped > 0) {
     void desktop.output.discard(r.path);

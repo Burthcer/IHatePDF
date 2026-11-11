@@ -178,12 +178,19 @@ pub async fn render_pdf(app: AppHandle, id: String, path: String, pages: Vec<usi
     Ok(serde_json::json!({ "path": output, "size": size, "pages": n, "fileName": name }))
 }
 
-/// [[w, h, rotation], ...] for every page.
+/// { total, pages: [[w, h, rotation], ...] } for pages start..start+count.
 #[tauri::command]
-pub async fn pdf_info(app: AppHandle, path: String) -> Result<Vec<[f32; 3]>, String> {
+pub async fn pdf_info(app: AppHandle, path: String, start: usize, count: usize) -> Result<serde_json::Value, String> {
+    let t = std::time::Instant::now();
     let input = crate::output::in_work_dir(&path)?;
     let dll = pdfium_path(&app)?;
-    tauri::async_runtime::spawn_blocking(move || ihp_core::render::page_infos(&dll, &input).map_err(|e| e.to_string())).await.map_err(|e| e.to_string())?
+    let r = tauri::async_runtime::spawn_blocking(move || {
+        ihp_core::render::page_infos(&dll, &input, start, count).map(|(total, pages)| serde_json::json!({ "total": total, "pages": pages })).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    trace(&format!("pdf_info {start}+{count}"), t);
+    r
 }
 
 /// One page as JPEG bytes (raw response, no base64).
@@ -223,4 +230,32 @@ pub async fn redact_pdf(app: AppHandle, id: String, path: String, pages: serde_j
     .map_err(|e| e.to_string())??;
     let size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
     Ok(serde_json::json!({ "path": output, "size": size, "pages": total, "redacted": n }))
+}
+
+/// { pages } for a readable PDF, { password: true } when it needs one, or an error (damaged).
+#[tauri::command]
+pub async fn pdf_probe(app: AppHandle, path: String, password: Option<String>) -> Result<serde_json::Value, String> {
+    let t = std::time::Instant::now();
+    let input = crate::output::in_work_dir(&path)?;
+    let dll = pdfium_path(&app)?;
+    let r = tauri::async_runtime::spawn_blocking(move || match ihp_core::render::probe(&dll, &input, password.as_deref()) {
+        Ok(ihp_core::render::Probe::Pages(n)) => Ok(serde_json::json!({ "pages": n })),
+        Ok(ihp_core::render::Probe::Password) => Ok(serde_json::json!({ "password": true })),
+        Err(e) => Err(e.to_string()),
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    trace("pdf_probe", t);
+    r
+}
+
+/// Timing trace for diagnostics: set IHP_TRACE=1 and read %TEMP%\ihp-trace.log.
+pub fn trace(what: &str, since: std::time::Instant) {
+    if std::env::var("IHP_TRACE").is_ok() {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("ihp-trace.log")) {
+            let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+            let _ = writeln!(f, "{ms} {what} took {} ms", since.elapsed().as_millis());
+        }
+    }
 }

@@ -103,43 +103,79 @@ fn shared(dll: &Path) -> Result<&'static Pdfium> {
     P.get_or_init(|| bind(dll).map_err(|e| e.to_string())).as_ref().map_err(|e| Error::Msg(e.clone()))
 }
 
-/// Displayed size (points, after /Rotate) and /Rotate of every page: [[w, h, rotation], ...].
-pub fn page_infos(dll: &Path, input: &Path) -> Result<Vec<[f32; 3]>> {
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+/// A few recently used documents stay open, so a big file isn't parsed again for every thumbnail.
+struct Open(Vec<(PathBuf, PdfDocument<'static>)>);
+// PDFium calls are serialised by pdfium-render's `thread_safe` feature.
+unsafe impl Send for Open {}
+static OPEN: Mutex<Open> = Mutex::new(Open(Vec::new()));
+const KEEP_OPEN: usize = 3;
+
+/// Runs `f` on the (cached) open document for `path`.
+fn with_doc<R>(dll: &Path, path: &Path, f: impl FnOnce(&PdfDocument<'static>) -> Result<R>) -> Result<R> {
     let pdfium = shared(dll)?;
-    let doc = pdfium.load_pdf_from_file(input, None).map_err(msg)?;
-    let mut out = Vec::new();
-    for page in doc.pages().iter() {
-        let rot = match page.rotation().map_err(msg)? {
-            PdfPageRenderRotation::None => 0.0,
-            PdfPageRenderRotation::Degrees90 => 90.0,
-            PdfPageRenderRotation::Degrees180 => 180.0,
-            PdfPageRenderRotation::Degrees270 => 270.0,
-        };
-        out.push([page.width().value, page.height().value, rot]);
+    let mut cache = OPEN.lock().unwrap();
+    let pos = match cache.0.iter().position(|(p, _)| p == path) {
+        Some(i) => i,
+        None => {
+            let doc = pdfium.load_pdf_from_file(path, None).map_err(msg)?;
+            if cache.0.len() >= KEEP_OPEN {
+                cache.0.remove(0);
+            }
+            cache.0.push((path.to_path_buf(), doc));
+            cache.0.len() - 1
+        }
+    };
+    f(&cache.0[pos].1)
+}
+
+/// Closes a cached document (call before deleting the file: Windows won't delete an open one).
+pub fn forget(path: &Path) {
+    if let Ok(mut c) = OPEN.lock() {
+        c.0.retain(|(p, _)| p != path);
     }
-    Ok(out)
+}
+
+/// (page count, [w, h, rotation] for pages `start..start+count`): displayed size in points, after /Rotate.
+pub fn page_infos(dll: &Path, input: &Path, start: usize, count: usize) -> Result<(usize, Vec<[f32; 3]>)> {
+    with_doc(dll, input, |doc| {
+        let total = doc.pages().len() as usize;
+        let mut out = Vec::new();
+        for i in start..(start + count).min(total) {
+            let page = doc.pages().get(i as i32).map_err(msg)?;
+            let rot = match page.rotation().map_err(msg)? {
+                PdfPageRenderRotation::None => 0.0,
+                PdfPageRenderRotation::Degrees90 => 90.0,
+                PdfPageRenderRotation::Degrees180 => 180.0,
+                PdfPageRenderRotation::Degrees270 => 270.0,
+            };
+            out.push([page.width().value, page.height().value, rot]);
+        }
+        Ok((total, out))
+    })
 }
 
 /// One page as a JPEG `width_px` wide (white background).
 pub fn thumbnail(dll: &Path, input: &Path, index: usize, width_px: u32, quality: f64) -> Result<Vec<u8>> {
-    let pdfium = shared(dll)?;
-    let doc = pdfium.load_pdf_from_file(input, None).map_err(msg)?;
-    let page = doc.pages().get(index as i32).map_err(msg)?;
-    let cfg = PdfRenderConfig::new().set_target_width(width_px as i32).set_clear_color(PdfColor::WHITE);
-    let bitmap = page.render_with_config(&cfg).map_err(msg)?;
-    let (w, h) = (bitmap.width() as usize, bitmap.height() as usize);
-    let mut rgb = Vec::with_capacity(w * h * 3);
-    for p in bitmap.as_raw_bytes().chunks_exact(4) {
-        rgb.extend_from_slice(&[p[2], p[1], p[0]]);
-    }
-    encode_jpeg(&rgb, w, h, quality)
+    with_doc(dll, input, |doc| {
+        let page = doc.pages().get(index as i32).map_err(msg)?;
+        let cfg = PdfRenderConfig::new().set_target_width(width_px as i32).set_clear_color(PdfColor::WHITE);
+        let bitmap = page.render_with_config(&cfg).map_err(msg)?;
+        let (w, h) = (bitmap.width() as usize, bitmap.height() as usize);
+        let mut rgb = Vec::with_capacity(w * h * 3);
+        for p in bitmap.as_raw_bytes().chunks_exact(4) {
+            rgb.extend_from_slice(&[p[2], p[1], p[0]]);
+        }
+        encode_jpeg(&rgb, w, h, quality)
+    })
 }
 
 /// One page rendered at `scale` with black boxes burned into the pixels (viewer-space points,
 /// origin top-left of the page as displayed): [x, y, w, h]. Returns (jpeg, width_px, height_px).
 pub fn render_redacted(dll: &Path, input: &Path, index: usize, scale: f32, boxes: &[[f64; 4]], quality: f64) -> Result<(Vec<u8>, usize, usize)> {
-    let pdfium = shared(dll)?;
-    let doc = pdfium.load_pdf_from_file(input, None).map_err(msg)?;
+    with_doc(dll, input, |doc| {
     let page = doc.pages().get(index as i32).map_err(msg)?;
     let cfg = PdfRenderConfig::new().scale_page_by_factor(scale).set_clear_color(PdfColor::WHITE).render_form_data(true);
     let bitmap = page.render_with_config(&cfg).map_err(msg)?;
@@ -159,4 +195,27 @@ pub fn render_redacted(dll: &Path, input: &Path, index: usize, scale: f32, boxes
         }
     }
     Ok((encode_jpeg(&rgb, w, h, quality)?, w, h))
+    })
+}
+
+pub enum Probe {
+    /// The PDF opened: its page count.
+    Pages(usize),
+    /// Needs a password (or the given one was wrong).
+    Password,
+}
+
+/// Page count and whether the file needs a password, without drawing anything.
+pub fn probe(dll: &Path, input: &Path, password: Option<&str>) -> Result<Probe> {
+    if password.is_none() {
+        if let Ok(n) = with_doc(dll, input, |d| Ok(d.pages().len() as usize)) {
+            return Ok(Probe::Pages(n));
+        }
+    }
+    let pdfium = shared(dll)?;
+    match pdfium.load_pdf_from_file(input, password) {
+        Ok(doc) => Ok(Probe::Pages(doc.pages().len() as usize)),
+        Err(PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError)) => Ok(Probe::Password),
+        Err(e) => Err(msg(e)),
+    }
 }

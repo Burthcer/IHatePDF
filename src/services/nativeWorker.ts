@@ -23,8 +23,29 @@ export const hasNative = () => !!tauri() && !!window.ihpDesktop;
 
 const STEP = 8 * 1024 * 1024;
 
-/** Copies a PDF (bytes or a disk-backed Blob) into the app's work folder, a chunk at a time; returns its path. */
-export async function stageInput(input: PdfInput): Promise<string> {
+const staged = new Map<PdfInput, Promise<string>>();
+const KEEP_STAGED = 4;
+
+/**
+ * A PDF (bytes or a disk-backed Blob) in the app's work folder, copied once and then reused by
+ * whatever needs it (page count, previews, the tool). The newest few stay; older ones are deleted.
+ */
+export function stageInput(input: PdfInput): Promise<string> {
+  let p = staged.get(input);
+  if (!p) {
+    p = copyToWorkFolder(input);
+    p.catch(() => staged.delete(input));
+    staged.set(input, p);
+    while (staged.size > KEEP_STAGED) {
+      const [oldKey, old] = staged.entries().next().value as [PdfInput, Promise<string>];
+      staged.delete(oldKey);
+      void old.then((path) => window.ihpDesktop?.output.discard(path)).catch(() => undefined);
+    }
+  }
+  return p;
+}
+
+async function copyToWorkFolder(input: PdfInput): Promise<string> {
   const out = window.ihpDesktop!.output;
   const handle = await out.create();
   try {

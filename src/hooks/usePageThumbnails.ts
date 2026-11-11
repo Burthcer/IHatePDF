@@ -25,6 +25,8 @@ export interface PageThumbInfo {
 interface NativePages {
   path: string;
   infos: PageThumbInfo[];
+  /** Real sizes of pages start..start+count (the grid starts with every page sized like the first). */
+  sizes(start: number, count: number): Promise<PageThumbInfo[]>;
   thumb(i: number, width: number): Promise<Blob>;
   close(): void;
 }
@@ -36,18 +38,19 @@ async function openNative(data: Blob | ArrayBuffer): Promise<NativePages | null>
   let path: string | null = null;
   try {
     path = await stageInput(data);
-    const raw: Array<[number, number, number]> = await invoke('pdf_info', { path });
-    if (!raw.length) throw new Error('no pages');
+    const asInfo = ([width, height, rotation]: [number, number, number]) => ({ width, height, rotation });
+    const first: { total: number; pages: Array<[number, number, number]> } = await invoke('pdf_info', { path, start: 0, count: 64 });
+    if (!first.total || !first.pages.length) throw new Error('no pages');
     const staged = path;
     return {
       path: staged,
-      infos: raw.map(([width, height, rotation]) => ({ width, height, rotation })),
+      infos: Array.from({ length: first.total }, (_, i) => asInfo(first.pages[Math.min(i, first.pages.length - 1)])),
+      sizes: async (start, count) => (await invoke('pdf_info', { path: staged, start, count })).pages.map(asInfo),
       thumb: async (i, width) => new Blob([await invoke('render_thumb', { path: staged, index: i, width, quality: 0.75 })], { type: 'image/jpeg' }),
-      close: () => void window.ihpDesktop?.output.discard(staged),
+      close: () => undefined, // the staged copy is shared and cleaned up by stageInput
     };
   } catch (err) {
     console.warn('PDFium preview unavailable, using pdf.js:', err);
-    if (path) void window.ihpDesktop?.output.discard(path);
     return null;
   }
 }
@@ -187,6 +190,18 @@ export function usePageThumbnails(data: Blob | ArrayBuffer | null | undefined, t
           for (let i = 0; i < Math.min(eager, total); i++) request(i);
           visible.current.forEach((i) => request(i));
           pump.current();
+          // Real page sizes (nearly always the same) fill in behind the scenes, 256 at a time.
+          for (let start = 64; start < total; start += 256) {
+            const batch = await native.sizes(start, 256);
+            if (cancelled) return;
+            const changed = new Map<number, PageThumbInfo>();
+            batch.forEach((p, k) => {
+              const i = start + k;
+              if (p.width !== info[i].width || p.height !== info[i].height || p.rotation !== info[i].rotation) changed.set(i, p);
+              info[i] = p;
+            });
+            if (changed.size) setPages((prev) => prev.map((p, i) => (changed.has(i) ? { ...changed.get(i)!, url: p.url } : p)));
+          }
           return;
         }
         task = openPdfJsDocument(data);

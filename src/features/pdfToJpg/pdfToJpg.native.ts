@@ -13,7 +13,6 @@ export async function renderNative(
   progress: (p: number, stage: string) => void
 ): Promise<(ProcessedPdfResult & { mimeType?: string }) | null> {
   if (!hasNative() || inputBytes(input) > MAX_NATIVE_BYTES) return null;
-  const desktop = window.ihpDesktop!;
   const id = crypto.randomUUID();
   progress(1, 'Preparing...');
   const path = await stageInput(input);
@@ -24,6 +23,5 @@ export async function renderNative(
     return { fileName: r.fileName, output: { kind: 'file', path: r.path, size: r.size }, size: r.size, pageCount: r.pages, mimeType: r.fileName.endsWith('.zip') ? 'application/zip' : opts.png ? 'image/png' : 'image/jpeg' };
   } finally {
     stop();
-    void desktop.output.discard(path);
   }
 }

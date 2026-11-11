@@ -53,6 +53,7 @@ pub fn unique_path(dir: &Path, name: &str) -> PathBuf {
 
 #[tauri::command]
 pub fn out_create(state: State<Outputs>) -> Result<String, String> {
+    crate::native::trace("out_create", std::time::Instant::now());
     std::fs::create_dir_all(work_dir()).map_err(|e| e.to_string())?;
     let handle = uuid::Uuid::new_v4().to_string();
     let path = work_dir().join(format!("{handle}.tmp"));
@@ -77,6 +78,7 @@ pub fn out_write(request: Request, state: State<Outputs>) -> Result<(), String> 
 
 #[tauri::command]
 pub fn out_close(handle: String, discard: bool, state: State<Outputs>) -> Result<serde_json::Value, String> {
+    crate::native::trace("out_close", std::time::Instant::now());
     let o = state.0.lock().unwrap().remove(&handle).ok_or("Unknown output.")?;
     drop(o.file);
     if discard {
@@ -100,6 +102,7 @@ pub fn out_save(app: AppHandle, file: String, name: String) -> Result<PathBuf, S
 #[tauri::command]
 pub fn out_discard(file: String) {
     if let Ok(p) = in_work_dir(&file) {
+        ihp_core::render::forget(&p);
         let _ = std::fs::remove_file(p);
     }
 }
