@@ -91,6 +91,20 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-11-11 · 2.0 work in progress (branch `claude/rust-port`) · Windows 11 26200
+
+Tauri shell + Rust Compress engine (`crates/ihp-core`). Not a release.
+
+- **Compress, Rust vs the 1.4.0 TypeScript engine** (same fixtures, `scripts/e2e/quality-tauri.mjs`, `quality_score.py`): SSIM equal or better at every level
+  (screenshot Smallest .914 vs .904, chart Smallest edge sharpness 91% vs 76%, photo .962-.968 both, scan text .868-.973 both).
+  Light/Balanced leave screenshots and charts byte-exact (SSIM 1.000). Word to PDF then Compress keeps the pasted screenshot exact (SSIM 1.000 at Light/Balanced).
+- **Regression harness** (`node scripts/test-compress-rust.mjs`, `scripts/e2e/pdf_regress.py`): 4 levels x quality, scans, complex, edge fixtures
+  (alpha/SMask, palette, CMYK, gray, rotated page, duplicates, picture in a form XObject): page count, text per page, per-page PSNR >= 28 dB, no MuPDF warnings. All pass.
+  It found one real bug (wrong `/Length` on re-encoded images), fixed.
+- **Speed in the app** (click to result, `scripts/e2e/bench-compress.mjs`): 10 MB scan 811 ms vs 2283 ms; photo 91 vs 313 ms; duplicates 142 vs 393 ms; 4.8 MB alpha 280 vs 331 ms.
+- Images the Rust engine can't decode (JPEG 2000, CMYK, Lab/Separation, odd /Decode) and files over 1 GB go to the TypeScript engine (never worse than 1.4.0).
+- `npm test`: 34 + 5 checks pass. Not yet ported: Share to phone, memory watchdog, usage log; all other tools still run in the TypeScript workers.
+
 ### 2026-10-14 · v1.4.0 (branch `claude/usage-log`) · Windows 11 26200, 31.4 GB
 
 Triggered by the principal's feedback (logging, 5 GB / 10,000-page stress, picture quality, PDF → Word). Details in `docs/TEST_REPORT.md` ("Version 1.4.0"). Commands for the new tests:
