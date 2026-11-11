@@ -1,0 +1,10 @@
+C:\Users\Asus\Desktop\Ihatepdf local\crates\ihp-core\target\debug\deps\crc32fast-bc5895aa23254971.d: C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\lib.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\baseline.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\combine.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\specialized\mod.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\table.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\specialized\pclmulqdq.rs
+
+C:\Users\Asus\Desktop\Ihatepdf local\crates\ihp-core\target\debug\deps\libcrc32fast-bc5895aa23254971.rmeta: C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\lib.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\baseline.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\combine.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\specialized\mod.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\table.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\specialized\pclmulqdq.rs
+
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\lib.rs:
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\baseline.rs:
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\combine.rs:
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\specialized\mod.rs:
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\table.rs:
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.5\src\specialized\pclmulqdq.rs:
