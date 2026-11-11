@@ -106,11 +106,15 @@ The desktop app is rebuilt on **Tauri** (the system's WebView2 instead of a bund
 | **Compress** a screenshot at *Smallest*: edge sharpness kept | 43% | **49%** (and sharper charts: 91% vs 76%) |
 | **PDF to JPG** | pdf.js in the page | PDFium in Rust |
 | Page thumbnails (Organize, Rotate, Split…) | pdf.js | PDFium in Rust |
-| Merge · Split · Organize · Rotate · Crop · Images to PDF | in the page | in Rust |
+| Merge · Split · Organize · Rotate · Crop · Images to PDF · Scan to PDF | in the page | in Rust |
+| **Redact** (renders each flagged page) | pdf.js canvas, one page at a time | PDFium in Rust |
+| Watermark · Page numbers · Sign | in the page | in Rust (output matches pixel for pixel) |
+| Page count when you open a file | pdf.js | PDFium (pdf.js isn't even loaded) |
+| Memory fail-safe | Electron | Rust (same budget and levels) |
 
 **Compress quality is unchanged or better.** Screenshots and charts at *Light* and *Balanced* stay pixel-exact, photos score the same as before, and a Word file with a pasted screenshot and photo keeps both sharp. Images the Rust engine can't decode safely (JPEG 2000, CMYK, Lab and Separation colour, files over 1 GB) are handed to the previous engine, so nothing is worse than 1.4.0.
 
-**Not in 2.0.0 yet:** Share to phone, the local usage log and the memory watchdog that restarts a stuck window (the page-side memory limits still apply). Word, PowerPoint, Excel and HTML to PDF, PDF to Word, Excel, PowerPoint and Markdown, Edit PDF, Sign, Forms, Watermark, Page numbers, Redact, Repair, PDF/A, Protect and Unlock still run on the same engines as 1.4.0 inside the new app; they move to Rust over the 2.x releases.
+**Not in 2.0.0 yet:** Share to phone and the local usage log (both in 1.4.0; they return in later 2.x releases). Word, PowerPoint, Excel and HTML to PDF, PDF to Word, Excel, PowerPoint and Markdown, Edit PDF, Forms, Compare, Repair, PDF/A, Protect and Unlock still run on the same engines as 1.4.0 inside the new app; they are kept on purpose where a rewrite would risk text, font or encryption bugs for no measurable gain, and the rest move to Rust over the 2.x releases. Watermark and Page numbers use Rust for Western-European text and the previous engine for other scripts (Hindi, Chinese, Cyrillic…).
 
 Details and every measurement: [release notes](docs/RELEASE_NOTES.md) · [test log](docs/testing/WINDOWS_TESTS.md). Earlier versions: [all releases](https://github.com/Burthcer/IHatePDF/releases).
 
@@ -119,7 +123,7 @@ Details and every measurement: [release notes](docs/RELEASE_NOTES.md) · [test l
 ## How it works
 
 Everything runs on your machine:
-- **Rust** (`crates/ihp-core`) does Compress, Merge, Split, Organize, Rotate, Crop, Images to PDF and page rendering (PDFium).
+- **Rust** (`crates/ihp-core`) does Compress, Merge, Split, Organize, Rotate, Crop, Images to PDF, Redact, Watermark, Page numbers, Sign, page counting and page rendering (PDFium).
 - **[pdf-lib](https://pdf-lib.js.org/)** and **[pdf.js](https://mozilla.github.io/pdf.js/)** do the rest in Web Workers, so the window never freezes.
 - The desktop app is a **Tauri** shell around the same React app.
 

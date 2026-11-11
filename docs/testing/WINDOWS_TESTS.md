@@ -107,7 +107,9 @@ Tauri shell + Rust Compress engine (`crates/ihp-core`). Not a release.
 - **2.0.0 build** (`npm run build:exe`, 24 MB, per-user NSIS): silently installed to a temp folder and run from there: 26 of 27 non-Compress tools pass end to end (`all-tools.mjs`, `E2E_CDP`), Compress runs on Rust (pdfium.dll found in `resources/`), uninstalled cleanly. Page-tool checks (`test-pages-rust.py`): 23/23. Compress regression: all pass.
 - **Startup/memory** (`bench-startup.mjs`, median of 3): Electron 1193 ms / 408 MB working set / 4 processes; Tauri 909 ms / 423 MB / 7 processes (WebView2). Compress on a 10 MB scan, extra peak memory: TypeScript +706 MB, Rust +130 MB.
 - Found by the app-level run: blob (in-memory) results never saved in the Tauri shell (the webview download hook didn't fire); now written through the app. PDFium initialised twice (fixed).
-- Not ported: Share to phone, memory watchdog, usage log. Tools still on the TS engines: Edit PDF, Sign, Forms, Watermark, Page numbers, Redact, Repair, PDF/A, Protect, Unlock, Compare, all Office conversions.
+- Later the same day: Redact, Watermark, Page numbers, Sign and the memory watchdog moved to Rust; PDFium now counts pages at ingestion and draws thumbnails (10,000-page file: one thumbnail from a cached document 3 ms, was 272 ms per thumbnail; first thumbnail in the app 9.4 s vs pdf.js 7.3 s, almost all of it the Playwright upload of the file; 20 pages: 329 vs 298 ms).
+- Stamp tools vs the 1.4.0 workers (`test-stamp-rust.ts`, 14 cases): 13 pixel-identical, 1 at 81 dB with identical words. Redact: `Revenue` is gone from page 1's text layer, pages without boxes keep their text. 27 of 27 non-Compress tools pass in the app.
+- Not ported: Share to phone, usage log. Tools still on the TS engines: Edit PDF, Forms, Repair, PDF/A, Protect, Unlock, Compare, the Office conversions, PDF to Word/Excel/PowerPoint/Markdown.
 
 ### 2026-10-14 · v1.4.0 (branch `claude/usage-log`) · Windows 11 26200, 31.4 GB
 

@@ -21,11 +21,11 @@ The desktop app is rebuilt on **Tauri** with a **Rust core**. Same screens and t
 
 Idle memory is about the same because the page itself (the same React app) dominates it; what drops is the memory tools use while they work.
 
-**In Rust now:** Compress, Merge, Split, Organize pages, Rotate, Crop, Images to PDF (and Scan to PDF), PDF to JPG/PNG (PDFium), and the page thumbnails every page tool shows. Each one falls back to the 1.4.0 engine for anything it can't handle, so a tool never does worse than before.
+**In Rust now:** Compress, Merge, Split, Organize pages, Rotate, Crop, Images to PDF (and Scan to PDF), PDF to JPG/PNG, Redact, Watermark, Page numbers, Sign, the page count when a file is opened, and the page thumbnails every page tool shows (PDFium draws pages; pdf.js is no longer loaded for them). The memory fail-safe also runs in Rust again. Each one falls back to the 1.4.0 engine for anything it can't handle, so a tool never does worse than before.
 
-**Still on the 1.4.0 engines (inside the new app):** Edit PDF, Sign, Forms, Watermark, Page numbers, Redact, Repair, PDF/A, Protect, Unlock, Compare, and every Word/Excel/PowerPoint/HTML conversion. They move to Rust over the 2.x releases.
+**Still on the 1.4.0 engines (inside the new app):** Edit PDF, Forms, Repair, PDF/A, Protect, Unlock, Compare, every Word/Excel/PowerPoint/HTML conversion, and PDF to Word/Excel/PowerPoint/Markdown. Watermark and Page numbers fall back to the 1.4.0 engine for non-Western text. These move to Rust over the 2.x releases where it pays off.
 
-**Not in 2.0.0:** Share to phone, the local usage log, and the memory watchdog that restarts a stuck window. Share to phone and the usage log are in 1.4.0 and return in later 2.x releases.
+**Not in 2.0.0:** Share to phone and the local usage log. Both are in 1.4.0 and return in later 2.x releases.
 
 ## Compress quality
 
@@ -48,6 +48,8 @@ Images the Rust engine can't decode safely (JPEG 2000, CMYK, Lab/Separation colo
 - 27 of the 28 tools driven end to end in the real app (`scripts/e2e/all-tools.mjs` with `E2E_CDP=http://127.0.0.1:9222`); the 28th, Compress, was run from its own script because the 44 MB input is over the debug port's upload limit.
 - Compress, all levels plus custom sizes, on quality, scan, complex and edge PDFs (transparency, palette, CMYK, grayscale, rotated pages, duplicates, a picture inside a form): page count, text, per-page pixels and MuPDF warnings (`scripts/test-compress-rust.mjs`). It found one real bug (wrong `/Length` on re-encoded images), fixed.
 - Page tools: page order, blank pages, rotation, crop boxes on rotated pages, zip contents (`scripts/test-pages-rust.py`).
+- Watermark, Page numbers and Sign: Rust against the 1.4.0 workers on the same input and settings, page by page (14 cases: rotated and cropped pages, tiled, below the text, images, mirrored numbers): 13 are pixel-identical, one differs by 0.1 dB (`scripts/test-stamp-rust.ts`). Redact: the redacted text is gone from the file and the rest keeps its text.
+- Memory fail-safe: unit tests for the budget and levels (`cargo test`) and a run under a 256 MB budget.
 - `npm test`: the 1.4.0 conversion, editor and Word-picture suites still pass.
 
 Full log: [docs/testing/WINDOWS_TESTS.md](testing/WINDOWS_TESTS.md).
