@@ -1,7 +1,7 @@
 {
   "name": "ihatepdf",
   "private": true,
-  "version": "2.0.0-beta.1",
+  "version": "2.0.0-beta.2",
   "description": "IHatePDF - offline PDF tools: a Tauri app with a Rust core.",
   "author": "IHatePDF",
   "type": "module",

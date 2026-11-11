@@ -1,4 +1,4 @@
-# IHatePDF v2.0.0-beta.1 (pre-release)
+# IHatePDF v2.0.0-beta.2 (pre-release)
 
 **This is a beta.** The stable version is still 1.4.0. The desktop app is rebuilt on **Tauri** with a **Rust core**. Same screens and tools; a much smaller installer, a faster start, and the heaviest tools moved off the page into Rust.
 
@@ -21,11 +21,13 @@
 
 Idle memory is about the same because the page itself (the same React app) dominates it; what drops is the memory tools use while they work.
 
+**New in beta.2:** Repair reads damaged files with PDFium (the 1.4.0 repair still runs when PDFium can't open a file); PDF to Markdown, Word and Excel read the text from PDFium (same layout code; 17 of 18 test outputs identical to before); Compare draws its pages with PDFium; every page preview in the app uses PDFium.
+
 **In Rust now:** Compress, Merge, Split, Organize pages, Rotate, Crop, Images to PDF (and Scan to PDF), PDF to JPG/PNG, Redact, Watermark, Page numbers, Sign, the page count when a file is opened, and the page thumbnails every page tool shows (PDFium draws pages; pdf.js is no longer loaded for them). The memory fail-safe also runs in Rust again. Each one falls back to the 1.4.0 engine for anything it can't handle, so a tool never does worse than before.
 
 **Still on the 1.4.0 engines (inside the new app):** Edit PDF, Forms, Repair, PDF/A, Protect, Unlock, Compare, every Word/Excel/PowerPoint/HTML conversion, and PDF to Word/Excel/PowerPoint/Markdown. Watermark and Page numbers fall back to the 1.4.0 engine for non-Western text. These move to Rust over the 2.x releases where it pays off.
 
-**Not in 2.0.0:** Share to phone and the local usage log. Both are in 1.4.0 and return in later 2.x releases.
+**Not in 2.0.0:** Share to phone and the local usage log. Both are in 1.4.0 and return in later 2.x releases. Forms, PDF/A, Protect and Unlock stay on the 1.4.0 code on purpose (appearance generation, compliance details, encryption: no measured problem, so no rewrite risk).
 
 ## Compress quality
 

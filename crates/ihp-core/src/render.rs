@@ -344,3 +344,16 @@ pub fn page_runs(dll: &Path, input: &Path, start: usize, count: usize) -> Result
         Ok(out)
     })
 }
+
+/// Plain text of pages start..start+count (for Compare's word diff).
+pub fn page_texts(dll: &Path, input: &Path, start: usize, count: usize) -> Result<Vec<String>> {
+    with_doc(dll, input, |doc| {
+        let total = doc.pages().len() as usize;
+        let mut out = Vec::new();
+        for i in start..(start + count).min(total) {
+            let page = doc.pages().get(i as i32).map_err(msg)?;
+            out.push(page.text().map_err(msg)?.all());
+        }
+        Ok(out)
+    })
+}

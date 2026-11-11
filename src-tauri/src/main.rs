@@ -80,7 +80,8 @@ fn main() {
             native::redact_pdf,
             native::pdf_probe,
             native::repair_pdf,
-            native::pdf_runs
+            native::pdf_runs,
+            native::pdf_texts
         ])
         .setup(|app| {
             output::clean_work_dir();

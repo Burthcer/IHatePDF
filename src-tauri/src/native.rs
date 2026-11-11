@@ -313,3 +313,11 @@ pub async fn pdf_runs(app: AppHandle, path: String, start: usize, count: usize) 
     .await
     .map_err(|e| e.to_string())?
 }
+
+/// Plain text of pages start..start+count.
+#[tauri::command]
+pub async fn pdf_texts(app: AppHandle, path: String, start: usize, count: usize) -> Result<Vec<String>, String> {
+    let input = crate::output::in_work_dir(&path)?;
+    let dll = pdfium_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || ihp_core::render::page_texts(&dll, &input, start, count).map_err(|e| e.to_string())).await.map_err(|e| e.to_string())?
+}
