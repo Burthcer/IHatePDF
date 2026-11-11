@@ -7,6 +7,7 @@ import { Field, Segmented, Slider, Spinner } from '../../components/ui';
 import { useToolRunner } from '../../hooks/useToolRunner';
 import { usePageThumbnails } from '../../hooks/usePageThumbnails';
 import { openPdfJsDocument } from '../../services/pdfWorkerSetup';
+import { renderNative } from './pdfToJpg.native';
 import { memoryManager } from '../../services/memoryManager';
 import { maxCanvasPixels, startJob } from '../../services/memoryGuard';
 import { formatPageSet, parsePageRanges, rangesToPages } from '../../services/pageRanges';
@@ -45,6 +46,19 @@ export const PdfToJpgView: React.FC<PdfToJpgViewProps> = ({ initialFiles = [], o
 
   const execute = async () => {
     setRenderError(null);
+    // Desktop app: PDFium renders and packs everything in Rust; pdf.js below is the fallback.
+    try {
+      setRendering({ progress: 0, stage: 'Preparing...' });
+      const native = await renderNative(file.data, file.name, selection.pages, { dpi, png: format === 'png', quality }, (progress, stage) => setRendering({ progress, stage }));
+      if (native) {
+        runner.setResult(native);
+        setRendering(null);
+        return;
+      }
+    } catch (err) {
+      console.warn('PDFium export failed, using pdf.js:', err);
+    }
+    setRendering(null);
     const doc = await openPdfJsDocument(file.data).promise;
     const images: BuildJpgZipPayload['images'] = [];
     const job = startJob();

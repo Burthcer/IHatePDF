@@ -23,6 +23,7 @@
   },
   "bundle": {
     "active": true,
+    "resources": ["resources/pdfium.dll"],
     "targets": ["nsis"],
     "icon": ["icons/icon.ico", "icons/icon.png"],
     "windows": { "nsis": { "installMode": "perMachine", "installerIcon": "icons/icon.ico" } }

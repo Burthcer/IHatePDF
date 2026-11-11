@@ -38,3 +38,4 @@ public/pdfjs/
 # Tauri / Rust
 src-tauri/target
 src-tauri/gen
+src-tauri/resources/pdfium.dll

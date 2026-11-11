@@ -121,3 +121,48 @@ pub async fn run_tool(app: AppHandle, id: String, tool: String, inputs: Vec<Stri
     let size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
     Ok(serde_json::json!({ "path": output, "size": size, "pages": r.0, "fileName": r.1 }))
 }
+
+/// Where pdfium.dll is: bundled next to the app (resources/), or in the source tree when running unbundled.
+fn pdfium_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    let mut candidates = Vec::new();
+    if let Ok(r) = app.path().resource_dir() {
+        candidates.push(r.join("resources").join("pdfium.dll"));
+        candidates.push(r.join("pdfium.dll"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("pdfium.dll"));
+            candidates.push(dir.join("resources").join("pdfium.dll"));
+            candidates.push(dir.join("../../resources/pdfium.dll"));
+        }
+    }
+    candidates.into_iter().find(|p| p.exists()).ok_or_else(|| "pdfium.dll not found".to_string())
+}
+
+/// PDF to JPG/PNG with PDFium. `pages` are 1-based. Returns { path, size, pages, fileName }.
+#[tauri::command]
+pub async fn render_pdf(app: AppHandle, id: String, path: String, pages: Vec<usize>, dpi: f64, png: bool, quality: f64, base: String) -> Result<serde_json::Value, String> {
+    let input = crate::output::in_work_dir(&path)?;
+    let dll = pdfium_path(&app)?;
+    let output = crate::output::work_dir().join(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let out2 = output.clone();
+    let (b2, single) = (base.clone(), pages.len() == 1);
+    let first = pages.first().copied().unwrap_or(1);
+    let n = tauri::async_runtime::spawn_blocking(move || {
+        let mut last = 0u32;
+        let mut prog = move |p: u32, stage: &str| {
+            if p >= last {
+                last = p;
+                let _ = app.emit("ihp:progress", serde_json::json!({ "id": id, "progress": p, "stage": stage }));
+            }
+        };
+        ihp_core::render::render_pages(&dll, &input, &pages, dpi, png, quality, &b2, &out2, &mut prog).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let ext = if png { "png" } else { "jpg" };
+    let name = if single || n == 1 { format!("{base}_page_{first}.{ext}") } else { format!("{base}_pages.zip") };
+    let size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
+    Ok(serde_json::json!({ "path": output, "size": size, "pages": n, "fileName": name }))
+}

@@ -71,7 +71,8 @@ fn main() {
             output::out_discard,
             output::out_read,
             native::compress_pdf,
-            native::run_tool
+            native::run_tool,
+            native::render_pdf
         ])
         .setup(|app| {
             output::clean_work_dir();
