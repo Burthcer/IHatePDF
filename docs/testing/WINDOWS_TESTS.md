@@ -91,6 +91,14 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-11-12 · Excel to PDF in Rust (`crates/ihp-core/src/xlsx.rs`)
+
+- Port of `xlsxToPdf.worker.ts`. The TS engine reads the workbook with SheetJS 0.18.5 (`sheet_to_json`, `raw:false`, so every cell is the *formatted* text), so the Rust side reads the package by hand the way SheetJS does (Content_Types, shared strings incl. rich text/phonetic runs, styles numFmts + cellXfs, dimension ref, the row/cell regex scan, formulas without cached value skipped) and ports SheetJS's SSF formatter (General, 0/#/? patterns, thousands, %, E+, literals, [Red]/[$-x] blocks, conditions, date/time fields, AM/PM, [h]:mm:ss), then the same layout (9 pt columns capped at 220, shrink to 6 pt then column bands, repeated header, `n / total`). `ihp-xlsx` bin (3rd arg dumps the cell text per sheet), `run_tool` arm `xlsx`, `excelToPdf.native.ts` + `nativeFirst` in `ExcelToPdfView.tsx` (only .xlsx/.xlsm go to Rust); TS stays as fallback.
+- `scripts/test-xlsx-rust.ts` (`PY=py PYTHONIOENCODING=utf8 npx tsx scripts/test-xlsx-rust.ts`): 59 files (40 one-per-format grids, 23 formats x 18 values, 14 date/time formats x 14 serials, text/booleans/formulas/4 sheets, wide (bands), 400-row (pages), Greek/Cyrillic, CJK, Devanagari, inline strings, offset dimension, a hand-written package with rich text/errors/odd refs, 7 real files). 58 compared: cell text identical to SheetJS in all 58, same pages and words, PSNR 56.9 to 90 dB; 1 falls back to TS (`0E+00`, an exponent format SSF routes through a branch not ported).
+- Rust returns an error (TS runs) for: .xls/.ods/.xlsb/.csv, `t="d"` cells, 1904 dates, fractions (`# ?/?`), phone/dashed/engineering-exponent formats, numbers JavaScript prints in exponent form (>=1e21, <1e-6), cells with a line break/tab (TS itself throws), shared formulas without cached value, chart sheets.
+- Found on the way: pdf-lib measures a standard font as (sum of glyph widths) x (size / 1000), `stamp::Font::width` does (sum x size) / 1000; they differ in the last bit, which flips "does it fit" on borderline headers (`Group` vs `Gro...`). `xlsx.rs` uses pdf-lib's order; `stamp.rs` untouched.
+- NOT verified: the installed app (Excel to PDF through `run_tool` + `asset_resolver` fonts), a real multi-MB workbook, an .xlsx saved by LibreOffice/Google Sheets.
+
 ### 2026-11-12 · PowerPoint to PDF in Rust (`crates/ihp-core/src/pptx.rs`)
 
 - Port of `pptToPdf.worker.ts` + `pptxParser.ts` (same regexes, same drawing maths: 48-band gradients, 6 pt text padding, 1.25 line height, equal table rows; fonts and pictures as in `docx.rs`). `ihp-pptx` bin, `run_tool` arm `pptx`, `pptToPdf.native.ts` + `nativeFirst` in `PptToPdfView.tsx`; TS stays as fallback.

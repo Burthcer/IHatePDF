@@ -9,3 +9,4 @@ pub mod pptx;
 pub mod pptx_out;
 pub mod render;
 pub mod stamp;
+pub mod xlsx;

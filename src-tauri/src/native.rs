@@ -149,6 +149,7 @@ pub async fn run_tool(app: AppHandle, id: String, tool: String, inputs: Vec<Stri
                 let (payload, imgs) = ihp_core::html::unpack(&std::fs::read(first).map_err(|x| x.to_string())?).map_err(e)?;
                 ihp_core::html::html_to_pdf(&payload, &imgs, &out2, Some(&fonts), &mut prog).map(|n| (n, None)).map_err(e)
             }
+            "xlsx" => ihp_core::xlsx::xlsx_to_pdf(first, &out2, Some(&fonts), &mut prog).map(|n| (n, None)).map_err(e),
             other => Err(format!("Unknown tool {other}")),
         }
     })
