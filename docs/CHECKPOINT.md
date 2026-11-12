@@ -2,6 +2,16 @@
 
 Branch `claude/rust-port`, code is at **2.0.0-beta.2** (commit 8061210); only **v2.0.0-beta.1** is published as a release so far. To continue, say "continue from docs/CHECKPOINT.md".
 
+## LATEST (2026-11-12, end of session) - read this first; the "Next, in order" list further down is partly stale
+
+- **v2.0.0-beta.3 is published (pre-release, workflow run 43199851941; 1.4.0 stays "Latest"; nothing on main).** About 22 of 28 tools run on Rust first with TypeScript fallback: everything in the lists below plus Word/PowerPoint/Excel/HTML to PDF, PDF to PowerPoint (fully native) and the Unicode font layer. Recall sheet of every test and number: `docs/testing/TEST_LOG.md`.
+- **Tested on the published CI installer** (installed, run over the WebView2 debug port): `all-tools.mjs` 27/29 (the 2 failures are harness limits: `compress` upload timeout, `autoSave` download event), `unicode-watermark.mjs` 6/6, `pdf-to-ppt-native.mjs` 3/3. Plain `/S` leaves the NSIS window open here; use `/S /D=<folder>`.
+- **Still TypeScript on purpose:** Protect, Unlock, Forms, PDF/A, Compare word diff, Edit PDF editing half (`applyPageEdits`). Skipped by instruction: Share to phone, usage log.
+- **Not verified:** the Rust-written .pptx in real PowerPoint/LibreOffice; complex Office decks; very large workbooks; LibreOffice/Google Sheets xlsx.
+- **Machine note:** the 1.4.0 install (Program Files, Public Desktop shortcut) is the user's real one; the beta test install was uninstalled again.
+- **Architecture fact for any write-up:** native Rust in Tauri (no wasm); web app unknown/not part of 2.0. Numbers for a LinkedIn-style post are in `TEST_LOG.md`; the open items there are timeline and Dev's own words (do not invent).
+- **Possible next work:** merge `claude/rust-port` to main (user's call only), a stable 2.0.0 after real-PowerPoint check, Edit PDF editing port (optional, no measured need), signed installer.
+
 ## State
 
 - Tauri shell + Rust core (`crates/ihp-core`) in; Electron removed. Installer 25 MB, per-user NSIS.
