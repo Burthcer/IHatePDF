@@ -25,6 +25,8 @@ Branch `claude/rust-port`, code is at **2.0.0-beta.2** (commit 8061210); only **
 
 - **HTML to PDF writer DONE in Rust (html.rs, A/B 8/8, worst 59 dB; layout capture stays in the browser; TS fallback). NOT verified in the installed app** (packed job file via stageInput + fontAssets).
 
+- **Installed-app E2E done for all the new Rust paths (2026-11-12 afternoon)**: Unicode fonts via `asset_resolver` work (Watermark, Word to PDF), PDF to PowerPoint is fully native, `all-tools.mjs` 27/29 (the 2 are harness limits). **PDF to PowerPoint text boxes DONE in Rust (`editpdf.rs`, 242 PDFs / 21,067 boxes identical, speed level)**. Only Edit PDF's editing half (`applyPageEdits`) remains on TS, on purpose. Recall sheet of all tests: `docs/testing/TEST_LOG.md`.
+
 ## Next, in order (code first; each needs a Rust-vs-TS comparison test before it ships, TS stays as fallback)
 
 1. **PDF to PowerPoint**: backgrounds now via PDFium (`render::strip_text`, `strip_pdf_text`, `features/pdfToPpt/strip.native.ts`; 0.00% pixel diff vs TS, falls back on form-XObject text). Text boxes stay on the TS Edit-engine analysis (needs colour/rotation/alignment PDFium runs lack): that part waits for the Edit engine port. Writer + slide rendering now in Rust too (`pptx_out.rs`, `build_pptx`, `buildPptx.native.ts`; structurally identical to pptxgenjs on 3 PDFs, see WINDOWS_TESTS). NOT verified: real PowerPoint/LibreOffice opening, the installed app (E2E). Text-box extraction is still the TS Edit engine.

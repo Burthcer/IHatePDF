@@ -315,6 +315,16 @@ pub async fn strip_pdf_text(app: AppHandle, path: String) -> Result<serde_json::
     Ok(serde_json::json!({ "path": output, "size": size, "pages": pages }))
 }
 
+/// PDF to PowerPoint text boxes per page ({ boxes }[]), from the Rust port of the editor's text analysis.
+/// Errors on anything it can't read: the caller then uses the TypeScript engine.
+#[tauri::command]
+pub async fn pdf_text_boxes(path: String) -> Result<serde_json::Value, String> {
+    let input = crate::output::in_work_dir(&path)?;
+    tauri::async_runtime::spawn_blocking(move || ihp_core::editpdf::ppt_text_boxes(&input, &mut |_, _| {}))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Text runs and picture boxes for pages start..start+count (viewer space). Errors on rotated pages.
 #[tauri::command]
 pub async fn pdf_runs(app: AppHandle, path: String, start: usize, count: usize) -> Result<serde_json::Value, String> {

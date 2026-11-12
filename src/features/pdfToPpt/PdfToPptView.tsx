@@ -8,7 +8,7 @@ import { memoryManager } from '../../services/memoryManager';
 import { startJob } from '../../services/memoryGuard';
 import { WorkerClient } from '../../services/workerClient';
 import { getTool } from '../../constants/tools';
-import { stripTextNative } from './strip.native';
+import { stripTextNative, textBoxesNative } from './strip.native';
 import { buildPptxNative } from './buildPptx.native';
 import type { PDFFile } from '../../types/pdf';
 import type { BuildPptxPayload, OfficeConversionResult, PptTextBox, PptxSlideImage } from '../../types/worker';
@@ -62,15 +62,21 @@ export const PdfToPptView: React.FC<PdfToPptViewProps> = ({ initialFiles = [], o
       let source: PdfJsSource = file.data;
       let textBoxes: PptTextBox[][] | undefined;
       if (mode === 'editable') {
-        client = new WorkerClient(() => new Worker(new URL('./extract.worker.ts', import.meta.url), { type: 'module' }));
-        // Desktop app: PDFium strips the text for the backgrounds (same pixels as the TypeScript engine on
-        // the test files); when it can't, the worker does it.
+        // Desktop app: Rust finds the text boxes (same boxes as the TypeScript engine on 242 test files) and PDFium
+        // strips the text for the backgrounds (same pixels); whichever can't, the worker does.
         const native = await stripTextNative(file.data);
-        const res = await client.call<{ background: ArrayBuffer | null; pages: Array<{ boxes: PptTextBox[] }> }>('EXTRACT_FOR_PPT', { buffer: file.data, skipBackground: !!native }, [], (p, stage) =>
-          setPrep({ progress: p * 0.4, stage })
-        );
-        source = native ?? res.background!;
-        textBoxes = res.pages.map((p) => p.boxes);
+        const nativeBoxes = await textBoxesNative(file.data);
+        if (native && nativeBoxes) {
+          source = native;
+          textBoxes = nativeBoxes;
+        } else {
+          client = new WorkerClient(() => new Worker(new URL('./extract.worker.ts', import.meta.url), { type: 'module' }));
+          const res = await client.call<{ background: ArrayBuffer | null; pages: Array<{ boxes: PptTextBox[] }> }>('EXTRACT_FOR_PPT', { buffer: file.data, skipBackground: !!native }, [], (p, stage) =>
+            setPrep({ progress: p * 0.4, stage })
+          );
+          source = native ?? res.background!;
+          textBoxes = res.pages.map((p) => p.boxes);
+        }
       }
       // Desktop app: Rust renders the pages (PDFium) and writes the .pptx; any failure falls through to pdf.js + pptxgenjs.
       if (source instanceof ArrayBuffer || source instanceof Blob) {

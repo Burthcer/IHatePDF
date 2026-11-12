@@ -1206,7 +1206,6 @@ fn eval_fmt(fmt: &str, v: f64, flen: usize) -> Result<String> {
                 }
                 out[u].v = vv;
                 out[u].t = 't';
-                lasti = u;
             }
         }
     }

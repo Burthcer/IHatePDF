@@ -1,6 +1,7 @@
 pub mod afm;
 pub mod compress;
 pub mod docx;
+pub mod editpdf;
 pub mod fonts;
 pub mod html;
 pub mod images;

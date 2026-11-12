@@ -81,6 +81,7 @@ fn main() {
             native::pdf_probe,
             native::repair_pdf,
             native::strip_pdf_text,
+            native::pdf_text_boxes,
             native::pdf_runs,
             native::pdf_texts,
             native::build_pptx

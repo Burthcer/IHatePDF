@@ -7,13 +7,8 @@
 
 import { openPdf } from '../../services/pdfLoader';
 import { analyzePage, applyPageEdits } from '../editPdf/engine/rewrite';
+import { blocksToPptBoxes } from './textBoxes';
 import type { PdfInput, PptTextBox } from '../../types/worker';
-
-function familyFace(fontName: string, family: 'sans' | 'serif' | 'mono'): string {
-  const base = fontName.split(/[-,+]/)[0].replace(/(MT|PS|Std|Pro)$/, '').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
-  if (base && /^[A-Za-z ]{3,40}$/.test(base)) return base;
-  return family === 'serif' ? 'Times New Roman' : family === 'mono' ? 'Courier New' : 'Arial';
-}
 
 self.addEventListener('message', async (event: MessageEvent<{ id: string; action: string; payload: { buffer: PdfInput; skipBackground?: boolean } }>) => {
   const { id, action, payload } = event.data ?? {};
@@ -27,23 +22,7 @@ self.addEventListener('message', async (event: MessageEvent<{ id: string; action
       progress(Math.round((i / pages.length) * 90), `Separating text from page ${i + 1}...`);
       const { blocks } = analyzePage(pages[i], i);
       out.push({
-        boxes: blocks
-          .filter((b) => b.text.trim())
-          .map((b) => ({
-            x: b.box.x,
-            y: b.box.y,
-            width: b.box.width,
-            height: b.box.height,
-            lines: b.lines.map((l) => l.text),
-            fontSize: b.style.fontSize,
-            color: b.style.color,
-            bold: b.style.bold,
-            italic: b.style.italic,
-            fontFace: familyFace(b.fontName, b.style.family),
-            align: b.style.align === 'justify' ? 'left' : b.style.align,
-            lineHeight: b.lines.length > 1 ? b.frame.lineHeight : undefined,
-            rotate: b.angle,
-          })),
+        boxes: blocksToPptBoxes(blocks),
       });
       if (payload.skipBackground) continue;
       await applyPageEdits(doc, pages[i], {

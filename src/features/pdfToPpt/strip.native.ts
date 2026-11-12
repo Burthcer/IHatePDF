@@ -5,7 +5,7 @@
  */
 import { hasNative, inputBytes, stageInput } from '../../services/nativeWorker';
 import { MAX_NATIVE_BYTES } from '../../services/nativeTools';
-import type { PdfInput } from '../../types/worker';
+import type { PdfInput, PptTextBox } from '../../types/worker';
 
 export async function stripTextNative(data: PdfInput): Promise<ArrayBuffer | null> {
   if (!hasNative() || inputBytes(data) > MAX_NATIVE_BYTES) return null;
@@ -18,6 +18,20 @@ export async function stripTextNative(data: PdfInput): Promise<ArrayBuffer | nul
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   } catch (err) {
     console.warn('PDFium text removal unavailable, using the TypeScript engine:', err);
+    return null;
+  }
+}
+
+/** Desktop app: the editable text boxes per page from the Rust port of the editor's text analysis (editpdf.rs); null when it can't. */
+export async function textBoxesNative(data: PdfInput): Promise<PptTextBox[][] | null> {
+  if (!hasNative() || inputBytes(data) > MAX_NATIVE_BYTES) return null;
+  try {
+    const path = await stageInput(data);
+    const tauri = (globalThis as unknown as { __TAURI__: { core: { invoke: (c: string, a: unknown) => Promise<any> } } }).__TAURI__;
+    const pages: Array<{ boxes: PptTextBox[] }> = await tauri.core.invoke('pdf_text_boxes', { path });
+    return pages.map((p) => p.boxes);
+  } catch (err) {
+    console.warn('Rust text analysis unavailable, using the TypeScript engine:', err);
     return null;
   }
 }

@@ -99,6 +99,14 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 - Found on the way: pdf-lib measures a standard font as (sum of glyph widths) x (size / 1000), `stamp::Font::width` does (sum x size) / 1000; they differ in the last bit, which flips "does it fit" on borderline headers (`Group` vs `Gro...`). `xlsx.rs` uses pdf-lib's order; `stamp.rs` untouched.
 - NOT verified: the installed app (Excel to PDF through `run_tool` + `asset_resolver` fonts), a real multi-MB workbook, an .xlsx saved by LibreOffice/Google Sheets.
 
+### 2026-11-12 (afternoon) · installed-app pass + Edit PDF text analysis in Rust (`crates/ihp-core/src/editpdf.rs`)
+
+Summary table and recall notes: `docs/testing/TEST_LOG.md`.
+
+- **Installed-style app** (release exe with `--remote-debugging-port=9222`, fresh `npm run build` + `cargo build --release`): `all-tools.mjs` 27 of 29 (`compress` = harness upload timeout on its 44 MB input, `autoSave` = waits for a browser download event; neither a product bug); `tauri.mjs` Compress smoke test passes; new `scripts/e2e/unicode-watermark.mjs` 6 of 6 (Hindi/Greek/Chinese watermark, Hindi/Greek+Cyrillic/Chinese Word to PDF; no Rust-declined warnings, so `asset_resolver` does find the fonts); new `scripts/e2e/pdf-to-ppt-native.mjs` 3 of 3 (Rust text boxes + PDFium backgrounds + Rust writer, no fallback warnings). `npm test` 17/33/5, `tsc` and `cargo build` clean (the `lasti` warning removed).
+- **PDF to PowerPoint text boxes in Rust**: port of the Edit engine's analysis half (lexer, CMap, font model, interpreter, layout; data tables dumped by `scripts/gen-editdata.ts` to `src/editdata.json`). `scripts/test-editpdf-rust.ts`: 137 own PDFs (470 pages, 14,438 boxes) and 105 real-world PDFs from this laptop (1,141 pages, 6,629 boxes): **0 differences, 0 fallbacks** (text, font, size, colour, bold/italic, alignment, rotation exact; position/size within 0.01 pt). Speed level with TypeScript (1.1 s vs 1.0 s on the 137 files, after compiling 3 regexes once instead of per box: first version was 2.4 s). Wired: command `pdf_text_boxes`, `textBoxesNative` in `strip.native.ts`, used by `PdfToPptView` (worker only when Rust or PDFium declines); shared mapping in `pdfToPpt/textBoxes.ts`.
+- Not ported on purpose: Edit PDF's editing half (`applyPageEdits`). Not verified: real PowerPoint opening the Rust .pptx.
+
 ### 2026-11-12 · PowerPoint to PDF in Rust (`crates/ihp-core/src/pptx.rs`)
 
 - Port of `pptToPdf.worker.ts` + `pptxParser.ts` (same regexes, same drawing maths: 48-band gradients, 6 pt text padding, 1.25 line height, equal table rows; fonts and pictures as in `docx.rs`). `ihp-pptx` bin, `run_tool` arm `pptx`, `pptToPdf.native.ts` + `nativeFirst` in `PptToPdfView.tsx`; TS stays as fallback.
