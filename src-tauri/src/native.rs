@@ -285,6 +285,21 @@ pub async fn repair_pdf(app: AppHandle, path: String) -> Result<serde_json::Valu
     Ok(serde_json::json!({ "path": output, "size": size, "pages": pages }))
 }
 
+/// PDF to PowerPoint backgrounds: a copy with all text removed (PDFium). Errors when it can't (text in
+/// a form XObject, unreadable file): the caller then uses the TypeScript engine. { path, size, pages }.
+#[tauri::command]
+pub async fn strip_pdf_text(app: AppHandle, path: String) -> Result<serde_json::Value, String> {
+    let input = crate::output::in_work_dir(&path)?;
+    let dll = pdfium_path(&app)?;
+    let output = crate::output::work_dir().join(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let out2 = output.clone();
+    let pages = tauri::async_runtime::spawn_blocking(move || ihp_core::render::strip_text(&dll, &input, &out2).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())??;
+    let size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
+    Ok(serde_json::json!({ "path": output, "size": size, "pages": pages }))
+}
+
 /// Text runs and picture boxes for pages start..start+count (viewer space). Errors on rotated pages.
 #[tauri::command]
 pub async fn pdf_runs(app: AppHandle, path: String, start: usize, count: usize) -> Result<serde_json::Value, String> {

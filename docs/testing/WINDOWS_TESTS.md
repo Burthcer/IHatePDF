@@ -91,6 +91,11 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-11-12 · 2.0.0-beta.2 release + PDF to PowerPoint backgrounds on `claude/rust-port`
+
+- **Release**: the by-hand "Windows installer" run on `claude/rust-port` (43139429402) succeeded; `v2.0.0-beta.2` is a pre-release with `IHatePDF-Setup.exe`, 1.4.0 stays "Latest". The old `startup_failure` and the two stuck "queued" runs were GitHub-side and needed no action.
+- **PDF to PowerPoint backgrounds** (`scripts/test-strip-rust.ts`, TypeScript engine vs PDFium text removal): journal_10p, q_word and sample-multi give 0 text characters left in both and **0.00% pixel difference** between the two backgrounds (first 5 pages each). `complex.pdf` has text inside a form XObject, PDFium cannot remove it through its API, so it errors and the TypeScript engine runs (checked: it falls back). Text boxes still come from the TypeScript analysis (colour, rotation and alignment are not in the PDFium runs). Not yet run in the installed app (`E2E_CDP` harness): next beta build.
+
 ### 2026-11-12 · 2.0.0-beta.1 work on `claude/rust-port` · Windows 11 26200
 
 - **Repair** (`scripts/test-repair-rust.ts`, 36 damaged files: truncated 97/80/50%, bad startxref, no trailer, junk prefix, flipped bytes, zeroed block, broken catalog, on 4 PDFs): same pages in 30 cases, PDFium better in 1, and in 5 PDFium can't open the file and the TypeScript repair takes over, so the combination never recovers less. Outputs that read back with MuPDF warnings (3) are the files whose own stream data was corrupted.

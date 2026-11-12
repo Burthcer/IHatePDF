@@ -80,6 +80,7 @@ fn main() {
             native::redact_pdf,
             native::pdf_probe,
             native::repair_pdf,
+            native::strip_pdf_text,
             native::pdf_runs,
             native::pdf_texts
         ])

@@ -15,7 +15,7 @@ function familyFace(fontName: string, family: 'sans' | 'serif' | 'mono'): string
   return family === 'serif' ? 'Times New Roman' : family === 'mono' ? 'Courier New' : 'Arial';
 }
 
-self.addEventListener('message', async (event: MessageEvent<{ id: string; action: string; payload: { buffer: PdfInput } }>) => {
+self.addEventListener('message', async (event: MessageEvent<{ id: string; action: string; payload: { buffer: PdfInput; skipBackground?: boolean } }>) => {
   const { id, action, payload } = event.data ?? {};
   if (action !== 'EXTRACT_FOR_PPT') return;
   const progress = (p: number, stage: string) => self.postMessage({ type: 'PROGRESS', payload: { id, progress: p, stage } });
@@ -45,6 +45,7 @@ self.addEventListener('message', async (event: MessageEvent<{ id: string; action
             rotate: b.angle,
           })),
       });
+      if (payload.skipBackground) continue;
       await applyPageEdits(doc, pages[i], {
         pageIndex: i,
         blocks: blocks.map((b) => ({ id: b.id, deleted: true })),
@@ -53,6 +54,10 @@ self.addEventListener('message', async (event: MessageEvent<{ id: string; action
         addedImages: [],
         shapes: [],
       });
+    }
+    if (payload.skipBackground) {
+      (self as unknown as Worker).postMessage({ type: 'RESPONSE', payload: { id, success: true, data: { background: null, pages: out } } });
+      return;
     }
     progress(95, 'Saving backgrounds...');
     const bytes = await doc.save({ useObjectStreams: false });

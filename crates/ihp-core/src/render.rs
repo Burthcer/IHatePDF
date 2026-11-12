@@ -242,6 +242,39 @@ pub fn repair(dll: &Path, input: &Path, out: &Path) -> Result<usize> {
     Ok(n)
 }
 
+/// PDF to PowerPoint backgrounds: a copy of the file with every text object removed from every page
+/// (pictures, vectors and annotations stay). Text drawn inside a form XObject can't be removed through
+/// PDFium's API, so that (and a rotated-page-agnostic failure of any kind) returns an error and the
+/// caller keeps the TypeScript engine. Returns the page count.
+pub fn strip_text(dll: &Path, input: &Path, out: &Path) -> Result<usize> {
+    fn has_text_in_form(o: &PdfPageObject) -> bool {
+        match o.as_x_object_form_object() {
+            Some(f) => f.iter().any(|c| c.as_text_object().is_some() || has_text_in_form(&c)),
+            None => false,
+        }
+    }
+    let pdfium = shared(dll)?;
+    let doc = pdfium.load_pdf_from_file(input, None).map_err(msg)?;
+    let n = doc.pages().len() as usize;
+    for i in 0..n {
+        let mut page = doc.pages().get(i as i32).map_err(msg)?;
+        let mut idx: Vec<usize> = Vec::new();
+        for (k, o) in page.objects().iter().enumerate() {
+            if o.as_text_object().is_some() {
+                idx.push(k);
+            } else if has_text_in_form(&o) {
+                return Err(Error::Msg("text inside a form XObject".into()));
+            }
+        }
+        for k in idx.into_iter().rev() {
+            page.objects_mut().remove_object_at_index(k).map_err(msg)?;
+        }
+        page.regenerate_content().map_err(msg)?;
+    }
+    doc.save_to_file(out).map_err(msg)?;
+    Ok(n)
+}
+
 // ------------------------------------------------------------------ text runs (PDF to Word / Excel / Markdown)
 
 pub struct RunOut {
