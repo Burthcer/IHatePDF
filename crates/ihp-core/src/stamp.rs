@@ -8,6 +8,7 @@
 
 use crate::afm::{FONTS, KERNS};
 use crate::compress::{Error, Result};
+use crate::fonts::{FontSource, Fonts};
 use crate::images::{embed_image, Embedded};
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 use serde_json::Value;
@@ -353,7 +354,7 @@ fn mirrored(p: &str) -> String {
     if p.ends_with("left") { p.replace("left", "right") } else if p.ends_with("right") { p.replace("right", "left") } else { p.to_string() }
 }
 
-pub fn page_numbers(input: &Path, out: &Path, p: &Value, progress: &mut dyn FnMut(u32, &str)) -> Result<usize> {
+pub fn page_numbers(input: &Path, out: &Path, p: &Value, fonts: Option<FontSource>, progress: &mut dyn FnMut(u32, &str)) -> Result<usize> {
     progress(10, "Loading PDF document...");
     let mut doc = load(input)?;
     let pages: Vec<ObjectId> = doc.get_pages().values().copied().collect();
@@ -383,27 +384,35 @@ pub fn page_numbers(input: &Path, out: &Path, p: &Value, progress: &mut dyn FnMu
     let position = str_of(p, "position").unwrap_or("bottom-center").to_string();
     let mirror = p.get("mirror").and_then(|v| v.as_bool()).unwrap_or(false);
     let wraps = new_wraps(&mut doc);
+    let mut uni = Fonts::new(fonts);
     progress(35, "Stamping page numbers...");
     for i in from..=to {
         let page = pages[i as usize];
         let text = label(starting + (i - from));
-        let bytes = font.encode(&text.replace(['\r', '\n', '\t'], " ")).ok_or(Error::NeedsUnicodeFont)?;
+        let clean = text.replace(['\r', '\n', '\t'], " ");
+        let (show, tw, th, res) = match font.encode(&clean) {
+            Some(bytes) => (format!("{} Tj", pdf_string(&bytes)), font.width(&bytes, size), font.ascender * size / 1000.0, font_dict(&font)),
+            None => {
+                let (id, u) = uni.get(&mut doc, &clean, false, false).ok_or(Error::NeedsUnicodeFont)?;
+                let sh = u.shape(&clean, size)?;
+                (format!("{} TJ", sh.tj), sh.width, u.ascent(size), Object::Reference(id))
+            }
+        };
         let pos = if mirror && (i - from) % 2 == 1 { mirrored(&position) } else { position.clone() };
         let (frame, pw, ph) = viewer_frame(&doc, page);
-        let tw = font.width(&bytes, size);
-        let th = font.ascender * size / 1000.0;
         let (x, y) = anchor(pw, ph, tw, th, &pos, margin);
         let content = format!(
-            "q {} cm BT /IHPF {} Tf {} {} {} rg {} {} Td {} Tj ET Q",
+            "q {} cm BT /IHPF {} Tf {} {} {} rg {} {} Td {} ET Q",
             frame.iter().map(|v| f(*v)).collect::<Vec<_>>().join(" "),
-            f(size), f(r), f(g), f(b), f(x), f(y), pdf_string(&bytes)
+            f(size), f(r), f(g), f(b), f(x), f(y), show
         );
-        add_resource(&mut doc, page, "Font", "IHPF", font_dict(&font))?;
+        add_resource(&mut doc, page, "Font", "IHPF", res)?;
         add_content(&mut doc, page, content.into_bytes(), false, &wraps)?;
         if to > from {
             progress(35 + (((i - from) * 50) / (to - from)) as u32, &format!("Stamping page {}...", i + 1));
         }
     }
+    uni.finish(&mut doc)?;
     progress(90, "Saving document...");
     save(&mut doc, out)?;
     Ok(pages.len())
@@ -411,7 +420,7 @@ pub fn page_numbers(input: &Path, out: &Path, p: &Value, progress: &mut dyn FnMu
 
 // ------------------------------------------------------------------ watermark
 
-pub fn watermark(input: &Path, out: &Path, p: &Value, image: Option<(&[u8], bool)>, progress: &mut dyn FnMut(u32, &str)) -> Result<usize> {
+pub fn watermark(input: &Path, out: &Path, p: &Value, image: Option<(&[u8], bool)>, fonts: Option<FontSource>, progress: &mut dyn FnMut(u32, &str)) -> Result<usize> {
     let mode = str_of(p, "mode").unwrap_or("text");
     let text = str_of(p, "text").unwrap_or("");
     if mode == "text" && text.trim().is_empty() {
@@ -437,7 +446,22 @@ pub fn watermark(input: &Path, out: &Path, p: &Value, image: Option<(&[u8], bool
     let image_scale = f64_of(p, "imageScale", 0.5);
     let font = Font::standard(str_of(p, "fontFamily").unwrap_or("sans"), p.get("bold").and_then(|v| v.as_bool()).unwrap_or(true), false);
     let lines: Vec<String> = text.split('\n').map(|s| s.to_string()).collect();
-    let encoded: Vec<Vec<u8>> = if mode == "text" { lines.iter().map(|l| font.encode(l).ok_or(Error::NeedsUnicodeFont)).collect::<Result<_>>()? } else { Vec::new() };
+    let mut uni = Fonts::new(fonts);
+    // Each line as content-stream text ("(..) Tj" or "[..] TJ") with its width; one font for all lines.
+    let (shown, font_res): (Vec<(String, f64)>, Object) = if mode != "text" {
+        (Vec::new(), Object::Null)
+    } else if let Some(enc) = lines.iter().map(|l| font.encode(l)).collect::<Option<Vec<_>>>() {
+        (enc.iter().map(|b| (format!("{} Tj", pdf_string(b)), font.width(b, size))).collect(), font_dict(&font))
+    } else {
+        let bold = p.get("bold").and_then(|v| v.as_bool()).unwrap_or(true);
+        let (id, u) = uni.get(&mut doc, text, bold, false).ok_or(Error::NeedsUnicodeFont)?;
+        let mut v = Vec::new();
+        for l in &lines {
+            let sh = u.shape(l, size)?;
+            v.push((format!("{} TJ", sh.tj), sh.width));
+        }
+        (v, Object::Reference(id))
+    };
     let img: Option<Embedded> = match image {
         Some((bytes, png)) if mode == "image" => {
             progress(20, "Embedding watermark image...");
@@ -456,7 +480,7 @@ pub fn watermark(input: &Path, out: &Path, p: &Value, image: Option<(&[u8], bool
         }
         let (frame, pw, ph) = viewer_frame(&doc, *page);
         let (w, h) = if mode == "text" {
-            (encoded.iter().map(|b| font.width(b, size)).fold(0.0, f64::max), size * 1.15 * lines.len() as f64)
+            (shown.iter().map(|(_, w)| *w).fold(0.0, f64::max), size * 1.15 * lines.len() as f64)
         } else {
             let im = img.as_ref().unwrap();
             let scale = (image_scale * pw) / im.w;
@@ -465,11 +489,11 @@ pub fn watermark(input: &Path, out: &Path, p: &Value, image: Option<(&[u8], bool
         let mut body = String::new();
         let draw = |x: f64, y: f64, body: &mut String| {
             if mode == "text" {
-                for (li, bytes) in encoded.iter().enumerate() {
+                for (li, (show, _)) in shown.iter().enumerate() {
                     let dy = (lines.len() - 1 - li) as f64 * size * 1.15 + size * 0.2;
                     body.push_str(&format!(
-                        "BT /IHPF {} Tf {} {} {} rg {} {} {} {} {} {} Tm {} Tj ET\n",
-                        f(size), f(r), f(g), f(b), f(c), f(s), f(-s), f(c), f(x - dy * s), f(y + dy * c), pdf_string(bytes)
+                        "BT /IHPF {} Tf {} {} {} rg {} {} {} {} {} {} Tm {} ET\n",
+                        f(size), f(r), f(g), f(b), f(c), f(s), f(-s), f(c), f(x - dy * s), f(y + dy * c), show
                     ));
                 }
             } else {
@@ -496,7 +520,7 @@ pub fn watermark(input: &Path, out: &Path, p: &Value, image: Option<(&[u8], bool
         let content = format!("q {} cm /{gs_name} gs\n{}Q", frame.iter().map(|v| f(*v)).collect::<Vec<_>>().join(" "), body);
         add_resource(&mut doc, *page, "ExtGState", gs_name, gstate(opacity))?;
         if mode == "text" {
-            add_resource(&mut doc, *page, "Font", "IHPF", font_dict(&font))?;
+            add_resource(&mut doc, *page, "Font", "IHPF", font_res.clone())?;
         } else {
             add_resource(&mut doc, *page, "XObject", "IHPX", Object::Reference(img.as_ref().unwrap().id))?;
         }
@@ -505,6 +529,7 @@ pub fn watermark(input: &Path, out: &Path, p: &Value, image: Option<(&[u8], bool
             progress(35 + ((i * 50) / pages.len()) as u32, &format!("Stamping page {} of {}...", i + 1, pages.len()));
         }
     }
+    uni.finish(&mut doc)?;
     progress(90, "Saving document...");
     save(&mut doc, out)?;
     Ok(pages.len())

@@ -51,7 +51,15 @@ pub async fn run_tool(app: AppHandle, id: String, tool: String, inputs: Vec<Stri
     let ins: Vec<std::path::PathBuf> = inputs.iter().map(|p| crate::output::in_work_dir(p)).collect::<Result<_, _>>()?;
     let output = crate::output::work_dir().join(format!("{}.tmp", uuid::Uuid::new_v4()));
     let out2 = output.clone();
+    // Unicode fonts for Watermark / Page numbers come from the app's own embedded assets: the page sends
+    // their URL paths ({ face: [path, ...] }).
+    let font_app = app.clone();
+    let font_paths = args["fontAssets"].clone();
     let r = tauri::async_runtime::spawn_blocking(move || -> Result<(usize, Option<String>), String> {
+        let fonts = move |face: ihp_core::fonts::Face, v: usize| -> Option<Vec<u8>> {
+            let path = font_paths[face.key()].as_array()?.get(v % face.variants())?.as_str()?.to_string();
+            font_app.asset_resolver().get(path).map(|a| a.bytes.to_vec())
+        };
         let mut last = 0u32;
         let mut prog = move |p: u32, stage: &str| {
             if p >= last {
@@ -124,7 +132,7 @@ pub async fn run_tool(app: AppHandle, id: String, tool: String, inputs: Vec<Stri
                 };
                 images_to_pdf(&pairs, &opts, &out2, &mut prog).map(|n| (n, None)).map_err(e)
             }
-            "pagenumbers" => ihp_core::stamp::page_numbers(first, &out2, &args, &mut prog).map(|n| (n, None)).map_err(e),
+            "pagenumbers" => ihp_core::stamp::page_numbers(first, &out2, &args, Some(&fonts), &mut prog).map(|n| (n, None)).map_err(e),
             "watermark" | "sign" => {
                 let img = ins.get(1).map(|p| std::fs::read(p).map_err(|x| x.to_string())).transpose()?;
                 let is_png = args["imageType"].as_str().map_or(true, |t| t == "png");
@@ -132,7 +140,7 @@ pub async fn run_tool(app: AppHandle, id: String, tool: String, inputs: Vec<Stri
                     let png = img.ok_or("No signature image provided.")?;
                     ihp_core::stamp::sign(first, &out2, &png, &args["placements"], &mut prog).map(|n| (n, None)).map_err(e)
                 } else {
-                    ihp_core::stamp::watermark(first, &out2, &args, img.as_deref().map(|b| (b, is_png)), &mut prog).map(|n| (n, None)).map_err(e)
+                    ihp_core::stamp::watermark(first, &out2, &args, img.as_deref().map(|b| (b, is_png)), Some(&fonts), &mut prog).map(|n| (n, None)).map_err(e)
                 }
             }
             other => Err(format!("Unknown tool {other}")),

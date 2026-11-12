@@ -32,7 +32,7 @@ Branch `claude/rust-port`, code is at **2.0.0-beta.2** (commit 8061210); only **
 
 ## Known gaps / ideas
 
-- Watermark and Page numbers: non-WinAnsi text falls back to TS (Rust has no Unicode font embedding yet).
+- Unicode font layer DONE in Rust (`fonts.rs`, 2026-11-12): Watermark and Page numbers use it for Greek/Cyrillic/Devanagari/CJK (A/B passes). Verify in the installed app that `asset_resolver` finds the fonts. Next: use it from Office to PDF (item 2).
 - Rust tools read whole files (cap 1 GB in `nativeTools.MAX_NATIVE_BYTES`); bigger go to TS.
 - Opening a 10,000-page file: first thumbnail 9.4 s vs 7.3 s with pdf.js (mostly the test harness upload); could skip the staging copy by using native file dialogs/paths.
 - Idle memory is unchanged vs Electron (WebView2 renders the same page).

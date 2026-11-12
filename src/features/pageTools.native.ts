@@ -1,5 +1,6 @@
 /** Rust versions of the page tools (crates/ihp-core/src/pages.rs). Same inputs and result names as the workers. */
 import { nativeTool } from '../services/nativeTools';
+import { fontAssets } from '../services/fontAssets';
 import type { CropPayload, ImagesToPdfPayload, MergePayload, OrganizePayload, PageNumbersPayload, RotatePayload, SplitPayload, StampSignaturePayload, WatermarkPayload } from '../types/worker';
 
 const base = (n: string) => n.replace(/\.[^/.]+$/, '');
@@ -61,18 +62,18 @@ export const imagesNative = nativeTool<ImagesToPdfPayload>({
   name: (p) => ({ fileName: `${base(p.fileName) || 'images'}.pdf` }),
 });
 
-/** Stamp tools in Rust: standard-font text only (Unicode scripts fall back to the TypeScript engine). */
+/** Stamp tools in Rust: standard fonts for Western text, embedded Noto/Liberation (crates/ihp-core/src/fonts.rs) for other scripts. */
 export const pageNumbersNative = nativeTool<PageNumbersPayload>({
   tool: 'pagenumbers',
   inputs: (p) => [p.fileBuffer],
-  args: (p) => ({ ...p, fileBuffer: undefined }),
+  args: (p) => ({ ...p, fileBuffer: undefined, fontAssets: fontAssets() }),
   name: (p) => ({ fileName: `${base(p.fileName)}_numbered.pdf` }),
 });
 
 export const watermarkNative = nativeTool<WatermarkPayload>({
   tool: 'watermark',
   inputs: (p) => (p.mode === 'image' && p.imageBytes ? [p.fileBuffer, p.imageBytes] : [p.fileBuffer]),
-  args: (p) => ({ ...p, fileBuffer: undefined, imageBytes: undefined }),
+  args: (p) => ({ ...p, fileBuffer: undefined, imageBytes: undefined, fontAssets: fontAssets() }),
   name: (p) => ({ fileName: `${base(p.fileName)}_watermarked.pdf` }),
 });
 

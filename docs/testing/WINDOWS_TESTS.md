@@ -91,6 +91,12 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-11-12 · Rust Unicode font layer (`crates/ihp-core/src/fonts.rs`) in Watermark and Page numbers
+
+- New: rustybuzz shaping + subsetter + Type0/Identity-H embedding with ToUnicode, TJ adjustments for shaping nudges. Faces as in the TS app (Liberation Sans, Noto Sans Devanagari, Noto Sans SC). Liberation is laid out without kerning on purpose (the TS tools do none for it; with kerning Greek bold was 46 dB, without 74.7 dB).
+- `scripts/test-stamp-rust.ts` (TS worker vs Rust CLI, MuPDF pixels and words), 19 cases incl. 5 new Unicode ones: Greek+Cyrillic, Devanagari and CJK watermarks, Devanagari and Cyrillic page-number templates: **all pass** (CJK and Cyrillic 99 dB; Greek 74.7; Devanagari 79-84 dB, i.e. same look). Devanagari word extraction is not compared: the TS output copies a vowel sign before its consonant, the Rust one keeps logical order (plus one invisible U+FEFF for a helper glyph).
+- Rust reads the fonts from the app's embedded assets (`asset_resolver`, URL paths sent by `src/services/fontAssets.ts`). **Not yet checked in the installed app**: if a path does not resolve, Rust returns "needs Unicode font" and the TypeScript engine runs, so nothing breaks. Check in the next beta: Watermark with Hindi text, with `E2E_CDP`.
+
 ### 2026-11-12 · 2.0.0-beta.2 release + PDF to PowerPoint backgrounds on `claude/rust-port`
 
 - **Release**: the by-hand "Windows installer" run on `claude/rust-port` (43139429402) succeeded; `v2.0.0-beta.2` is a pre-release with `IHatePDF-Setup.exe`, 1.4.0 stays "Latest". The old `startup_failure` and the two stuck "queued" runs were GitHub-side and needed no action.

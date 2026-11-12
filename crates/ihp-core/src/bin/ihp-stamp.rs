@@ -5,10 +5,13 @@ fn main() {
     let payload: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&a[4]).unwrap()).unwrap();
     let img = a.get(5).map(|p| (std::fs::read(p).unwrap(), p.to_lowercase().ends_with(".png")));
     let mut prog = |_: u32, _: &str| {};
+    let dir = std::env::var("IHP_FONTS").ok();
+    let from = dir.as_ref().map(|d| ihp_core::fonts::from_dir(std::path::Path::new(d)));
+    let fonts: Option<ihp_core::fonts::FontSource> = from.as_ref().map(|f| f as ihp_core::fonts::FontSource);
     let (i, o) = (std::path::Path::new(&a[2]), std::path::Path::new(&a[3]));
     let r = match a[1].as_str() {
-        "pagenumbers" => stamp::page_numbers(i, o, &payload, &mut prog),
-        "watermark" => stamp::watermark(i, o, &payload, img.as_ref().map(|(b, p)| (b.as_slice(), *p)), &mut prog),
+        "pagenumbers" => stamp::page_numbers(i, o, &payload, fonts, &mut prog),
+        "watermark" => stamp::watermark(i, o, &payload, img.as_ref().map(|(b, p)| (b.as_slice(), *p)), fonts, &mut prog),
         "sign" => stamp::sign(i, o, &img.unwrap().0, &payload["placements"], &mut prog),
         _ => panic!("op"),
     };

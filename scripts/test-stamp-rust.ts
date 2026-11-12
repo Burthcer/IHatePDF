@@ -5,7 +5,7 @@
  *   npx tsx scripts/test-stamp-rust.ts        (needs pymupdf, numpy: PY=<python>)
  */
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createCanvas } from '@napi-rs/canvas';
 import { addPageNumbers } from '../src/features/pageNumbers/pageNumbers.worker';
@@ -14,6 +14,12 @@ import { stampSignature } from '../src/features/sign/sign.worker';
 
 const OUT = resolve('test-fixtures/stamp-rust');
 mkdirSync(OUT, { recursive: true });
+// Unicode text: the TypeScript worker reads fonts through this hook; the Rust CLI reads IHP_FONTS.
+(globalThis as { __ihpReadFile?: (u: URL) => Promise<Uint8Array> }).__ihpReadFile = async (u) => new Uint8Array(readFileSync(u));
+const FONTS = resolve('test-fixtures/fonts');
+mkdirSync(FONTS, { recursive: true });
+for (const f of ['Regular', 'Bold', 'Italic', 'BoldItalic']) copyFileSync(resolve(`node_modules/pdfjs-dist/standard_fonts/LiberationSans-${f}.ttf`), resolve(FONTS, `LiberationSans-${f}.ttf`));
+for (const f of ['NotoSansDevanagari-Regular', 'NotoSansDevanagari-Bold', 'NotoSansSC-Regular', 'NotoSansSC-Bold']) copyFileSync(resolve(`src/assets/fonts/${f}.ttf`), resolve(FONTS, `${f}.ttf`));
 const CLI = resolve('crates/ihp-core/target/release/ihp-stamp.exe');
 const PY = process.env.PY ?? 'python';
 const inputs = { journal: resolve('test-fixtures/scans/journal_10p.pdf'), complex: resolve('test-fixtures/complex/complex.pdf'), rotated: resolve('test-fixtures/edge/gray_rotated.pdf') };
@@ -48,6 +54,11 @@ const cases: Case[] = [
   { name: 'wm_below_serif_pages', input: 'journal', op: 'watermark', payload: { mode: 'text', text: 'DRAFT\nDo not copy', fontSize: 40, color: '#444444', opacity: 0.4, rotationDegrees: 20, position: 'top-left', layer: 'below', bold: false, fontFamily: 'serif', pageIndices: [0, 2, 3] } },
   { name: 'wm_tile', input: 'journal', op: 'watermark', payload: { mode: 'text', text: 'COPY', fontSize: 30, color: '#999999', opacity: 0.2, rotationDegrees: 30, position: 'center', layer: 'above', tile: true, bold: true, fontFamily: 'mono' } },
   { name: 'wm_rotated_page', input: 'rotated', op: 'watermark', payload: { mode: 'text', text: 'SAMPLE', fontSize: 50, color: '#0055aa', opacity: 0.3, rotationDegrees: 0, position: 'bottom-right', layer: 'above', bold: true, fontFamily: 'sans' } },
+  { name: 'wm_greek_cyrillic', input: 'journal', op: 'watermark', payload: { mode: 'text', text: 'ΕΜΠΙΣΤΕΥΤΙΚΟ\nКонфиденциально', fontSize: 44, color: '#aa0000', opacity: 0.3, rotationDegrees: 30, position: 'center', layer: 'above', bold: true, fontFamily: 'sans' } },
+  { name: 'wm_devanagari', input: 'journal', op: 'watermark', payload: { mode: 'text', text: 'गोपनीय दस्तावेज़ क्रिया पृष्ठ', fontSize: 40, color: '#005588', opacity: 0.35, rotationDegrees: 0, position: 'center', layer: 'above', bold: false, fontFamily: 'sans' } },
+  { name: 'wm_cjk', input: 'journal', op: 'watermark', payload: { mode: 'text', text: '机密文件 CONFIDENTIAL 日本語', fontSize: 36, color: '#333333', opacity: 0.3, rotationDegrees: 15, position: 'top-left', layer: 'above', bold: true, fontFamily: 'sans' } },
+  { name: 'num_devanagari_template', input: 'journal', op: 'pagenumbers', payload: { format: 'n', template: 'पृष्ठ {n} / {total}', position: 'bottom-center', fontSize: 12, color: '#222222', marginMm: 12, startPage: 1, startingNumber: 1 } },
+  { name: 'num_cyrillic_template', input: 'journal', op: 'pagenumbers', payload: { format: 'n', template: 'Страница {n}', position: 'bottom-right', fontSize: 11, color: '#000000', marginMm: 10, startPage: 1, startingNumber: 1 } },
   { name: 'wm_image_png', input: 'journal', op: 'watermark', payload: { mode: 'image', imageType: 'png', fontSize: 40, color: '#000', opacity: 0.5, rotationDegrees: 15, position: 'center', layer: 'above', imageScale: 0.4 }, image: 'sig.png' },
   { name: 'wm_image_tile', input: 'complex', op: 'watermark', payload: { mode: 'image', imageType: 'png', fontSize: 40, color: '#000', opacity: 0.3, rotationDegrees: 0, position: 'center', layer: 'below', tile: true, imageScale: 0.25 }, image: 'sig.png' },
   { name: 'sign_upright', input: 'journal', op: 'sign', payload: { placements: [{ pageIndex: 0, x: 100, y: 600, width: 160, height: 64 }, { pageIndex: 3, x: 300, y: 100, width: 200, height: 80 }] }, image: 'sig.png' },
@@ -84,7 +95,7 @@ for (const c of cases) {
   const pj = resolve(OUT, `${c.name}.json`);
   writeFileSync(pj, JSON.stringify(c.payload));
   const args = [c.op, inputs[c.input], rs, pj, ...(c.image ? [resolve(OUT, c.image)] : [])];
-  const r = spawnSync(CLI, args, { encoding: 'utf8' });
+  const r = spawnSync(CLI, args, { encoding: 'utf8', env: { ...process.env, IHP_FONTS: FONTS } });
   if (r.status !== 0) {
     console.log(`FAIL ${c.name}: Rust CLI exited ${r.status}: ${r.stderr.trim()}`);
     failed++;
