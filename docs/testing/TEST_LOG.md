@@ -23,6 +23,10 @@ Do not claim: that Rust is faster for every tool (it is not, see Speed), that th
 
 ## Tests run, newest first
 
+### 2026-11-12 (evening) · the published beta.3 installer itself
+
+Downloaded `IHatePDF-Setup.exe` from the `v2.0.0-beta.3` pre-release (built by CI, 25.9 MB), installed it (NSIS, current user; the exe reports 2.0.0-beta.3), launched it with the WebView2 debug port and ran the same three scripts. Same results as the local build: `all-tools.mjs` 27 of 29 (same two harness failures, `compress` upload timeout and `autoSave` download event), `unicode-watermark.mjs` 6 of 6, `pdf-to-ppt-native.mjs` 3 of 3. Same expected fallback warnings only (rotated page, form XObject, damaged file for Repair). Note: `/S` alone left the installer window open here; `/S /D=<folder>` installed cleanly.
+
 ### 2026-11-12 (afternoon) · installed-app pass and Edit PDF text analysis in Rust
 
 | Test | What it checks | Result |
@@ -71,7 +75,7 @@ Do not claim: that Rust is faster for every tool (it is not, see Speed), that th
 
 ## Known limits and not tested
 
-- **Not checked**: opening the Rust-written .pptx in real PowerPoint or LibreOffice (neither installed here); real Office-made decks with complex masters; very large workbooks; spreadsheets saved by LibreOffice or Google Sheets; Edit PDF's click-and-retype editing (still TypeScript).
+- **Not checked**: Windows SmartScreen / unsigned-installer behaviour for other users; opening the Rust-written .pptx in real PowerPoint or LibreOffice (neither installed here); real Office-made decks with complex masters; very large workbooks; spreadsheets saved by LibreOffice or Google Sheets; Edit PDF's click-and-retype editing (still TypeScript).
 - Rust declines to TypeScript in these cases: encrypted or unreadable PDFs, text inside a form XObject (backgrounds), rotated pages (PDFium text extraction for Word/Excel/Markdown), GIF/BMP/WebP pictures in Word, `.xls`/`.ods`/`.csv` and date-typed or exotic-format cells in Excel, unknown HTML display-list items.
 - The Edit PDF *editing* half (`applyPageEdits`, ~700 lines, keeps one live model per page in the editor) was not ported: it has no speed or memory problem and porting it would change how the editor holds state.
 - Left on TypeScript on purpose: Protect, Unlock, Forms, PDF/A, the Compare word diff. Skipped by instruction: Share to phone, the usage log.

@@ -91,6 +91,10 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-11-12 (evening) · published v2.0.0-beta.3 installer (CI build)
+
+Installed `IHatePDF-Setup.exe` from the pre-release (`/S /D=%LOCALAPPDATA%\Programs\IHatePDF-beta3`; plain `/S` left the window open), ran with `--remote-debugging-port=9222`. `all-tools.mjs` 27/29 (same `compress` upload timeout and `autoSave` download-event harness failures), `unicode-watermark.mjs` 6/6, `pdf-to-ppt-native.mjs` 3/3. Only the expected fallback warnings. Detail in `TEST_LOG.md`.
+
 ### 2026-11-12 · Excel to PDF in Rust (`crates/ihp-core/src/xlsx.rs`)
 
 - Port of `xlsxToPdf.worker.ts`. The TS engine reads the workbook with SheetJS 0.18.5 (`sheet_to_json`, `raw:false`, so every cell is the *formatted* text), so the Rust side reads the package by hand the way SheetJS does (Content_Types, shared strings incl. rich text/phonetic runs, styles numFmts + cellXfs, dimension ref, the row/cell regex scan, formulas without cached value skipped) and ports SheetJS's SSF formatter (General, 0/#/? patterns, thousands, %, E+, literals, [Red]/[$-x] blocks, conditions, date/time fields, AM/PM, [h]:mm:ss), then the same layout (9 pt columns capped at 220, shrink to 6 pt then column bands, repeated header, `n / total`). `ihp-xlsx` bin (3rd arg dumps the cell text per sheet), `run_tool` arm `xlsx`, `excelToPdf.native.ts` + `nativeFirst` in `ExcelToPdfView.tsx` (only .xlsx/.xlsm go to Rust); TS stays as fallback.
