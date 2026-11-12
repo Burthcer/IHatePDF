@@ -23,6 +23,8 @@ Branch `claude/rust-port`, code is at **2.0.0-beta.2** (commit 8061210); only **
 - Office to PDF (Word/PowerPoint/Excel/HTML) and Edit PDF: judged not worth porting without a Unicode font embedder/shaper in Rust (the same gap that makes Watermark/Page numbers fall back for non-Latin text): the TypeScript versions take about a second per file and the risk (the user's earlier picture/layout bugs) outweighs the gain. If you want them anyway: build the font layer first (`ttf-parser` + `subsetter` + `rustybuzz`), then port docx, with pixel A/B against the TS output as in `scripts/test-stamp-rust.ts`.
 - **PDF to Markdown/Word/Excel**: text runs and picture boxes now come from PDFium (`render::page_runs`, `pdf_runs`, `src/services/textLayoutNative.ts`) into the unchanged layout code (`analyzeLayout`); falls back to pdf.js on rotated pages. A/B harness: `scripts/e2e/layout-ab.mjs` + `scripts/layout-ab-compare.py`. If the A/B shows a real difference, keep pdf.js and drop `useLayoutAnalysis`'s native branch.
 
+- **HTML to PDF writer DONE in Rust (html.rs, A/B 8/8, worst 59 dB; layout capture stays in the browser; TS fallback). NOT verified in the installed app** (packed job file via stageInput + fontAssets).
+
 ## Next, in order (code first; each needs a Rust-vs-TS comparison test before it ships, TS stays as fallback)
 
 1. **PDF to PowerPoint**: backgrounds now via PDFium (`render::strip_text`, `strip_pdf_text`, `features/pdfToPpt/strip.native.ts`; 0.00% pixel diff vs TS, falls back on form-XObject text). Text boxes stay on the TS Edit-engine analysis (needs colour/rotation/alignment PDFium runs lack): that part waits for the Edit engine port. Still to do: run it in the installed app (E2E).

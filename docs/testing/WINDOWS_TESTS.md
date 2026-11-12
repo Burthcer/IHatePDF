@@ -91,6 +91,12 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-11-12 · HTML to PDF writer in Rust (`crates/ihp-core/src/html.rs`)
+
+- Port of `htmlToPdf.worker.ts`: the browser still captures the layout (`captureLayout.ts`); Rust draws the display list (rects with opacity, solid/dashed lines, PNG pictures, text in standard fonts or the Unicode font layer). Job file = u32 length + payload JSON + PNG bytes, staged via `stageInput`, tool `html` in `run_tool`, wired with `nativeFirst` in `HtmlToPdfView` (`htmlToPdf.native.ts`).
+- `scripts/test-html-rust.ts` (8 hand-built display lists: families/weights/colours, shapes, PNG + alpha PNG + JPEG, 4 pages, Greek/Cyrillic, Devanagari, CJK, landscape + Unicode title): same pages and words in 8/8, worst PSNR 59.2 dB (all others 61-68 dB).
+- A JPEG in the list is skipped by both engines (pdf-lib `embedPng` fails; the worker skips it). Rust declines (TypeScript runs) for unknown families/items, bad colours, unreadable PNGs, no fonts for non-Western text, zero pages. **Not yet run in the installed app.**
+
 ### 2026-11-12 · Word to PDF in Rust (`crates/ihp-core/src/docx.rs`)
 
 - Port of `docxParser.ts` + `renderDocxToPdf.ts` (same regex-level reading, same layout maths, standard fonts or the new Unicode font layer). `scripts/test-docx-rust.ts` runs both engines on 6 generated .docx (styles/headings/page break, callout + 30-row table, PNG/JPEG pictures, Greek+Cyrillic, Devanagari, CJK) and 5 real ones (one skipped, the TypeScript engine fails on it) (PDF-to-Word outputs incl. complex.docx): **same pages and same words in 10 of 10**, pixels 99 dB for the picture file and 61-79 dB for the rest (sub-pixel differences from 4-decimal coordinates).

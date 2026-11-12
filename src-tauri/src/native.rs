@@ -144,6 +144,10 @@ pub async fn run_tool(app: AppHandle, id: String, tool: String, inputs: Vec<Stri
                     ihp_core::stamp::watermark(first, &out2, &args, img.as_deref().map(|b| (b, is_png)), Some(&fonts), &mut prog).map(|n| (n, None)).map_err(e)
                 }
             }
+            "html" => {
+                let (payload, imgs) = ihp_core::html::unpack(&std::fs::read(first).map_err(|x| x.to_string())?).map_err(e)?;
+                ihp_core::html::html_to_pdf(&payload, &imgs, &out2, Some(&fonts), &mut prog).map(|n| (n, None)).map_err(e)
+            }
             other => Err(format!("Unknown tool {other}")),
         }
     })
