@@ -1,4 +1,4 @@
-# IHatePDF v2.0.0-beta.2 (pre-release)
+# IHatePDF v2.0.0-beta.3 (pre-release)
 
 **This is a beta.** The stable version is still 1.4.0. The desktop app is rebuilt on **Tauri** with a **Rust core**. Same screens and tools; a much smaller installer, a faster start, and the heaviest tools moved off the page into Rust.
 
@@ -20,6 +20,8 @@
 | Compress, photo / 4 duplicate images | 313 / 393 ms | **91 / 142 ms** |
 
 Idle memory is about the same because the page itself (the same React app) dominates it; what drops is the memory tools use while they work.
+
+**New in beta.3:** Word, PowerPoint, Excel and HTML to PDF, and PDF to PowerPoint (text boxes, backgrounds, slides and the .pptx), now run on the Rust core, with Hindi, Greek, Cyrillic and Chinese text supported. Each was compared with the TypeScript version on test files first (same pages and words; 242 PDFs for the PowerPoint text boxes) and the old version still runs if the new one cannot handle a file. Not yet checked: opening the generated .pptx in real PowerPoint.
 
 **New in beta.2:** Repair reads damaged files with PDFium (the 1.4.0 repair still runs when PDFium can't open a file); PDF to Markdown, Word and Excel read the text from PDFium (same layout code; 17 of 18 test outputs identical to before); Compare draws its pages with PDFium; every page preview in the app uses PDFium.
 
