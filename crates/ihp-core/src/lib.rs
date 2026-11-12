@@ -6,5 +6,6 @@ pub mod html;
 pub mod images;
 pub mod pages;
 pub mod pptx;
+pub mod pptx_out;
 pub mod render;
 pub mod stamp;

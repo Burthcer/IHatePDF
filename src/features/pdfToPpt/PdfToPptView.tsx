@@ -9,6 +9,7 @@ import { startJob } from '../../services/memoryGuard';
 import { WorkerClient } from '../../services/workerClient';
 import { getTool } from '../../constants/tools';
 import { stripTextNative } from './strip.native';
+import { buildPptxNative } from './buildPptx.native';
 import type { PDFFile } from '../../types/pdf';
 import type { BuildPptxPayload, OfficeConversionResult, PptTextBox, PptxSlideImage } from '../../types/worker';
 
@@ -70,6 +71,15 @@ export const PdfToPptView: React.FC<PdfToPptViewProps> = ({ initialFiles = [], o
         );
         source = native ?? res.background!;
         textBoxes = res.pages.map((p) => p.boxes);
+      }
+      // Desktop app: Rust renders the pages (PDFium) and writes the .pptx; any failure falls through to pdf.js + pptxgenjs.
+      if (source instanceof ArrayBuffer || source instanceof Blob) {
+        const done = await buildPptxNative(source, textBoxes, file.name, (p, stage) => setPrep({ progress: 40 + p * 0.55, stage }));
+        if (done) {
+          setPrep(null);
+          runner.setResult(done);
+          return;
+        }
       }
       const slides = await renderSlides(source, 1600, (i, n) => setPrep({ progress: 40 + (i / n) * 55, stage: `Rendering slide ${i} of ${n}…` }));
       setPrep(null);

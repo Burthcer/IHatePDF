@@ -91,6 +91,12 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-11-12 · PDF to PowerPoint writer + slide rendering in Rust (`crates/ihp-core/src/pptx_out.rs`)
+
+- Port of `buildPptx.worker.ts` (pptxgenjs): OOXML package via `zip` (content types, rels, presentation, master/layout/theme templates in `src/pptx_tpl/`, one slide per page: full-slide JPEG + text boxes with EMU position/size, half-point font size, colour, bold/italic, alignment, line spacing, rotation, same `w = width*1.08+4`, `h = max(height, size*1.2)` rules). Slide pictures rendered with PDFium at 1600 px wide, JPEG 0.88 (as `renderSlides`). CLI `ihp-pptx-out`, command `build_pptx` (native.rs), page wiring `features/pdfToPpt/buildPptx.native.ts` (any failure: pdf.js + pptxgenjs as before).
+- `scripts/test-pdfppt-rust.ts` + `scripts/test-pdfppt-compare.py` (python-pptx 1.0.2): text boxes from the real Edit-engine analysis, both writers fed the same boxes and the same picture bytes. journal_10p (10 slides, 93 shapes), sample-multi (4 slides, 16 shapes), q_word (2 slides, 8 shapes), each with an extra edge box (entities, quotes, empty line, Unicode, rotation 12.5, right-aligned, line spacing): slide size, shape order, picture sha1, text, run size/bold/italic/colour/font, alignment, line spacing, EMU positions and rotation all identical to pptxgenjs. Rust package validated: every part well-formed XML, every relationship target exists, every part has a content type.
+- Not verified: opening in real PowerPoint or LibreOffice (neither installed here; python-pptx and XML checks only), the installed app (E2E). Text-box extraction is still the TS Edit engine.
+
 ### 2026-11-12 · HTML to PDF writer in Rust (`crates/ihp-core/src/html.rs`)
 
 - Port of `htmlToPdf.worker.ts`: the browser still captures the layout (`captureLayout.ts`); Rust draws the display list (rects with opacity, solid/dashed lines, PNG pictures, text in standard fonts or the Unicode font layer). Job file = u32 length + payload JSON + PNG bytes, staged via `stageInput`, tool `html` in `run_tool`, wired with `nativeFirst` in `HtmlToPdfView` (`htmlToPdf.native.ts`).

@@ -82,7 +82,8 @@ fn main() {
             native::repair_pdf,
             native::strip_pdf_text,
             native::pdf_runs,
-            native::pdf_texts
+            native::pdf_texts,
+            native::build_pptx
         ])
         .setup(|app| {
             output::clean_work_dir();

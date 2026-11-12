@@ -349,3 +349,27 @@ pub async fn pdf_texts(app: AppHandle, path: String, start: usize, count: usize)
     let dll = pdfium_path(&app)?;
     tauri::async_runtime::spawn_blocking(move || ihp_core::render::page_texts(&dll, &input, start, count).map_err(|e| e.to_string())).await.map_err(|e| e.to_string())?
 }
+
+/// PDF to PowerPoint writer: renders every page of `path` with PDFium (1600 px JPEG) and writes the .pptx with the
+/// text boxes the page computed (`boxes`: per-page arrays of PptTextBox, or null). Errors send the page to pptxgenjs.
+#[tauri::command]
+pub async fn build_pptx(app: AppHandle, id: String, path: String, boxes: serde_json::Value) -> Result<serde_json::Value, String> {
+    let input = crate::output::in_work_dir(&path)?;
+    let dll = pdfium_path(&app)?;
+    let output = crate::output::work_dir().join(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let out2 = output.clone();
+    let slides = tauri::async_runtime::spawn_blocking(move || {
+        let mut last = 0u32;
+        let mut prog = move |p: u32, stage: &str| {
+            if p >= last {
+                last = p;
+                let _ = app.emit("ihp:progress", serde_json::json!({ "id": id, "progress": p, "stage": stage }));
+            }
+        };
+        ihp_core::pptx_out::build_from_pdf(&dll, &input, &boxes, &out2, &mut prog).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
+    Ok(serde_json::json!({ "path": output, "size": size, "pages": slides }))
+}
