@@ -39,3 +39,5 @@ public/pdfjs/
 src-tauri/target
 src-tauri/gen
 src-tauri/resources/pdfium.dll
+
+crates/ihp-core/target
