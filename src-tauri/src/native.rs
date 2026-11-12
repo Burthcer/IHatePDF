@@ -385,3 +385,29 @@ pub async fn build_pptx(app: AppHandle, id: String, path: String, boxes: serde_j
     let size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
     Ok(serde_json::json!({ "path": output, "size": size, "pages": slides }))
 }
+
+/// Edit PDF: applies page edits (array of PageEdits, as in rewrite.ts) to a staged PDF. `only_page` keeps just that
+/// page (the editor's preview). Errors on anything the Rust port can't draw (Unicode scripts needing an embedded
+/// font, encrypted files): the caller then uses the TypeScript engine. { path, size, pages }.
+#[tauri::command]
+pub async fn edit_apply(path: String, mut edits: serde_json::Value, only_page: Option<usize>) -> Result<serde_json::Value, String> {
+    let input = crate::output::in_work_dir(&path)?;
+    // Added pictures arrive as staged work-folder files: check each is really one.
+    if let Some(pages) = edits.as_array_mut() {
+        for page in pages {
+            if let Some(imgs) = page.get_mut("addedImages").and_then(|v| v.as_array_mut()) {
+                for im in imgs {
+                    let f = im.get("file").and_then(|v| v.as_str()).ok_or("added picture without a file")?.to_string();
+                    im["file"] = serde_json::Value::String(crate::output::in_work_dir(&f)?.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+    let output = crate::output::work_dir().join(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let out2 = output.clone();
+    let pages = tauri::async_runtime::spawn_blocking(move || ihp_core::editpdf::apply_edits(&input, &out2, &edits, only_page, &mut |_, _| {}))
+        .await
+        .map_err(|e| e.to_string())??;
+    let size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
+    Ok(serde_json::json!({ "path": output, "size": size, "pages": pages }))
+}

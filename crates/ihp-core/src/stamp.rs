@@ -116,6 +116,12 @@ impl Font {
         text.chars().map(|c| winansi(c).filter(|&b| b >= 32 && self.widths[(b - 32) as usize] > 0)).collect()
     }
 
+    /// Advance of one character in em (no kerning), or None when the font has no glyph for it.
+    pub fn char_width(&self, ch: char) -> Option<f64> {
+        let b = winansi(ch).filter(|&b| b >= 32 && self.widths[(b - 32) as usize] > 0)?;
+        Some(self.widths[(b - 32) as usize] as f64 / 1000.0)
+    }
+
     /// Width of the text, with the font's kerning pairs (as pdf-lib measures it).
     pub fn width(&self, bytes: &[u8], size: f64) -> f64 {
         let glyphs: f64 = bytes.iter().map(|&b| self.widths[(b.max(32) - 32) as usize] as f64).sum();
@@ -270,7 +276,7 @@ pub(crate) fn f(v: f64) -> String {
     if s.is_empty() || s == "-" { "0".into() } else { s.to_string() }
 }
 
-fn load(path: &Path) -> Result<Document> {
+pub(crate) fn load(path: &Path) -> Result<Document> {
     let d = Document::load(path)?;
     if d.is_encrypted() {
         return Err(Error::Encrypted);
@@ -278,7 +284,7 @@ fn load(path: &Path) -> Result<Document> {
     Ok(d)
 }
 
-fn save(doc: &mut Document, out: &Path) -> Result<()> {
+pub(crate) fn save(doc: &mut Document, out: &Path) -> Result<()> {
     let mut w = std::io::BufWriter::new(std::fs::File::create(out)?);
     doc.save_modern(&mut w)?;
     w.flush()?;

@@ -84,7 +84,8 @@ fn main() {
             native::pdf_text_boxes,
             native::pdf_runs,
             native::pdf_texts,
-            native::build_pptx
+            native::build_pptx,
+            native::edit_apply
         ])
         .setup(|app| {
             output::clean_work_dir();

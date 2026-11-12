@@ -17,11 +17,25 @@ Each tool that moved from TypeScript to Rust got a **Rust-vs-TypeScript comparis
 | Excel to PDF: 58 files compared, 0 different cell text, 1 fell back to TypeScript | `test-xlsx-rust.ts`, pixel match 57-90 dB |
 | HTML to PDF writer: same pages and words in 8 of 8 | `test-html-rust.ts`, worst 59 dB |
 | Hindi, Greek, Cyrillic and Chinese watermarks, page numbers and Word files work through Rust in the real app | `scripts/e2e/unicode-watermark.mjs`, 6 of 6 |
+| Edit PDF editing (retype, move, restyle, rewrap, images, shapes) in Rust: 805 of 805 edited pages match TypeScript (words + pixels), installed app 2 of 2 | `test-editapply-rust.ts`, `edit-native.mjs` |
 | 27 of 29 scripted tool checks pass in the real app; the 2 others are harness limits, not bugs | `all-tools.mjs` (see below) |
 
-Do not claim: that Rust is faster for every tool (it is not, see Speed), that the generated PowerPoint opens in real PowerPoint (not checked), or that Edit PDF is on Rust (it is not).
+Do not claim: that Rust is faster for every tool (it is not, see Speed), that the Rust PowerPoint output has been tried in LibreOffice (only real PowerPoint was), or that password-protected files or Unicode edits run on Rust (they fall back to TypeScript).
 
 ## Tests run, newest first
+
+### 2026-11-12 (night) · Edit PDF editing half ported to Rust (apply.rs): Rust vs TypeScript and the installed app
+
+`crates/ihp-core/src/editpdf/apply.rs` (port of `applyPageEdits`: glyph removal, retyping in the document's own font or a standard font, moves, rewrap, justify, image delete/move, form-XObject cloning, new text/shapes/pictures) plus provenance tracking in the Rust interpreter (`editpdf.rs`), the `edit_apply` command, `features/editPdf/editApply.native.ts` and `nativeFirst` around the editor worker (OPEN records the source and passes on; PREVIEW and EXPORT try Rust first). Rust returns an error, so TypeScript runs, for: text needing an embedded Unicode font (Greek, Cyrillic, Devanagari, CJK in a new/edited paragraph), encrypted/password files, files over 40 MB for the live preview.
+
+- `scripts/test-editapply-rust.ts` (`PY=py PYTHONIOENCODING=utf8 npx tsx scripts/test-editapply-rust.ts [files]`): 10 scenarios per PDF (delete, retype, move, restyle bold/serif/colour/size, rewrap + justify, centre, image delete, image move/resize, new text + rect/ellipse/line/highlight, mixed), first 3 pages each, same edits applied by both engines, then MuPDF words and a 72 dpi pixel diff. **Our corpus (27 PDFs: fixtures, our own tool outputs, edge cases): 341 scenario runs, 805 edited pages, 805 match, worst pixel diff 0.16%. Rust declined 6 (Unicode text, as designed). 13 runs could not be compared because the TypeScript side needs the Unicode font files, which Node can't fetch.** Real-world corpus (Dev's study PDFs, first 2 pages): 138 runs, 276 pages, 276 match, worst 0.00%. Speed (core time only, small files): TypeScript 7.1 s vs Rust 3.5 s for the 341 runs including TS loading.
+- Installed-style app (`tauri build --no-bundle` exe with the WebView2 debug port): `scripts/e2e/edit-native.mjs` 2/2: Latin edit goes through `edit_apply` twice (preview + export), no fallback warning, text replaced; Greek edit makes Rust decline ("text needs an embedded Unicode font"), TypeScript finishes it, text replaced. `all-tools.mjs` still 27/29 (same 2 harness limits). `npm test` 0 failed.
+- Not verified: added PNG pictures through Rust in the app (only the CLI path takes `file`; unit scenarios did not include pictures), very large files, password-protected files (always TypeScript), the Rust-edited file opened in Acrobat/PowerPoint.
+- Harness trap (cost 20 minutes): a headless Chrome from another tool listened on port 9222, so the E2E scripts drove Chrome, not the app, and reported `ERR_CONNECTION_REFUSED` for `tauri.localhost`. Check `Get-NetTCPConnection -LocalPort <port>` or use another debug port (9333 worked). Use `npx tauri build --no-bundle` for a test exe, not plain `cargo build --release` (that exe has no frontend).
+
+### 2026-11-12 (night) · Rust-written .pptx opened in real PowerPoint (COM)
+
+Opened `test-fixtures/pdfppt-rust/{rs_journal_10p,rs_q_word,rs_sample-multi}.pptx` (Rust writer) and the pptxgenjs `ts_journal_10p`, `ts_q_word` in Microsoft PowerPoint through COM (read-only, no window). All 5 opened with no repair prompt; slide and shape counts match Rust vs TS (10 slides/93 shapes; 2/8). Slide 1 of q_word exported to PNG: visually identical Rust vs TS. Closes the "not verified in real PowerPoint" item for PDF to PowerPoint. Still unverified: LibreOffice (not installed), PowerPoint to PDF on complex real decks.
 
 ### 2026-11-12 (evening) · the published beta.3 installer itself
 

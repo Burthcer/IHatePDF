@@ -6,11 +6,12 @@ Branch `claude/rust-port`, code is at **2.0.0-beta.2** (commit 8061210); only **
 
 - **v2.0.0-beta.3 is published (pre-release, workflow run 43199851941; 1.4.0 stays "Latest"; nothing on main).** About 22 of 28 tools run on Rust first with TypeScript fallback: everything in the lists below plus Word/PowerPoint/Excel/HTML to PDF, PDF to PowerPoint (fully native) and the Unicode font layer. Recall sheet of every test and number: `docs/testing/TEST_LOG.md`.
 - **Tested on the published CI installer** (installed, run over the WebView2 debug port): `all-tools.mjs` 27/29 (the 2 failures are harness limits: `compress` upload timeout, `autoSave` download event), `unicode-watermark.mjs` 6/6, `pdf-to-ppt-native.mjs` 3/3. Plain `/S` leaves the NSIS window open here; use `/S /D=<folder>`.
-- **Still TypeScript on purpose:** Protect, Unlock, Forms, PDF/A, Compare word diff, Edit PDF editing half (`applyPageEdits`). Skipped by instruction: Share to phone, usage log.
-- **Not verified:** the Rust-written .pptx in real PowerPoint/LibreOffice; complex Office decks; very large workbooks; LibreOffice/Google Sheets xlsx.
+- **Edit PDF editing half is now on Rust too (2026-11-12 night, NOT committed, NOT in a release):** `crates/ihp-core/src/editpdf/apply.rs` + provenance in `editpdf.rs`, `edit_apply` command, `features/editPdf/editApply.native.ts`, `nativeFirst` around the editor worker (PREVIEW/EXPORT). A/B `scripts/test-editapply-rust.ts`: 805/805 edited pages match TypeScript (words + pixels, worst 0.16%), 276/276 on real PDFs; installed-style app `scripts/e2e/edit-native.mjs` 2/2; `all-tools.mjs` 27/29 (same 2). Falls back to TypeScript for text needing an embedded Unicode font, password files, previews of files over 40 MB. Not verified: added PNG pictures via Rust in the app, Acrobat opening the output.
+- **Still TypeScript on purpose:** Protect, Unlock, Forms, PDF/A, Compare word diff. Skipped by instruction: Share to phone, usage log.
+- **Not verified:** LibreOffice (real PowerPoint opens the Rust .pptx fine, 2026-11-12 night); complex Office decks; very large workbooks; LibreOffice/Google Sheets xlsx.
 - **Machine note:** the 1.4.0 install (Program Files, Public Desktop shortcut) is the user's real one; the beta test install was uninstalled again.
 - **Architecture fact for any write-up:** native Rust in Tauri (no wasm); web app unknown/not part of 2.0. Numbers for a LinkedIn-style post are in `TEST_LOG.md`; the open items there are timeline and Dev's own words (do not invent).
-- **Possible next work:** merge `claude/rust-port` to main (user's call only), a stable 2.0.0 after real-PowerPoint check, Edit PDF editing port (optional, no measured need), signed installer.
+- **Possible next work:** merge `claude/rust-port` to main (user's call only), a stable 2.0.0 after real-PowerPoint check, a beta.4 pre-release carrying the Edit PDF port (commit + run the Windows installer workflow by hand), signed installer.
 
 ## State
 

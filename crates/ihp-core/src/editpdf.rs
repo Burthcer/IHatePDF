@@ -11,6 +11,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::OnceLock;
 
+mod apply;
+pub use apply::apply_edits;
+
 type Matrix = [f64; 6];
 const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
@@ -134,6 +137,9 @@ enum Tok {
 struct ContentOp {
     op: String,
     args: Vec<Opd>,
+    /// Byte range in the stream: first operand (or the operator) to the end of the operator.
+    start: usize,
+    end: usize,
 }
 
 fn is_ws(c: u8) -> bool {
@@ -477,14 +483,19 @@ fn parse_content(bytes: &[u8]) -> Vec<ContentOp> {
     let mut lx = Lexer { b: bytes, pos: 0 };
     let mut ops = Vec::new();
     let mut args: Vec<Opd> = Vec::new();
+    let mut arg_start = 0usize;
     loop {
         lx.skip_ws();
+        let token_start = lx.pos;
         let tok = match lx.read() {
             None => break,
             Some(t) => t,
         };
         match tok {
             Tok::Op(o) => {
+                if args.is_empty() {
+                    arg_start = token_start;
+                }
                 args.push(o);
                 if args.len() > 64 {
                     args.remove(0);
@@ -494,6 +505,7 @@ fn parse_content(bytes: &[u8]) -> Vec<ContentOp> {
                 if kw.is_empty() {
                     continue;
                 }
+                let start = if args.is_empty() { token_start } else { arg_start };
                 if kw == "BI" {
                     let mut dict = HashMap::new();
                     loop {
@@ -522,9 +534,9 @@ fn parse_content(bytes: &[u8]) -> Vec<ContentOp> {
                         }
                     }
                     lx.skip_inline_image_data(&dict);
-                    ops.push(ContentOp { op: "BI".into(), args: vec![Opd::Dict(dict)] });
+                    ops.push(ContentOp { op: "BI".into(), args: vec![Opd::Dict(dict)], start, end: lx.pos });
                 } else {
-                    ops.push(ContentOp { op: kw, args: std::mem::take(&mut args) });
+                    ops.push(ContentOp { op: kw, args: std::mem::take(&mut args), start, end: lx.pos });
                 }
                 args = Vec::new();
             }
@@ -1007,6 +1019,11 @@ struct Style {
     family: Family,
 }
 
+fn is_subset_name(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() > 7 && b[6] == b'+' && b[..6].iter().all(|c| c.is_ascii_uppercase())
+}
+
 fn strip_subset(s: &str) -> &str {
     let b = s.as_bytes();
     if b.len() > 7 && b[6] == b'+' && b[..6].iter().all(|c| c.is_ascii_uppercase()) {
@@ -1071,8 +1088,15 @@ fn standard_metrics(base_font: &str) -> Option<&'static StdFont> {
 }
 
 enum Kind {
-    Simple { names: Vec<Option<String>>, widths: Option<Vec<f64>>, first_char: f64, missing: f64, scale: f64, std: Option<&'static StdFont>, to_unicode: Option<CMap>, fallback_latin1: bool },
+    Simple { names: Vec<Option<String>>, widths: Option<Vec<f64>>, first_char: f64, missing: f64, scale: f64, std: Option<&'static StdFont>, to_unicode: Option<CMap>, fallback_latin1: bool, diff_codes: HashSet<u64> },
     Type0 { codespaces: Vec<Codespace>, enc: Option<CMap>, widths: HashMap<u64, f64>, dw: f64, to_unicode: Option<CMap>, code_len: usize },
+}
+
+/// The font object as found in /Resources /Font: a reference, or a direct dictionary.
+#[derive(Clone)]
+enum FontRaw {
+    Ref(ObjectId),
+    Direct(Dictionary),
 }
 
 #[allow(dead_code)] // `reliable` is used by Edit PDF's editability check, not by the PowerPoint extraction
@@ -1086,9 +1110,105 @@ struct FontModel {
     vertical: bool,
     reliable: bool,
     kind: Kind,
+    subset: bool,
+    embedded: bool,
+    raw: Option<FontRaw>,
+    /// Character codes seen in the page content (a subset font only guarantees these).
+    observed: HashSet<u64>,
+    reverse: std::cell::OnceCell<HashMap<char, u64>>,
 }
 
 impl FontModel {
+    fn build_reverse(&self) -> HashMap<char, u64> {
+        let mut map: HashMap<char, u64> = HashMap::new();
+        let single = |u: &str| -> Option<char> {
+            let mut it = u.chars();
+            let c = it.next()?;
+            (it.next().is_none() && c.len_utf16() == 1).then_some(c)
+        };
+        match &self.kind {
+            Kind::Simple { to_unicode, widths, first_char, std, diff_codes, .. } => {
+                let mut candidates: Vec<u64> = match to_unicode {
+                    Some(t) => t.unicode.keys().copied().filter(|c| *c < 256).collect(),
+                    None => (0..256).collect(),
+                };
+                candidates.sort_unstable();
+                for code in candidates {
+                    if self.subset && !self.observed.contains(&code) {
+                        continue;
+                    }
+                    if to_unicode.is_none() && !self.subset {
+                        let c = code as f64;
+                        let in_range = match widths {
+                            Some(w) => c >= *first_char && c < *first_char + w.len() as f64 && w[(c - *first_char) as usize] > 0.0,
+                            None => std.is_some(),
+                        };
+                        if !in_range && !diff_codes.contains(&code) {
+                            continue;
+                        }
+                    }
+                    if let Some(ch) = self.unicode(code).as_deref().and_then(single) {
+                        map.entry(ch).or_insert(code);
+                    }
+                }
+                if !map.contains_key(&' ') {
+                    for c in 0..256u64 {
+                        if self.unicode(c).as_deref() == Some(" ") && (!self.subset || self.observed.contains(&c)) {
+                            map.insert(' ', c);
+                            break;
+                        }
+                    }
+                }
+            }
+            Kind::Type0 { to_unicode, .. } => {
+                if let Some(t) = to_unicode {
+                    let mut codes: Vec<u64> = t.unicode.keys().copied().collect();
+                    codes.sort_unstable();
+                    for code in codes {
+                        if self.subset && !self.observed.contains(&code) {
+                            continue;
+                        }
+                        if let Some(ch) = single(&t.unicode[&code]) {
+                            map.entry(ch).or_insert(code);
+                        }
+                    }
+                }
+            }
+        }
+        map
+    }
+
+    /// Encodes text with this font: (bytes, codes), or None when any character is unavailable.
+    fn encode(&self, text: &str) -> Option<(Vec<u8>, Vec<u64>)> {
+        let reverse = self.reverse.get_or_init(|| self.build_reverse());
+        let mut codes = Vec::new();
+        match &self.kind {
+            Kind::Simple { .. } => {
+                for ch in text.chars() {
+                    codes.push(*reverse.get(&ch)?);
+                }
+                Some((codes.iter().map(|&c| c as u8).collect(), codes))
+            }
+            Kind::Type0 { codespaces, to_unicode, .. } => {
+                to_unicode.as_ref()?;
+                let width = codespaces.first()?.bytes;
+                if !codespaces.iter().all(|c| c.bytes == width) {
+                    return None;
+                }
+                for ch in text.chars() {
+                    codes.push(*reverse.get(&ch)?);
+                }
+                let mut bytes = Vec::with_capacity(codes.len() * width);
+                for &code in &codes {
+                    for k in 0..width {
+                        bytes.push(((code >> (8 * (width - 1 - k))) & 0xff) as u8);
+                    }
+                }
+                Some((bytes, codes))
+            }
+        }
+    }
+
     /// Decoded codes with their byte length (for the "is a single-byte space" test).
     fn decode_spans(&self, bytes: &[u8]) -> Vec<(u64, usize)> {
         match &self.kind {
@@ -1246,6 +1366,7 @@ fn build_font(pdf: &Pdf, dict: &Dictionary) -> FontModel {
             names[c] = t.get(c).filter(|s| !s.is_empty()).cloned();
         }
     }
+    let mut diff_codes: HashSet<u64> = HashSet::new();
     if let Some(diff) = differences {
         let mut code: f64 = 0.0;
         for v in diff {
@@ -1254,6 +1375,7 @@ fn build_font(pdf: &Pdf, dict: &Dictionary) -> FontModel {
                 Some(Object::Name(n)) => {
                     if code >= 0.0 && code < 256.0 {
                         names[code as usize] = Some(latin1(n));
+                        diff_codes.insert(code as u64);
                     }
                     code += 1.0;
                 }
@@ -1307,7 +1429,12 @@ fn build_font(pdf: &Pdf, dict: &Dictionary) -> FontModel {
         descent,
         vertical: false,
         reliable: true,
-        kind: Kind::Simple { names, widths, first_char, missing, scale, std, to_unicode, fallback_latin1: symbolic || base_table.is_none() },
+        kind: Kind::Simple { names, widths, first_char, missing, scale, std, to_unicode, fallback_latin1: symbolic || base_table.is_none(), diff_codes },
+        subset: is_subset_name(&base_font),
+        embedded,
+        raw: None,
+        observed: HashSet::new(),
+        reverse: std::cell::OnceCell::new(),
     }
 }
 
@@ -1371,12 +1498,26 @@ fn build_type0(pdf: &Pdf, dict: &Dictionary, base_font: &str, to_unicode: Option
         vertical,
         reliable,
         kind: Kind::Type0 { codespaces, enc: enc_cmap, widths, dw, to_unicode, code_len },
+        subset: is_subset_name(base_font),
+        embedded: has_font_file(pdf, descriptor),
+        raw: None,
+        observed: HashSet::new(),
+        reverse: std::cell::OnceCell::new(),
     }
 }
 
 // ------------------------------------------------------------------ interpreter
 
+#[allow(dead_code)] // code/byte_start/byte_len mirror the TypeScript GlyphInfo (provenance), kept for debugging
 struct Glyph {
+    ctx: usize,
+    op: usize,
+    el: usize,
+    code: u64,
+    byte_start: usize,
+    byte_len: usize,
+    font_size: f64,
+    adv_text: f64,
     text: Option<String>,
     font: usize,
     color: String,
@@ -1443,12 +1584,62 @@ fn nums6(args: &[Opd]) -> Matrix {
     m
 }
 
+enum Elem {
+    Str { bytes: Vec<u8>, spans: Vec<(u64, usize, usize)>, glyph_ids: Vec<usize> }, // code, len, start
+    Num(f64),
+}
+
+struct TextOp {
+    kind: String,
+    elems: Vec<Elem>,
+    aw: f64,
+    ac: f64,
+}
+
+struct ImageRec {
+    ctx: usize,
+    op: usize,
+    ctm: Matrix,
+    bx: f64,
+    by: f64,
+    bw: f64,
+    bh: f64,
+}
+
+/// The page's content stream or one form XObject drawn by it.
+struct Ctx {
+    parent: Option<usize>,
+    parent_op: usize,
+    stream_dict: Option<Dictionary>,
+    resources: Option<Dictionary>,
+    bytes: Vec<u8>,
+    ops: Vec<(usize, usize)>,
+    end_depth: usize,
+    ends_in_text: bool,
+}
+
+fn viewer_box(u2v: &Matrix, ctm: &Matrix) -> (f64, f64, f64, f64) {
+    let m = multiply(ctm, u2v);
+    let pts = [apply(&m, 0.0, 0.0), apply(&m, 1.0, 0.0), apply(&m, 0.0, 1.0), apply(&m, 1.0, 1.0)];
+    let xs: Vec<f64> = pts.iter().map(|p| p.0).collect();
+    let ys: Vec<f64> = pts.iter().map(|p| p.1).collect();
+    (
+        xs.iter().cloned().fold(f64::INFINITY, f64::min),
+        ys.iter().cloned().fold(f64::INFINITY, f64::min),
+        xs.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+        ys.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+    )
+}
+
 struct Interp<'a> {
     pdf: Pdf<'a>,
     u2v: Matrix,
     glyphs: Vec<Glyph>,
     fonts: Vec<FontModel>,
     font_cache: HashMap<String, usize>,
+    contexts: Vec<Ctx>,
+    text_ops: HashMap<(usize, usize), TextOp>,
+    images: Vec<ImageRec>,
 }
 
 impl<'a> Interp<'a> {
@@ -1508,11 +1699,12 @@ impl<'a> Interp<'a> {
         }
     }
 
-    fn font_index(&mut self, key: String, dict: &'a Dictionary) -> usize {
+    fn font_index(&mut self, key: String, dict: &'a Dictionary, raw: FontRaw) -> usize {
         if let Some(&i) = self.font_cache.get(&key) {
             return i;
         }
-        let m = build_font(&self.pdf, dict);
+        let mut m = build_font(&self.pdf, dict);
+        m.raw = Some(raw);
         self.fonts.push(m);
         let i = self.fonts.len() - 1;
         self.font_cache.insert(key, i);
@@ -1531,15 +1723,20 @@ impl<'a> Interp<'a> {
             Object::Reference(id) => format!("{}_{}", id.0, id.1),
             _ => format!("direct:{name}:{:p}", d),
         };
-        Some(self.font_index(key, d))
+        let font_raw = match raw {
+            Object::Reference(id) => FontRaw::Ref(*id),
+            _ => FontRaw::Direct(d.clone()),
+        };
+        Some(self.font_index(key, d, font_raw))
     }
 
-    fn run(&mut self, ops: &[ContentOp], resources: Option<&'a Dictionary>, initial: GState, depth: usize, visiting: &mut HashSet<ObjectId>) {
+    fn run(&mut self, ctx: usize, ops: &[ContentOp], resources: Option<&'a Dictionary>, initial: GState, depth: usize, visiting: &mut HashSet<ObjectId>) {
         let mut gs = initial;
         let mut stack: Vec<GState> = Vec::new();
         let mut tm = IDENTITY;
         let mut tlm = IDENTITY;
-        for ContentOp { op, args } in ops {
+        let mut in_text = false;
+        for (op_index, ContentOp { op, args, .. }) in ops.iter().enumerate() {
             match op.as_str() {
                 "q" => stack.push(gs.clone()),
                 "Q" => {
@@ -1553,10 +1750,11 @@ impl<'a> Interp<'a> {
                     }
                 }
                 "BT" => {
+                    in_text = true;
                     tm = IDENTITY;
                     tlm = IDENTITY;
                 }
-                "ET" => {}
+                "ET" => in_text = false,
                 "Tf" => {
                     if let Some(Opd::Name(n)) = args.first() {
                         gs.font = self.load_font(resources, n);
@@ -1599,12 +1797,18 @@ impl<'a> Interp<'a> {
                         tlm = multiply(&[1.0, 0.0, 0.0, 1.0, 0.0, -gs.tl], &tlm);
                         tm = tlm;
                     }
+                    let mut info = TextOp { kind: op.clone(), elems: Vec::new(), aw: 0.0, ac: 0.0 };
+                    if op == "\"" {
+                        info.aw = num(args.first());
+                        info.ac = num(args.get(1));
+                    }
                     match (op.as_str(), args.last()) {
                         ("TJ", Some(Opd::Arr(items))) => {
-                            for item in items {
+                            for (el, item) in items.iter().enumerate() {
                                 match item {
-                                    Opd::Str(b) => self.show_string(&gs, &mut tm, b),
+                                    Opd::Str(b) => self.show_string(&gs, &mut tm, b, ctx, op_index, el, &mut info),
                                     Opd::Num(v) => {
+                                        info.elems.push(Elem::Num(*v));
                                         let shift = (-v / 1000.0) * gs.font_size;
                                         let vertical = gs.font.map_or(false, |f| self.fonts[f].vertical);
                                         tm = if vertical { multiply(&[1.0, 0.0, 0.0, 1.0, 0.0, shift], &tm) } else { multiply(&[1.0, 0.0, 0.0, 1.0, shift * gs.th, 0.0], &tm) };
@@ -1614,9 +1818,10 @@ impl<'a> Interp<'a> {
                             }
                         }
                         ("TJ", _) => {}
-                        (_, Some(Opd::Str(b))) => self.show_string(&gs, &mut tm, b),
+                        (_, Some(Opd::Str(b))) => self.show_string(&gs, &mut tm, b, ctx, op_index, 0, &mut info),
                         _ => {}
                     }
+                    self.text_ops.insert((ctx, op_index), info);
                 }
                 "gs" => {
                     if let Some(Opd::Name(n)) = args.first() {
@@ -1629,7 +1834,11 @@ impl<'a> Interp<'a> {
                                         Object::Reference(id) => format!("{}_{}", id.0, id.1),
                                         _ => format!("gsfont:{:p}", fd),
                                     };
-                                    gs.font = Some(self.font_index(key, fd));
+                                    let font_raw = match raw {
+                                        Object::Reference(id) => FontRaw::Ref(*id),
+                                        _ => FontRaw::Direct(fd.clone()),
+                                    };
+                                    gs.font = Some(self.font_index(key, fd, font_raw));
                                     if let Some(sz) = self.pdf.res(&fe[1]).and_then(Pdf::num_of) {
                                         gs.font_size = sz;
                                     }
@@ -1673,6 +1882,10 @@ impl<'a> Interp<'a> {
                         gs.stroke = next;
                     }
                 }
+                "BI" => {
+                    let (x0, y0, x1, y1) = viewer_box(&self.u2v, &gs.ctm);
+                    self.images.push(ImageRec { ctx, op: op_index, ctm: gs.ctm, bx: x0, by: y0, bw: x1 - x0, bh: y1 - y0 });
+                }
                 "Do" => {
                     let name = match args.first() {
                         Some(Opd::Name(n)) => n,
@@ -1691,7 +1904,10 @@ impl<'a> Interp<'a> {
                         _ => continue,
                     };
                     let subtype = self.pdf.name(&xo.dict, "Subtype");
-                    if subtype.as_deref() == Some("Form") && depth < 12 {
+                    if subtype.as_deref() == Some("Image") {
+                        let (x0, y0, x1, y1) = viewer_box(&self.u2v, &gs.ctm);
+                        self.images.push(ImageRec { ctx, op: op_index, ctm: gs.ctm, bx: x0, by: y0, bw: x1 - x0, bh: y1 - y0 });
+                    } else if subtype.as_deref() == Some("Form") && depth < 12 {
                         let id = match raw {
                             Object::Reference(id) => *id,
                             _ => (0, 0),
@@ -1706,6 +1922,17 @@ impl<'a> Interp<'a> {
                         let matrix = self.pdf.number_array(self.pdf.get(&xo.dict, "Matrix"));
                         let form_res = self.pdf.dict(&xo.dict, "Resources").or(resources);
                         let child_ops = parse_content(&bytes);
+                        let child_id = self.contexts.len();
+                        self.contexts.push(Ctx {
+                            parent: Some(ctx),
+                            parent_op: op_index,
+                            stream_dict: Some(xo.dict.clone()),
+                            resources: form_res.cloned(),
+                            bytes: bytes.clone(),
+                            ops: child_ops.iter().map(|o| (o.start, o.end)).collect(),
+                            end_depth: 0,
+                            ends_in_text: false,
+                        });
                         let mut child = gs.clone();
                         if let Some(m) = matrix {
                             if m.len() == 6 {
@@ -1715,7 +1942,7 @@ impl<'a> Interp<'a> {
                         if id != (0, 0) {
                             visiting.insert(id);
                         }
-                        self.run(&child_ops, form_res, child, depth + 1, visiting);
+                        self.run(child_id, &child_ops, form_res, child, depth + 1, visiting);
                         if id != (0, 0) {
                             visiting.remove(&id);
                         }
@@ -1724,16 +1951,29 @@ impl<'a> Interp<'a> {
                 _ => {}
             }
         }
+        self.contexts[ctx].end_depth = stack.len();
+        self.contexts[ctx].ends_in_text = in_text;
     }
 
-    fn show_string(&mut self, gs: &GState, tm: &mut Matrix, bytes: &[u8]) {
+    #[allow(clippy::too_many_arguments)]
+    fn show_string(&mut self, gs: &GState, tm: &mut Matrix, bytes: &[u8], ctx: usize, op: usize, el: usize, info: &mut TextOp) {
         let fi = match gs.font {
             Some(f) => f,
-            None => return,
+            None => {
+                info.elems.push(Elem::Str { bytes: bytes.to_vec(), spans: Vec::new(), glyph_ids: Vec::new() });
+                return;
+            }
         };
         let fs = gs.font_size;
         let spans = self.fonts[fi].decode_spans(bytes);
+        let mut rec_spans = Vec::new();
+        let mut glyph_ids = Vec::new();
+        let mut start = 0usize;
         for (code, len) in spans {
+            rec_spans.push((code, len, start));
+            let span_start = start;
+            start += len;
+            self.fonts[fi].observed.insert(code);
             let font = &self.fonts[fi];
             let w0 = font.width(code);
             let is_space = len == 1 && code == 32;
@@ -1755,7 +1995,16 @@ impl<'a> Interp<'a> {
             let (upx, upy) = apply_vector(&self.u2v, ux, uy);
             let text = font.unicode(code);
             let vertical = font.vertical;
+            glyph_ids.push(self.glyphs.len());
             self.glyphs.push(Glyph {
+                ctx,
+                op,
+                el,
+                code,
+                byte_start: span_start,
+                byte_len: len,
+                font_size: fs,
+                adv_text,
                 text,
                 font: fi,
                 color: if gs.mode == 1.0 { gs.stroke.rgb.clone() } else { gs.fill.rgb.clone() },
@@ -1769,12 +2018,17 @@ impl<'a> Interp<'a> {
             });
             *tm = if vertical { multiply(&[1.0, 0.0, 0.0, 1.0, 0.0, -adv_text], tm) } else { multiply(&[1.0, 0.0, 0.0, 1.0, adv_text * gs.th, 0.0], tm) };
         }
+        info.elems.push(Elem::Str { bytes: bytes.to_vec(), spans: rec_spans, glyph_ids });
     }
 }
 
 struct PageModel {
     glyphs: Vec<Glyph>,
     fonts: Vec<FontModel>,
+    contexts: Vec<Ctx>,
+    text_ops: HashMap<(usize, usize), TextOp>,
+    images: Vec<ImageRec>,
+    u2v: Matrix,
 }
 
 fn contents_bytes(pdf: &Pdf, page: &Dictionary) -> Vec<u8> {
@@ -1811,11 +2065,12 @@ fn interpret_page(doc: &Document, page: &Dictionary) -> Result<(PageModel, f64, 
     };
     let bytes = contents_bytes(&pdf, page);
     let ops = parse_content(&bytes);
+    let page_ctx = Ctx { parent: None, parent_op: 0, stream_dict: None, resources: resources.cloned(), bytes: bytes.clone(), ops: ops.iter().map(|o| (o.start, o.end)).collect(), end_depth: 0, ends_in_text: false };
     let black = ColorState { space: "DeviceGray".into(), rgb: "#000000".into() };
     let initial = GState { ctm: IDENTITY, fill: black.clone(), stroke: black, font: None, font_size: 0.0, tc: 0.0, tw: 0.0, th: 1.0, tl: 0.0, rise: 0.0, mode: 0.0 };
-    let mut it = Interp { pdf, u2v, glyphs: Vec::new(), fonts: Vec::new(), font_cache: HashMap::new() };
-    it.run(&ops, resources, initial, 0, &mut HashSet::new());
-    Ok((PageModel { glyphs: it.glyphs, fonts: it.fonts }, vw, vh))
+    let mut it = Interp { pdf, u2v, glyphs: Vec::new(), fonts: Vec::new(), font_cache: HashMap::new(), contexts: vec![page_ctx], text_ops: HashMap::new(), images: Vec::new() };
+    it.run(0, &ops, resources, initial, 0, &mut HashSet::new());
+    Ok((PageModel { glyphs: it.glyphs, fonts: it.fonts, contexts: it.contexts, text_ops: it.text_ops, images: it.images, u2v }, vw, vh))
 }
 
 // ------------------------------------------------------------------ layout
@@ -2004,6 +2259,7 @@ fn line_text(line: &RawLine, chunks: &[Chunk], glyphs: &[Glyph]) -> (String, Vec
     (js_trim(&collapse_ws(&text)).to_string(), ids)
 }
 
+#[allow(dead_code)] // `editable` is the editor's flag; the Rust apply path leaves the decision to the UI like TypeScript
 struct Block {
     text: String,
     lines: Vec<(String, bool)>, // text, hard_break
@@ -2020,6 +2276,16 @@ struct Block {
     line_height: f64,
     angle: i64,
     font_name: String,
+    glyph_ids: Vec<usize>,
+    dir: (f64, f64),
+    /// Per line: x0, x1, baseline offset (across the text direction).
+    line_geo: Vec<(f64, f64, f64)>,
+    frame_x0: f64,
+    frame_x1: f64,
+    first_x: f64,
+    first_perp: f64,
+    font: usize,
+    editable: bool,
 }
 
 struct Acc {
@@ -2233,6 +2499,15 @@ fn finalize_block(acc: &Acc, sorted: &[SLine], glyphs: &[Glyph], model: &PageMod
         line_height,
         angle: js_round(dy.atan2(dx) * 180.0 / std::f64::consts::PI) as i64,
         font_name: font.display_name.clone(),
+        glyph_ids: all_ids.clone(),
+        dir: (dx, dy),
+        line_geo: lines.iter().map(|l| (l.2, l.3, l.4)).collect(),
+        frame_x0: acc.x0,
+        frame_x1: acc.x1,
+        first_x: first.raw.x0,
+        first_perp: first.raw.perp,
+        font: font_idx,
+        editable: !text_glyphs.iter().any(|g| g.text.is_none()) && font.reliable,
     }
 }
 
