@@ -132,6 +132,7 @@ pub async fn run_tool(app: AppHandle, id: String, tool: String, inputs: Vec<Stri
                 };
                 images_to_pdf(&pairs, &opts, &out2, &mut prog).map(|n| (n, None)).map_err(e)
             }
+            "docx" => ihp_core::docx::docx_to_pdf(first, &out2, Some(&fonts), &mut prog).map(|n| (n, None)).map_err(e),
             "pagenumbers" => ihp_core::stamp::page_numbers(first, &out2, &args, Some(&fonts), &mut prog).map(|n| (n, None)).map_err(e),
             "watermark" | "sign" => {
                 let img = ins.get(1).map(|p| std::fs::read(p).map_err(|x| x.to_string())).transpose()?;

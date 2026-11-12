@@ -145,7 +145,7 @@ fn winansi(c: char) -> Option<u8> {
     HI.iter().find(|(k, _)| *k == u).map(|(_, b)| *b)
 }
 
-fn pdf_string(bytes: &[u8]) -> String {
+pub(crate) fn pdf_string(bytes: &[u8]) -> String {
     let mut s = String::from("(");
     for &b in bytes {
         match b {
@@ -238,7 +238,7 @@ fn new_wraps(doc: &mut Document) -> Wraps {
     Wraps { q: stream(doc, b"q".to_vec()), big_q: stream(doc, b"Q".to_vec()) }
 }
 
-fn font_dict(font: &Font) -> Object {
+pub(crate) fn font_dict(font: &Font) -> Object {
     let mut d = Dictionary::new();
     d.set("Type", name("Font"));
     d.set("Subtype", name("Type1"));
@@ -264,7 +264,7 @@ fn hex_rgb(hex: &str) -> (f64, f64, f64) {
     (((n >> 16) & 255) as f64 / 255.0, ((n >> 8) & 255) as f64 / 255.0, (n & 255) as f64 / 255.0)
 }
 
-fn f(v: f64) -> String {
+pub(crate) fn f(v: f64) -> String {
     let s = format!("{:.4}", v);
     let s = s.trim_end_matches('0').trim_end_matches('.');
     if s.is_empty() || s == "-" { "0".into() } else { s.to_string() }

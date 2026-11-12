@@ -91,6 +91,12 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-11-12 · Word to PDF in Rust (`crates/ihp-core/src/docx.rs`)
+
+- Port of `docxParser.ts` + `renderDocxToPdf.ts` (same regex-level reading, same layout maths, standard fonts or the new Unicode font layer). `scripts/test-docx-rust.ts` runs both engines on 6 generated .docx (styles/headings/page break, callout + 30-row table, PNG/JPEG pictures, Greek+Cyrillic, Devanagari, CJK) and 4 real ones (PDF-to-Word outputs incl. complex.docx): **same pages and same words in 9 of 9**, pixels 99 dB for the picture file and 61-79 dB for the rest (sub-pixel differences from 4-decimal coordinates).
+- The TypeScript engine fails on a tab character inside a run (`WinAnsi cannot encode "	"`, journal_10p.docx); Rust draws it as a space, so that file now converts (10 pages).
+- Rust declines (TypeScript runs) for GIF/BMP/WebP pictures, empty documents and anything the PDF writer can't read. Wired via `nativeFirst` in `WordToPdfView`. **Not yet run in the installed app** (needs the Unicode fonts from the embedded assets for non-Western text, see the font layer entry).
+
 ### 2026-11-12 · Rust Unicode font layer (`crates/ihp-core/src/fonts.rs`) in Watermark and Page numbers
 
 - New: rustybuzz shaping + subsetter + Type0/Identity-H embedding with ToUnicode, TJ adjustments for shaping nudges. Faces as in the TS app (Liberation Sans, Noto Sans Devanagari, Noto Sans SC). Liberation is laid out without kerning on purpose (the TS tools do none for it; with kerning Greek bold was 46 dB, without 74.7 dB).

@@ -26,7 +26,7 @@ Branch `claude/rust-port`, code is at **2.0.0-beta.2** (commit 8061210); only **
 ## Next, in order (code first; each needs a Rust-vs-TS comparison test before it ships, TS stays as fallback)
 
 1. **PDF to PowerPoint**: backgrounds now via PDFium (`render::strip_text`, `strip_pdf_text`, `features/pdfToPpt/strip.native.ts`; 0.00% pixel diff vs TS, falls back on form-XObject text). Text boxes stay on the TS Edit-engine analysis (needs colour/rotation/alignment PDFium runs lack): that part waits for the Edit engine port. Still to do: run it in the installed app (E2E).
-2. **Word / PowerPoint / Excel / HTML to PDF**: port the OOXML parsing by hand (no Rust equivalent of the libraries); picture fidelity tests first (`scripts/test-docx-images.ts`, quality fixtures).
+2. **Word to PDF DONE in Rust (docx.rs, A/B 9/9; not yet in installed app).** Still to do, same method: **PowerPoint / Excel / HTML to PDF**: port the OOXML parsing by hand (no Rust equivalent of the libraries); picture fidelity tests first (`scripts/test-docx-images.ts`, quality fixtures).
 3. **Edit PDF engine** (`features/editPdf/engine`, ~5k lines): largest; last.
 4. Later: Share to phone (Wi-Fi server + zip, hotspot via WinRT, Bluetooth OBEX), usage log.
 
