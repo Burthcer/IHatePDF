@@ -27,6 +27,12 @@
 
 ---
 
+## Try the 2.0 beta
+
+A rebuilt IHatePDF (Tauri + a Rust core, about 25 MB instead of 130 MB) is available as a **pre-release**: [IHatePDF 2.0.0-beta.2](https://github.com/Burthcer/IHatePDF/releases/tag/v2.0.0-beta.2). Compress, Merge, Split, Rotate, Crop, Redact, PDF to JPG and more run in Rust; Share to phone and the usage log are not in the beta yet. It installs for your account only and doesn't replace 1.x, so you can try it next to the version above. This page and the download button still point to the stable 1.4.0.
+
+---
+
 ## Why IHatePDF
 
 - **Edit the actual text.** Double-click any paragraph and retype it, like in Word. The paragraph reflows in the document's own font, and the old characters are removed from the file, not hidden under a white box.

@@ -1,4 +1,6 @@
 import React, { useMemo, useState } from 'react';
+import { nativeFirst } from '../../services/nativeWorker';
+import { splitNative } from '../pageTools.native';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
 import { PageThumb } from '../../components/common/PageThumb';
@@ -26,7 +28,9 @@ export const SplitView: React.FC<SplitViewProps> = ({ initialFiles = [], onBack 
   const file = files[0];
   const { pages, thumbRef } = usePageThumbnails(file?.data);
   const total = pages.length || file?.pageCount || 0;
-  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./split.worker.ts', import.meta.url), { type: 'module' }));
+  const runner = useToolRunner<ProcessedPdfResult>(
+    nativeFirst(() => new Worker(new URL('./split.worker.ts', import.meta.url), { type: 'module' }), { SPLIT_PDF: splitNative })
+  );
 
   const parsed = useMemo(() => {
     if (!total) return { ranges: [], error: null as string | null };

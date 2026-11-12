@@ -11,6 +11,7 @@ import { Lock } from 'lucide-react';
 import { Button, Field, Modal, Notice } from '../components/ui';
 import { validatePdfHeader } from '../services/fileValidator';
 import { memoryManager } from '../services/memoryManager';
+import { hasNative, stageInput } from '../services/nativeWorker';
 import { WorkerClient, WorkerCallError } from '../services/workerClient';
 import type { PDFFile } from '../types/pdf';
 import type { ProcessedPdfResult } from '../types/worker';
@@ -28,7 +29,27 @@ interface PasswordRequest {
 
 const COUNT_TIMEOUT_MS = 30_000;
 
+/** Desktop app: PDFium counts the pages (no pdf.js load). Returns null when unavailable. */
+async function countPagesNative(data: Blob, password?: string): Promise<number | null> {
+  if (!hasNative() || data.size > 1024 * 1024 * 1024) return null; // big files stay with pdf.js's range reads
+  try {
+    const path = await stageInput(data);
+    const r: { pages?: number; password?: boolean } = await (globalThis as unknown as { __TAURI__: { core: { invoke: (c: string, a: unknown) => Promise<any> } } }).__TAURI__.core.invoke('pdf_probe', { path, password: password ?? null });
+    if (r.password) {
+      const err = new Error('Password required');
+      err.name = 'PasswordException';
+      throw err;
+    }
+    return r.pages ?? null;
+  } catch (err) {
+    if (isPasswordError(err)) throw err;
+    return null; // PDFium couldn't read it: pdf.js gets to try (and Repair may recover it)
+  }
+}
+
 async function countPages(data: Blob, password?: string): Promise<number> {
+  const native = await countPagesNative(data, password);
+  if (native !== null) return native;
   // pdf.js is loaded on first use so the home screen starts without it.
   const { openPdfJsDocument } = await import('../services/pdfWorkerSetup');
   const task = openPdfJsDocument(data, password);

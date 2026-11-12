@@ -1,64 +1,59 @@
-# IHatePDF v1.4.0
+# IHatePDF v2.0.0-beta.3 (pre-release)
 
-A **local usage log** (so a lab can measure how reliable and how heavy the app really is), **pictures in Word documents now survive Word → PDF**, **screenshots stay sharp when compressed**, and a clear message for files too big to preview.
+**This is a beta.** The stable version is still 1.4.0. The desktop app is rebuilt on **Tauri** with a **Rust core**. Same screens and tools; a much smaller installer, a faster start, and the heaviest tools moved off the page into Rust.
 
 ## Install
 
-1. Download **IHatePDF-Setup.exe** below, under *Assets*.
+1. Download **IHatePDF-Setup.exe** below, under *Assets* (about 24 MB, was 130 MB).
 2. Run it. If Windows says *"Windows protected your PC"*, click **More info → Run anyway**. The installer isn't code-signed.
-3. It replaces 1.3.x (or any earlier version) in place.
+3. It installs for your Windows account only (no administrator permission) and does **not** replace 1.x: uninstall 1.x first from *Settings → Apps*. Your saved files are never touched. It needs Microsoft Edge WebView2, which is part of Windows 10 and 11.
 
-## Usage log
+## What changed
 
-The app now keeps a small log **on the PC** of what it did: tool, sizes, time, success or error, memory and CPU, temp files. It is **never uploaded**, holds **no file names and nothing from your documents**, is capped at **15 MB**, and can be switched off in the footer or by the lab. Full list of what it records, how to point it at a shared drive (for Deep Freeze labs), and the summary tool: [docs/USAGE_LOG.md](USAGE_LOG.md).
-
-- **Every job** is logged with its outcome (`ok`, `error`, `stopped` by the memory fail-safe, `cancelled`), time, input and output size, and the app's peak RAM and CPU (and the whole PC's).
-- **Temp files** are counted when created and deleted, and checked at quit and at the next start: "left after clean-up" must be 0.
-- **Usage:** anonymous PC and user ids (hashes), launches per day, tools opened.
-- **`node scripts/log-summary.mjs <folder>`** turns the logs into the tables for a report: success rate overall and per tool, error classes, median and 95th-percentile times, RAM and CPU, temp-file checks, and the log's growth per day.
-- Tested end to end on the real app (21 checks), including: no file name or path anywhere in the log, the 15 MB cap by rotation, the off switch, and the error classes (a damaged file is logged as `damaged-file`).
-
-## Word → PDF keeps pictures
-
-Before, pictures in a .docx were **silently dropped**: a Word file with screenshots became a PDF of text only. Now PNG and JPEG pictures (inline or floating, and old-style ones) are placed in the PDF at the size Word gave them, scaled down only if wider than the page, with their original pixels (nothing is re-compressed). A real Word file with a 1385 × 779 screenshot and a 1384 × 922 photo now comes out with both. Pictures inside table cells are still left out.
-
-## Compress: screenshots and charts stay sharp
-
-Compress used to shrink every picture the same way. A screenshot of a program, or a chart, pasted into Word is shown scaled down, so "150 dpi" cut its pixels roughly in half and the text in it went soft. Now the compressor recognises such pictures (mostly flat colour with sharp edges, not a full-page scan) and gives them more resolution and quality than photos at the same setting, and stores them losslessly when that is smaller than a JPEG. Measured on a 1920 × 1080 screenshot pasted at 16 cm (how much of the original's edge sharpness is left):
-
-| Setting | Before | Now |
+| | 1.4.0 | 2.0.0 |
 |---|---|---|
-| Light | 100% | 100% |
-| Balanced | 44% (resized to 945 × 531) | **100%** (kept as it was: it can't be made smaller without softening it) |
-| Smallest | 34% | 43% |
-| Custom, 100 KB | 39% | 41% |
+| Installer | 130 MB | **24 MB** |
+| Launch to home screen (median of 3) | 1.19 s | **0.91 s** |
+| Idle memory, all app processes (median) | 408 MB | 423 MB |
+| Compress, 10 MB scan, click to result | 2.3 s | **0.8 s** |
+| Compress, peak extra memory, same file | +706 MB | **+130 MB** |
+| Compress, photo / 4 duplicate images | 313 / 393 ms | **91 / 142 ms** |
 
-A chart at Balanced went from 81% to 100%. Photos and full-page scans are compressed as before (a 300 dpi scanned text page at Balanced: 220 KB, the same as before). **Custom size** now says so when the target forces the pictures below 100 dpi: *"At this size small text inside pictures may be hard to read."*
+Idle memory is about the same because the page itself (the same React app) dominates it; what drops is the memory tools use while they work.
 
-## Files over 2 GB
+**New in beta.3:** Word, PowerPoint, Excel and HTML to PDF, and PDF to PowerPoint (text boxes, backgrounds, slides and the .pptx), now run on the Rust core, with Hindi, Greek, Cyrillic and Chinese text supported. Each was compared with the TypeScript version on test files first (same pages and words; 242 PDFs for the PowerPoint text boxes) and the old version still runs if the new one cannot handle a file. Not yet checked: opening the generated .pptx in real PowerPoint.
 
-The app's page engine can't hold a 2 GB block of memory, so **page previews can't open files over 2 GB** (Rotate, Organize, Crop, Split, Edit PDF, Sign, Redact, PDF → JPG: every tool that shows pages). Before, those tools showed "Loading pages…" forever. Now a message explains: *"This PDF is 5.0 GB. Page previews work up to 2 GB. You can still use Merge, Compress, Watermark, Page numbers, Protect and PDF/A on it, or split it into smaller parts first."* Those tools do work on a 5 GB file, measured on Windows (1,436 scanned pages, 5.0 GB):
+**New in beta.2:** Repair reads damaged files with PDFium (the 1.4.0 repair still runs when PDFium can't open a file); PDF to Markdown, Word and Excel read the text from PDFium (same layout code; 17 of 18 test outputs identical to before); Compare draws its pages with PDFium; every page preview in the app uses PDFium.
 
-| Tool | Time | Most memory used by the app |
+**In Rust now:** Compress, Merge, Split, Organize pages, Rotate, Crop, Images to PDF (and Scan to PDF), PDF to JPG/PNG, Redact, Watermark, Page numbers, Sign, the page count when a file is opened, and the page thumbnails every page tool shows (PDFium draws pages; pdf.js is no longer loaded for them). The memory fail-safe also runs in Rust again. Each one falls back to the 1.4.0 engine for anything it can't handle, so a tool never does worse than before.
+
+**Still on the 1.4.0 engines (inside the new app):** Edit PDF, Forms, Repair, PDF/A, Protect, Unlock, Compare, every Word/Excel/PowerPoint/HTML conversion, and PDF to Word/Excel/PowerPoint/Markdown. Watermark and Page numbers fall back to the 1.4.0 engine for non-Western text. These move to Rust over the 2.x releases where it pays off.
+
+**Not in 2.0.0:** Share to phone and the local usage log. Both are in 1.4.0 and return in later 2.x releases. Forms, PDF/A, Protect and Unlock stay on the 1.4.0 code on purpose (appearance generation, compliance details, encryption: no measured problem, so no rewrite risk).
+
+## Compress quality
+
+Measured on the same pictures with both engines (SSIM against the original, higher is better):
+
+| Picture, setting | 1.4.0 | 2.0.0 |
 |---|---|---|
-| Watermark | 86 s | 924 MB |
-| Page numbers | 56 s | 1.0 GB |
-| Merge (+ 20 pages) | 65 s | 1.0 GB |
-| Protect (AES-256) | 62 s | 990 MB |
-| PDF/A | 71 s | 983 MB |
+| Screenshot, Light / Balanced | exact | exact |
+| Screenshot, Smallest | 0.904 | 0.914 |
+| Chart, Smallest (edge sharpness kept) | 76% | 91% |
+| Photo, Light / Balanced / Smallest | 0.968 / 0.966 / 0.963 | 0.968 / 0.966 / 0.962 |
+| Scanned text, Light / Balanced / Smallest | 0.973 / 0.941 / 0.866 | 0.972 / 0.939 / 0.868 |
 
-**More stress results** (full tables in the test report): Compress on the same 5 GB file finished in 743 s (peak 2.1 GB). A 10,000-page PDF went through 14 tools on Windows, all finished: most took 3 to 32 seconds and 0.9 to 2 GB of RAM. Two to know: **PDF → Word on 10,000 pages needs about 4 GB of RAM**, and **Redact on every page of 10,000 takes about an hour**.
+A Word file with a pasted screenshot and a photo, converted with Word to PDF and then compressed, keeps the screenshot exact at Light and Balanced.
 
-## Also
+Images the Rust engine can't decode safely (JPEG 2000, CMYK, Lab/Separation colour, odd /Decode arrays) and files over 1 GB go to the 1.4.0 engine.
 
-- The memory tests and the Windows test log (`scripts/e2e/memory/`, `docs/testing/WINDOWS_TESTS.md`) now include `usagelog.mjs`, `stress.mjs` (5 GB and 10,000-page files) and `quality.mjs` (picture quality, scored by `quality_score.py`).
-- 85 automated checks (17 + 34 + 5 + 29).
+## How it was tested
 
-## Known limits
+- 27 of the 28 tools driven end to end in the real app (`scripts/e2e/all-tools.mjs` with `E2E_CDP=http://127.0.0.1:9222`); the 28th, Compress, was run from its own script because the 44 MB input is over the debug port's upload limit.
+- Compress, all levels plus custom sizes, on quality, scan, complex and edge PDFs (transparency, palette, CMYK, grayscale, rotated pages, duplicates, a picture inside a form): page count, text, per-page pixels and MuPDF warnings (`scripts/test-compress-rust.mjs`). It found one real bug (wrong `/Length` on re-encoded images), fixed.
+- Page tools: page order, blank pages, rotation, crop boxes on rotated pages, zip contents (`scripts/test-pages-rust.py`).
+- Watermark, Page numbers and Sign: Rust against the 1.4.0 workers on the same input and settings, page by page (14 cases: rotated and cropped pages, tiled, below the text, images, mirrored numbers): 13 are pixel-identical, one differs by 0.1 dB (`scripts/test-stamp-rust.ts`). Redact: the redacted text is gone from the file and the rest keeps its text.
+- Memory fail-safe: unit tests for the budget and levels (`cargo test`) and a run under a 256 MB budget.
+- `npm test`: the 1.4.0 conversion, editor and Word-picture suites still pass.
 
-- Previews and the tools that need them don't open files over 2 GB (above).
-- Pictures in Word table cells are not carried into the PDF; Word's EMF/WMF pictures are left out.
-- PDF → Word leaves out sideways (rotated) text and can misplace images inside tables or multi-column pages.
-- Compress can stop with *"Windows is almost out of memory"* when Windows is within ~160 MB of the memory it keeps free (other tools slow down and finish).
-- Scanned pages have no text (no OCR); signatures are visible, not certificate-based.
-- Earlier limits: see the [1.3.1 release notes](https://github.com/Burthcer/IHatePDF/releases/tag/v1.3.1).
+Full log: [docs/testing/WINDOWS_TESTS.md](testing/WINDOWS_TESTS.md).

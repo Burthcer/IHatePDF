@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { nativeFirst } from '../../services/nativeWorker';
+import { imagesNative } from '../pageTools.native';
 import { Camera, Check, ImagePlus, RotateCw, X } from 'lucide-react';
 import { ToolLayout } from '../../components/layout/ToolLayout';
 import { Button, Field, IconButton, Modal, Notice, Panel, Segmented, cn } from '../../components/ui';
@@ -145,7 +147,9 @@ export const ScanToPdfView: React.FC<ScanToPdfViewProps> = ({ onBack }) => {
   const [defaultFilter, setDefaultFilter] = useState<ScanFilter>('document');
   const videoRef = useRef<HTMLVideoElement>(null);
   const photoRef = useRef<HTMLInputElement>(null);
-  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('../imageToPdf/imagesToPdf.worker.ts', import.meta.url), { type: 'module' }));
+  const runner = useToolRunner<ProcessedPdfResult>(
+    nativeFirst(() => new Worker(new URL('../imageToPdf/imagesToPdf.worker.ts', import.meta.url), { type: 'module' }), { IMAGES_TO_PDF: imagesNative })
+  );
 
   useEffect(() => () => stream?.getTracks().forEach((t) => t.stop()), [stream]);
 

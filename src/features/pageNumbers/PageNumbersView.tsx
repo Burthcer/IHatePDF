@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { nativeFirst } from '../../services/nativeWorker';
+import { pageNumbersNative } from '../pageTools.native';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
 import { PositionGrid } from '../../components/common/PositionGrid';
@@ -40,7 +42,9 @@ export const PageNumbersView: React.FC<PageNumbersViewProps> = ({ initialFiles =
   const [mirror, setMirror] = useState(false);
   const file = files[0];
   const { pages, thumbRef } = usePageThumbnails(file?.data, 110);
-  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./pageNumbers.worker.ts', import.meta.url), { type: 'module' }));
+  const runner = useToolRunner<ProcessedPdfResult>(
+    nativeFirst(() => new Worker(new URL('./pageNumbers.worker.ts', import.meta.url), { type: 'module' }), { ADD_PAGE_NUMBERS: pageNumbersNative })
+  );
   const total = pages.length || file?.pageCount || 1;
   const template = style === 'custom' ? custom : TEMPLATES[style];
   const lastNumber = startAt + (total - firstPage);

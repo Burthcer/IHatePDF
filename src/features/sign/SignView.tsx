@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { nativeFirst } from '../../services/nativeWorker';
+import { signNative } from '../pageTools.native';
 import '@fontsource/caveat/600.css';
 import { Copy, Eraser, X } from 'lucide-react';
 import { Dropzone } from '../../components/common/Dropzone';
@@ -153,7 +155,9 @@ export const SignView: React.FC<SignViewProps> = ({ initialFiles = [], onBack })
   const file = files[0];
   const { pages } = usePageThumbnails(file?.data, 40, 0); // sizes only
   const { renderThumbnail } = usePdfRenderer();
-  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./sign.worker.ts', import.meta.url), { type: 'module' }));
+  const runner = useToolRunner<ProcessedPdfResult>(
+    nativeFirst(() => new Worker(new URL('./sign.worker.ts', import.meta.url), { type: 'module' }), { STAMP_SIGNATURE: signNative })
+  );
   const page = pages[pageIndex];
   const scale = page ? PAGE_W / page.width : 1;
 

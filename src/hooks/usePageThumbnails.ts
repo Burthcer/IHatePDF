@@ -10,6 +10,7 @@ import { showNotice } from '../services/notices';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { openPdfJsDocument } from '../services/pdfWorkerSetup';
+import { hasNative, stageInput } from '../services/nativeWorker';
 import { memoryManager } from '../services/memoryManager';
 import { jobsRunning, memoryState, whileOver } from '../services/memoryGuard';
 
@@ -19,6 +20,39 @@ export interface PageThumbInfo {
   width: number;
   height: number;
   rotation: number;
+}
+
+interface NativePages {
+  path: string;
+  infos: PageThumbInfo[];
+  /** Real sizes of pages start..start+count (the grid starts with every page sized like the first). */
+  sizes(start: number, count: number): Promise<PageThumbInfo[]>;
+  thumb(i: number, width: number): Promise<Blob>;
+  close(): void;
+}
+
+/** Desktop app: PDFium reads page sizes and draws thumbnails (no pdf.js, no canvases). Null elsewhere or on any error. */
+async function openNative(data: Blob | ArrayBuffer): Promise<NativePages | null> {
+  if (!hasNative()) return null;
+  const invoke = (globalThis as unknown as { __TAURI__: { core: { invoke: (c: string, a: unknown) => Promise<any> } } }).__TAURI__.core.invoke;
+  let path: string | null = null;
+  try {
+    path = await stageInput(data);
+    const asInfo = ([width, height, rotation]: [number, number, number]) => ({ width, height, rotation });
+    const first: { total: number; pages: Array<[number, number, number]> } = await invoke('pdf_info', { path, start: 0, count: 64 });
+    if (!first.total || !first.pages.length) throw new Error('no pages');
+    const staged = path;
+    return {
+      path: staged,
+      infos: Array.from({ length: first.total }, (_, i) => asInfo(first.pages[Math.min(i, first.pages.length - 1)])),
+      sizes: async (start, count) => (await invoke('pdf_info', { path: staged, start, count })).pages.map(asInfo),
+      thumb: async (i, width) => new Blob([await invoke('render_thumb', { path: staged, index: i, width, quality: 0.75 })], { type: 'image/jpeg' }),
+      close: () => undefined, // the staged copy is shared and cleaned up by stageInput
+    };
+  } catch (err) {
+    console.warn('PDFium preview unavailable, using pdf.js:', err);
+    return null;
+  }
 }
 
 /** Thumbnails drawn without waiting to be scrolled to. */
@@ -57,7 +91,9 @@ export function usePageThumbnails(data: Blob | ArrayBuffer | null | undefined, t
     if (!data || size === 0) return;
     let cancelled = false;
     let doc: PDFDocumentProxy | null = null;
-    const task = openPdfJsDocument(data);
+    let task: ReturnType<typeof openPdfJsDocument> | null = null;
+    let native: NativePages | null = null;
+    const objectUrls: string[] = [];
     let active = 0;
     let waiting = false;
     let rendered = 0;
@@ -76,6 +112,20 @@ export function usePageThumbnails(data: Blob | ArrayBuffer | null | undefined, t
     };
 
     const renderOne = async (i: number) => {
+      if (native) {
+        try {
+          const dpr = Math.min(window.devicePixelRatio || 1, 2);
+          const blob = await native.thumb(i, Math.ceil(targetWidth * dpr));
+          if (cancelled) return;
+          const url = URL.createObjectURL(blob);
+          objectUrls.push(url);
+          ready.set(i, url);
+          frame ||= requestAnimationFrame(flush);
+        } catch {
+          // leave this thumbnail blank
+        }
+        return;
+      }
       const page = await doc!.getPage(i + 1);
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const vp = page.getViewport({ scale: (targetWidth * dpr) / info[i].width });
@@ -97,7 +147,7 @@ export function usePageThumbnails(data: Blob | ArrayBuffer | null | undefined, t
     };
 
     pump.current = () => {
-      if (!doc || cancelled) return;
+      if ((!doc && !native) || cancelled) return;
       // Memory fail-safe: none while a job runs (its memory is measured) or memory is
       // over the budget, one at a time when it's tight.
       if (jobsRunning() || memoryState().level === 'over') {
@@ -131,6 +181,30 @@ export function usePageThumbnails(data: Blob | ArrayBuffer | null | undefined, t
 
     (async () => {
       try {
+        native = await openNative(data);
+        if (cancelled) return native?.close();
+        if (native) {
+          total = native.infos.length;
+          info = native.infos.map((p) => ({ ...p }));
+          setPages(info.map((p) => ({ ...p })));
+          for (let i = 0; i < Math.min(eager, total); i++) request(i);
+          visible.current.forEach((i) => request(i));
+          pump.current();
+          // Real page sizes (nearly always the same) fill in behind the scenes, 256 at a time.
+          for (let start = 64; start < total; start += 256) {
+            const batch = await native.sizes(start, 256);
+            if (cancelled) return;
+            const changed = new Map<number, PageThumbInfo>();
+            batch.forEach((p, k) => {
+              const i = start + k;
+              if (p.width !== info[i].width || p.height !== info[i].height || p.rotation !== info[i].rotation) changed.set(i, p);
+              info[i] = p;
+            });
+            if (changed.size) setPages((prev) => prev.map((p, i) => (changed.has(i) ? { ...changed.get(i)!, url: p.url } : p)));
+          }
+          return;
+        }
+        task = openPdfJsDocument(data);
         doc = await task.promise;
         total = doc.numPages;
         const sizeOf = async (i: number) => {
@@ -171,7 +245,9 @@ export function usePageThumbnails(data: Blob | ArrayBuffer | null | undefined, t
       cancelled = true;
       if (frame) cancelAnimationFrame(frame);
       pump.current = () => undefined;
-      void (doc ? memoryManager.destroyPdfDocument(doc) : task.destroy());
+      native?.close();
+      objectUrls.forEach((u) => URL.revokeObjectURL(u));
+      void (doc ? memoryManager.destroyPdfDocument(doc) : task?.destroy());
     };
   }, [data, targetWidth, eager, request]);
 

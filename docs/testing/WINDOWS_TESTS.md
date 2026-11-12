@@ -91,6 +91,89 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-11-12 (evening) · published v2.0.0-beta.3 installer (CI build)
+
+Installed `IHatePDF-Setup.exe` from the pre-release (`/S /D=%LOCALAPPDATA%\Programs\IHatePDF-beta3`; plain `/S` left the window open), ran with `--remote-debugging-port=9222`. `all-tools.mjs` 27/29 (same `compress` upload timeout and `autoSave` download-event harness failures), `unicode-watermark.mjs` 6/6, `pdf-to-ppt-native.mjs` 3/3. Only the expected fallback warnings. Detail in `TEST_LOG.md`.
+
+### 2026-11-12 · Excel to PDF in Rust (`crates/ihp-core/src/xlsx.rs`)
+
+- Port of `xlsxToPdf.worker.ts`. The TS engine reads the workbook with SheetJS 0.18.5 (`sheet_to_json`, `raw:false`, so every cell is the *formatted* text), so the Rust side reads the package by hand the way SheetJS does (Content_Types, shared strings incl. rich text/phonetic runs, styles numFmts + cellXfs, dimension ref, the row/cell regex scan, formulas without cached value skipped) and ports SheetJS's SSF formatter (General, 0/#/? patterns, thousands, %, E+, literals, [Red]/[$-x] blocks, conditions, date/time fields, AM/PM, [h]:mm:ss), then the same layout (9 pt columns capped at 220, shrink to 6 pt then column bands, repeated header, `n / total`). `ihp-xlsx` bin (3rd arg dumps the cell text per sheet), `run_tool` arm `xlsx`, `excelToPdf.native.ts` + `nativeFirst` in `ExcelToPdfView.tsx` (only .xlsx/.xlsm go to Rust); TS stays as fallback.
+- `scripts/test-xlsx-rust.ts` (`PY=py PYTHONIOENCODING=utf8 npx tsx scripts/test-xlsx-rust.ts`): 59 files (40 one-per-format grids, 23 formats x 18 values, 14 date/time formats x 14 serials, text/booleans/formulas/4 sheets, wide (bands), 400-row (pages), Greek/Cyrillic, CJK, Devanagari, inline strings, offset dimension, a hand-written package with rich text/errors/odd refs, 7 real files). 58 compared: cell text identical to SheetJS in all 58, same pages and words, PSNR 56.9 to 90 dB; 1 falls back to TS (`0E+00`, an exponent format SSF routes through a branch not ported).
+- Rust returns an error (TS runs) for: .xls/.ods/.xlsb/.csv, `t="d"` cells, 1904 dates, fractions (`# ?/?`), phone/dashed/engineering-exponent formats, numbers JavaScript prints in exponent form (>=1e21, <1e-6), cells with a line break/tab (TS itself throws), shared formulas without cached value, chart sheets.
+- Found on the way: pdf-lib measures a standard font as (sum of glyph widths) x (size / 1000), `stamp::Font::width` does (sum x size) / 1000; they differ in the last bit, which flips "does it fit" on borderline headers (`Group` vs `Gro...`). `xlsx.rs` uses pdf-lib's order; `stamp.rs` untouched.
+- NOT verified: the installed app (Excel to PDF through `run_tool` + `asset_resolver` fonts), a real multi-MB workbook, an .xlsx saved by LibreOffice/Google Sheets.
+
+### 2026-11-12 (afternoon) · installed-app pass + Edit PDF text analysis in Rust (`crates/ihp-core/src/editpdf.rs`)
+
+Summary table and recall notes: `docs/testing/TEST_LOG.md`.
+
+- **Installed-style app** (release exe with `--remote-debugging-port=9222`, fresh `npm run build` + `cargo build --release`): `all-tools.mjs` 27 of 29 (`compress` = harness upload timeout on its 44 MB input, `autoSave` = waits for a browser download event; neither a product bug); `tauri.mjs` Compress smoke test passes; new `scripts/e2e/unicode-watermark.mjs` 6 of 6 (Hindi/Greek/Chinese watermark, Hindi/Greek+Cyrillic/Chinese Word to PDF; no Rust-declined warnings, so `asset_resolver` does find the fonts); new `scripts/e2e/pdf-to-ppt-native.mjs` 3 of 3 (Rust text boxes + PDFium backgrounds + Rust writer, no fallback warnings). `npm test` 17/33/5, `tsc` and `cargo build` clean (the `lasti` warning removed).
+- **PDF to PowerPoint text boxes in Rust**: port of the Edit engine's analysis half (lexer, CMap, font model, interpreter, layout; data tables dumped by `scripts/gen-editdata.ts` to `src/editdata.json`). `scripts/test-editpdf-rust.ts`: 137 own PDFs (470 pages, 14,438 boxes) and 105 real-world PDFs from this laptop (1,141 pages, 6,629 boxes): **0 differences, 0 fallbacks** (text, font, size, colour, bold/italic, alignment, rotation exact; position/size within 0.01 pt). Speed level with TypeScript (1.1 s vs 1.0 s on the 137 files, after compiling 3 regexes once instead of per box: first version was 2.4 s). Wired: command `pdf_text_boxes`, `textBoxesNative` in `strip.native.ts`, used by `PdfToPptView` (worker only when Rust or PDFium declines); shared mapping in `pdfToPpt/textBoxes.ts`.
+- Not ported on purpose: Edit PDF's editing half (`applyPageEdits`). Not verified: real PowerPoint opening the Rust .pptx.
+
+### 2026-11-12 · PowerPoint to PDF in Rust (`crates/ihp-core/src/pptx.rs`)
+
+- Port of `pptToPdf.worker.ts` + `pptxParser.ts` (same regexes, same drawing maths: 48-band gradients, 6 pt text padding, 1.25 line height, equal table rows; fonts and pictures as in `docx.rs`). `ihp-pptx` bin, `run_tool` arm `pptx`, `pptToPdf.native.ts` + `nativeFirst` in `PptToPdfView.tsx`; TS stays as fallback.
+- `scripts/test-pptx-rust.ts` (`PY=py PYTHONIOENCODING=utf8 npx tsx scripts/test-pptx-rust.ts`): 15 files (10 pptxgenjs-generated: text styles, bullets, shapes, table, PNG+JPEG pictures and picture background, 4:3, Greek/Cyrillic, CJK, Devanagari, 25 slides; 1 hand-edited with gradient and scheme colours; 4 real). 15/15 same page count, same words and positions, worst PSNR 57.1 dB (most 99 dB; the rest is 4-decimal text coordinates). Rust declines (falls back to TS) only when it can't embed a PNG/JPEG exactly or the font source is missing; other picture formats are skipped like TS does.
+- Found and fixed a TypeScript bug on the way: `embedJpg` got a view into the zip buffer (stored entries) and pdf-lib ignores the view offset, so uncompressed JPEG pictures/backgrounds failed with "SOI not found" and were silently dropped. The worker now passes a copy.
+- Not verified: the installed app (E2E), real Office-made decks with layouts/masters beyond the 4 fixtures here.
+
+### 2026-11-12 · PDF to PowerPoint writer + slide rendering in Rust (`crates/ihp-core/src/pptx_out.rs`)
+
+- Port of `buildPptx.worker.ts` (pptxgenjs): OOXML package via `zip` (content types, rels, presentation, master/layout/theme templates in `src/pptx_tpl/`, one slide per page: full-slide JPEG + text boxes with EMU position/size, half-point font size, colour, bold/italic, alignment, line spacing, rotation, same `w = width*1.08+4`, `h = max(height, size*1.2)` rules). Slide pictures rendered with PDFium at 1600 px wide, JPEG 0.88 (as `renderSlides`). CLI `ihp-pptx-out`, command `build_pptx` (native.rs), page wiring `features/pdfToPpt/buildPptx.native.ts` (any failure: pdf.js + pptxgenjs as before).
+- `scripts/test-pdfppt-rust.ts` + `scripts/test-pdfppt-compare.py` (python-pptx 1.0.2): text boxes from the real Edit-engine analysis, both writers fed the same boxes and the same picture bytes. journal_10p (10 slides, 93 shapes), sample-multi (4 slides, 16 shapes), q_word (2 slides, 8 shapes), each with an extra edge box (entities, quotes, empty line, Unicode, rotation 12.5, right-aligned, line spacing): slide size, shape order, picture sha1, text, run size/bold/italic/colour/font, alignment, line spacing, EMU positions and rotation all identical to pptxgenjs. Rust package validated: every part well-formed XML, every relationship target exists, every part has a content type.
+- Not verified: opening in real PowerPoint or LibreOffice (neither installed here; python-pptx and XML checks only), the installed app (E2E). Text-box extraction is still the TS Edit engine.
+
+### 2026-11-12 · HTML to PDF writer in Rust (`crates/ihp-core/src/html.rs`)
+
+- Port of `htmlToPdf.worker.ts`: the browser still captures the layout (`captureLayout.ts`); Rust draws the display list (rects with opacity, solid/dashed lines, PNG pictures, text in standard fonts or the Unicode font layer). Job file = u32 length + payload JSON + PNG bytes, staged via `stageInput`, tool `html` in `run_tool`, wired with `nativeFirst` in `HtmlToPdfView` (`htmlToPdf.native.ts`).
+- `scripts/test-html-rust.ts` (8 hand-built display lists: families/weights/colours, shapes, PNG + alpha PNG + JPEG, 4 pages, Greek/Cyrillic, Devanagari, CJK, landscape + Unicode title): same pages and words in 8/8, worst PSNR 59.2 dB (all others 61-68 dB).
+- A JPEG in the list is skipped by both engines (pdf-lib `embedPng` fails; the worker skips it). Rust declines (TypeScript runs) for unknown families/items, bad colours, unreadable PNGs, no fonts for non-Western text, zero pages. **Not yet run in the installed app.**
+
+### 2026-11-12 · Word to PDF in Rust (`crates/ihp-core/src/docx.rs`)
+
+- Port of `docxParser.ts` + `renderDocxToPdf.ts` (same regex-level reading, same layout maths, standard fonts or the new Unicode font layer). `scripts/test-docx-rust.ts` runs both engines on 6 generated .docx (styles/headings/page break, callout + 30-row table, PNG/JPEG pictures, Greek+Cyrillic, Devanagari, CJK) and 5 real ones (one skipped, the TypeScript engine fails on it) (PDF-to-Word outputs incl. complex.docx): **same pages and same words in 10 of 10**, pixels 99 dB for the picture file and 61-79 dB for the rest (sub-pixel differences from 4-decimal coordinates).
+- The TypeScript engine fails on a tab character inside a run (`WinAnsi cannot encode "	"`, journal_10p.docx); Rust draws it as a space, so that file now converts (10 pages).
+- Rust declines (TypeScript runs) for GIF/BMP/WebP pictures, empty documents and anything the PDF writer can't read. Wired via `nativeFirst` in `WordToPdfView`. **Not yet run in the installed app** (needs the Unicode fonts from the embedded assets for non-Western text, see the font layer entry).
+
+### 2026-11-12 · Rust Unicode font layer (`crates/ihp-core/src/fonts.rs`) in Watermark and Page numbers
+
+- New: rustybuzz shaping + subsetter + Type0/Identity-H embedding with ToUnicode, TJ adjustments for shaping nudges. Faces as in the TS app (Liberation Sans, Noto Sans Devanagari, Noto Sans SC). Liberation is laid out without kerning on purpose (the TS tools do none for it; with kerning Greek bold was 46 dB, without 74.7 dB).
+- `scripts/test-stamp-rust.ts` (TS worker vs Rust CLI, MuPDF pixels and words), 19 cases incl. 5 new Unicode ones: Greek+Cyrillic, Devanagari and CJK watermarks, Devanagari and Cyrillic page-number templates: **all pass** (CJK and Cyrillic 99 dB; Greek 74.7; Devanagari 79-84 dB, i.e. same look). Devanagari word extraction is not compared: the TS output copies a vowel sign before its consonant, the Rust one keeps logical order (plus one invisible U+FEFF for a helper glyph).
+- Rust reads the fonts from the app's embedded assets (`asset_resolver`, URL paths sent by `src/services/fontAssets.ts`). **Not yet checked in the installed app**: if a path does not resolve, Rust returns "needs Unicode font" and the TypeScript engine runs, so nothing breaks. Check in the next beta: Watermark with Hindi text, with `E2E_CDP`.
+
+### 2026-11-12 · 2.0.0-beta.2 release + PDF to PowerPoint backgrounds on `claude/rust-port`
+
+- **Release**: the by-hand "Windows installer" run on `claude/rust-port` (43139429402) succeeded; `v2.0.0-beta.2` is a pre-release with `IHatePDF-Setup.exe`, 1.4.0 stays "Latest". The old `startup_failure` and the two stuck "queued" runs were GitHub-side and needed no action.
+- **PDF to PowerPoint backgrounds** (`scripts/test-strip-rust.ts`, TypeScript engine vs PDFium text removal): journal_10p, q_word and sample-multi give 0 text characters left in both and **0.00% pixel difference** between the two backgrounds (first 5 pages each). `complex.pdf` has text inside a form XObject, PDFium cannot remove it through its API, so it errors and the TypeScript engine runs (checked: it falls back). Text boxes still come from the TypeScript analysis (colour, rotation and alignment are not in the PDFium runs). Not yet run in the installed app (`E2E_CDP` harness): next beta build.
+
+### 2026-11-12 · 2.0.0-beta.1 work on `claude/rust-port` · Windows 11 26200
+
+- **Repair** (`scripts/test-repair-rust.ts`, 36 damaged files: truncated 97/80/50%, bad startxref, no trailer, junk prefix, flipped bytes, zeroed block, broken catalog, on 4 PDFs): same pages in 30 cases, PDFium better in 1, and in 5 PDFium can't open the file and the TypeScript repair takes over, so the combination never recovers less. Outputs that read back with MuPDF warnings (3) are the files whose own stream data was corrupted.
+- **PDF to Markdown/Word/Excel with text from PDFium** (`scripts/e2e/layout-ab.mjs` + `layout-ab-compare.py`, 6 files x 3 tools, both routes in the running app): 17 of 18 outputs identical to the pdf.js route; the one other (word.md/docx, a Word-made invoice) differs by one word joined in a table cell (0.991). First try joined words across small gaps (Word PDFs draw each word separately); fixed by breaking runs at gaps over 0.04 em.
+- 10,000-page PDF to Markdown: 39 s (PDFium) vs 35 s (pdf.js); peak extra memory +1532 MB vs +1958 MB (fresh app each). The layout code, not text extraction, dominates the time.
+- All 27 non-Compress tools pass in the app after these changes; `npm test` 33 + 5 + 17.
+
+### 2026-11-11 · 2.0 work in progress (branch `claude/rust-port`) · Windows 11 26200
+
+Tauri shell + Rust Compress engine (`crates/ihp-core`). Not a release.
+
+- **Compress, Rust vs the 1.4.0 TypeScript engine** (same fixtures, `scripts/e2e/quality-tauri.mjs`, `quality_score.py`): SSIM equal or better at every level
+  (screenshot Smallest .914 vs .904, chart Smallest edge sharpness 91% vs 76%, photo .962-.968 both, scan text .868-.973 both).
+  Light/Balanced leave screenshots and charts byte-exact (SSIM 1.000). Word to PDF then Compress keeps the pasted screenshot exact (SSIM 1.000 at Light/Balanced).
+- **Regression harness** (`node scripts/test-compress-rust.mjs`, `scripts/e2e/pdf_regress.py`): 4 levels x quality, scans, complex, edge fixtures
+  (alpha/SMask, palette, CMYK, gray, rotated page, duplicates, picture in a form XObject): page count, text per page, per-page PSNR >= 28 dB, no MuPDF warnings. All pass.
+  It found one real bug (wrong `/Length` on re-encoded images), fixed.
+- **Speed in the app** (click to result, `scripts/e2e/bench-compress.mjs`): 10 MB scan 811 ms vs 2283 ms; photo 91 vs 313 ms; duplicates 142 vs 393 ms; 4.8 MB alpha 280 vs 331 ms.
+- Images the Rust engine can't decode (JPEG 2000, CMYK, Lab/Separation, odd /Decode) and files over 1 GB go to the TypeScript engine (never worse than 1.4.0).
+- `npm test`: 34 + 5 checks pass.
+- **2.0.0 build** (`npm run build:exe`, 24 MB, per-user NSIS): silently installed to a temp folder and run from there: 26 of 27 non-Compress tools pass end to end (`all-tools.mjs`, `E2E_CDP`), Compress runs on Rust (pdfium.dll found in `resources/`), uninstalled cleanly. Page-tool checks (`test-pages-rust.py`): 23/23. Compress regression: all pass.
+- **Startup/memory** (`bench-startup.mjs`, median of 3): Electron 1193 ms / 408 MB working set / 4 processes; Tauri 909 ms / 423 MB / 7 processes (WebView2). Compress on a 10 MB scan, extra peak memory: TypeScript +706 MB, Rust +130 MB.
+- Found by the app-level run: blob (in-memory) results never saved in the Tauri shell (the webview download hook didn't fire); now written through the app. PDFium initialised twice (fixed).
+- Later the same day: Redact, Watermark, Page numbers, Sign and the memory watchdog moved to Rust; PDFium now counts pages at ingestion and draws thumbnails (10,000-page file: one thumbnail from a cached document 3 ms, was 272 ms per thumbnail; first thumbnail in the app 9.4 s vs pdf.js 7.3 s, almost all of it the Playwright upload of the file; 20 pages: 329 vs 298 ms).
+- Stamp tools vs the 1.4.0 workers (`test-stamp-rust.ts`, 14 cases): 13 pixel-identical, 1 at 81 dB with identical words. Redact: `Revenue` is gone from page 1's text layer, pages without boxes keep their text. 27 of 27 non-Compress tools pass in the app.
+- Not ported: Share to phone, usage log. Tools still on the TS engines: Edit PDF, Forms, Repair, PDF/A, Protect, Unlock, Compare, the Office conversions, PDF to Word/Excel/PowerPoint/Markdown.
+
 ### 2026-10-14 · v1.4.0 (branch `claude/usage-log`) · Windows 11 26200, 31.4 GB
 
 Triggered by the principal's feedback (logging, 5 GB / 10,000-page stress, picture quality, PDF → Word). Details in `docs/TEST_REPORT.md` ("Version 1.4.0"). Commands for the new tests:

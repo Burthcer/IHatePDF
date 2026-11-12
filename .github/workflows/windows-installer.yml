@@ -22,10 +22,9 @@ jobs:
       - run: npm run lint
       - run: npx tsx scripts/generateTestFixtures.ts
       - run: npm test
+      # Tauri + Rust core (crates/ihp-core); the runner's Rust toolchain and WebView2 are enough.
+      # Not code-signed: Windows SmartScreen shows "More info → Run anyway" on first install.
       - run: npm run build:exe
-        env:
-          # Not code-signed: Windows SmartScreen shows "More info → Run anyway" on first install.
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - uses: actions/upload-artifact@v4
         with:
           name: IHatePDF-Setup

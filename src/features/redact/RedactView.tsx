@@ -7,6 +7,7 @@ import { Button, IconButton, Notice, Section, Spinner, Toggle } from '../../comp
 import { useToolRunner } from '../../hooks/useToolRunner';
 import type { AskAnswer } from '../../hooks/useWorkerBridge';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { redactNative } from './redact.native';
 import { usePageThumbnails } from '../../hooks/usePageThumbnails';
 import { usePdfRenderer } from '../../hooks/usePdfRenderer';
 import { openPdfJsDocument, pdfjsLib } from '../../services/pdfWorkerSetup';
@@ -169,9 +170,22 @@ export const RedactView: React.FC<RedactViewProps> = ({ initialFiles = [], onBac
     setPreparing(true);
     setPrepError(null);
     try {
+      const indices = [...new Set(boxes.map((b) => b.pageIndex))].sort((a, b) => a - b);
+      // Desktop app: PDFium renders and burns the boxes in Rust (one page at a time, no canvases).
+      // Page sizes come from the preview grid; the page engine below is the fallback.
+      const sized: RedactPdfPayload['pages'] = indices.map((idx) => ({ pageIndex: idx, widthPt: pages[idx]?.width ?? 0, heightPt: pages[idx]?.height ?? 0 }));
+      if (sized.every((p) => p.widthPt > 0)) {
+        const native = await redactNative(file.data, file.name, sized, boxes, stripMeta, () => undefined).catch((err) => {
+          console.warn('Rust redaction failed, using the page engine:', err);
+          return null;
+        });
+        if (native) {
+          runner.setResult(native);
+          return;
+        }
+      }
       const doc = await openPdfJsDocument(file.data).promise;
       renderDoc.current = doc;
-      const indices = [...new Set(boxes.map((b) => b.pageIndex))].sort((a, b) => a - b);
       const pagesOut: RedactPdfPayload['pages'] = [];
       for (const idx of indices) {
         const base = (await doc.getPage(idx + 1)).getViewport({ scale: 1 });

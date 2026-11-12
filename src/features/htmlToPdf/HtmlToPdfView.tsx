@@ -5,6 +5,8 @@ import { Button, Field, Segmented, Toggle } from '../../components/ui';
 import { useToolRunner } from '../../hooks/useToolRunner';
 import { getTool } from '../../constants/tools';
 import { captureLayout } from './captureLayout';
+import { nativeFirst } from '../../services/nativeWorker';
+import { htmlToPdfNative } from './htmlToPdf.native';
 import type { PDFFile } from '../../types/pdf';
 import type { HtmlToPdfPayload, ProcessedPdfResult } from '../../types/worker';
 
@@ -49,7 +51,7 @@ export const HtmlToPdfView: React.FC<HtmlToPdfViewProps> = ({ onBack }) => {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
   const onFrameLoad = useRef<(() => void) | null>(null);
-  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./htmlToPdf.worker.ts', import.meta.url), { type: 'module' }));
+  const runner = useToolRunner<ProcessedPdfResult>(nativeFirst(() => new Worker(new URL('./htmlToPdf.worker.ts', import.meta.url), { type: 'module' }), { HTML_TO_PDF: htmlToPdfNative }));
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebounced(html), 300);
