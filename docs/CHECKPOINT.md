@@ -32,6 +32,8 @@ Branch `claude/rust-port`, code is at **2.0.0-beta.2** (commit 8061210); only **
 3. **Edit PDF engine** (`features/editPdf/engine`, ~5k lines): largest; last.
 4. Later: Share to phone (Wi-Fi server + zip, hotspot via WinRT, Bluetooth OBEX), usage log.
 
+- **PowerPoint to PDF DONE in Rust (pptx.rs, A/B 15/15, worst 57 dB; TS fallback; also fixed the TS stored-JPEG drop).** NOT verified: installed app (E2E), real Office decks beyond the fixtures.
+
 ## Known gaps / ideas
 
 - Unicode font layer DONE in Rust (`fonts.rs`, 2026-11-12): Watermark and Page numbers use it for Greek/Cyrillic/Devanagari/CJK (A/B passes). Verify in the installed app that `asset_resolver` finds the fonts. Next: use it from Office to PDF (item 2).

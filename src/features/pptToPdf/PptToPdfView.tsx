@@ -1,12 +1,14 @@
 import React from 'react';
 import { OfficeToPdfView } from '../../components/convert/OfficeToPdfView';
+import { nativeFirst } from '../../services/nativeWorker';
+import { pptToPdfNative } from './pptToPdf.native';
 
 export const PptToPdfView: React.FC<{ onBack: () => void }> = ({ onBack }) => (
   <OfficeToPdfView
     toolId="pptToPdf"
     accept=".pptx"
     action="PPT_TO_PDF"
-    workerFactory={() => new Worker(new URL('./pptToPdf.worker.ts', import.meta.url), { type: 'module' })}
+    workerFactory={nativeFirst(() => new Worker(new URL('./pptToPdf.worker.ts', import.meta.url), { type: 'module' }), { PPT_TO_PDF: pptToPdfNative })}
     title="Choose a PowerPoint file"
     subtitle=".pptx — or drag it here"
     notes={

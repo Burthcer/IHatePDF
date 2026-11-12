@@ -91,6 +91,13 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-11-12 · PowerPoint to PDF in Rust (`crates/ihp-core/src/pptx.rs`)
+
+- Port of `pptToPdf.worker.ts` + `pptxParser.ts` (same regexes, same drawing maths: 48-band gradients, 6 pt text padding, 1.25 line height, equal table rows; fonts and pictures as in `docx.rs`). `ihp-pptx` bin, `run_tool` arm `pptx`, `pptToPdf.native.ts` + `nativeFirst` in `PptToPdfView.tsx`; TS stays as fallback.
+- `scripts/test-pptx-rust.ts` (`PY=py PYTHONIOENCODING=utf8 npx tsx scripts/test-pptx-rust.ts`): 15 files (10 pptxgenjs-generated: text styles, bullets, shapes, table, PNG+JPEG pictures and picture background, 4:3, Greek/Cyrillic, CJK, Devanagari, 25 slides; 1 hand-edited with gradient and scheme colours; 4 real). 15/15 same page count, same words and positions, worst PSNR 57.1 dB (most 99 dB; the rest is 4-decimal text coordinates). Rust declines (falls back to TS) only when it can't embed a PNG/JPEG exactly or the font source is missing; other picture formats are skipped like TS does.
+- Found and fixed a TypeScript bug on the way: `embedJpg` got a view into the zip buffer (stored entries) and pdf-lib ignores the view offset, so uncompressed JPEG pictures/backgrounds failed with "SOI not found" and were silently dropped. The worker now passes a copy.
+- Not verified: the installed app (E2E), real Office-made decks with layouts/masters beyond the 4 fixtures here.
+
 ### 2026-11-12 · PDF to PowerPoint writer + slide rendering in Rust (`crates/ihp-core/src/pptx_out.rs`)
 
 - Port of `buildPptx.worker.ts` (pptxgenjs): OOXML package via `zip` (content types, rels, presentation, master/layout/theme templates in `src/pptx_tpl/`, one slide per page: full-slide JPEG + text boxes with EMU position/size, half-point font size, colour, bold/italic, alignment, line spacing, rotation, same `w = width*1.08+4`, `h = max(height, size*1.2)` rules). Slide pictures rendered with PDFium at 1600 px wide, JPEG 0.88 (as `renderSlides`). CLI `ihp-pptx-out`, command `build_pptx` (native.rs), page wiring `features/pdfToPpt/buildPptx.native.ts` (any failure: pdf.js + pptxgenjs as before).
