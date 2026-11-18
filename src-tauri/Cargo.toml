@@ -21,5 +21,5 @@ sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
+panic = "unwind" # the PowerPoint renderer catches its own panics so the app can fall back to the TypeScript engine
 strip = true
