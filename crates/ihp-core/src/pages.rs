@@ -320,12 +320,19 @@ fn label(g: &[usize]) -> String {
     if a == b { format!("p{a}") } else { format!("p{a}-{b}") }
 }
 
-/// Splits into one PDF per group, stored in a .zip (names like `base_01_p1-3.pdf`). Returns the page count.
-pub fn split_zip(input: &Path, out_zip: &Path, base: &str, groups: &[Vec<usize>], progress: &mut dyn FnMut(u32, &str)) -> Result<usize> {
+/// Splits into one PDF per group, stored in a .zip (names like `base_01_p1-3.pdf`, or `names[i]` when given and
+/// not empty: a file name chosen by the user, already cleaned and made unique by the app). Returns the page count.
+pub fn split_zip(input: &Path, out_zip: &Path, base: &str, groups: &[Vec<usize>], names: &[String], progress: &mut dyn FnMut(u32, &str)) -> Result<usize> {
     progress(10, "Loading source PDF document...");
     let src = load(input)?;
     let pages = page_ids(&src);
-    let valid: Vec<Vec<usize>> = groups.iter().map(|g| g.iter().copied().filter(|&i| i < pages.len()).collect::<Vec<_>>()).filter(|g| !g.is_empty()).collect();
+    // Keep each group's name with it while dropping empty groups.
+    let (valid, valid_names): (Vec<Vec<usize>>, Vec<Option<&String>>) = groups
+        .iter()
+        .enumerate()
+        .map(|(i, g)| (g.iter().copied().filter(|&p| p < pages.len()).collect::<Vec<_>>(), names.get(i).filter(|n| !n.is_empty())))
+        .filter(|(g, _)| !g.is_empty())
+        .unzip();
     if valid.is_empty() {
         return Err(Error::Msg("No valid pages selected.".into()));
     }
@@ -337,7 +344,10 @@ pub fn split_zip(input: &Path, out_zip: &Path, base: &str, groups: &[Vec<usize>]
         progress(10 + (i * 85 / valid.len()) as u32, &format!("Writing file {} of {}...", i + 1, valid.len()));
         let specs: Vec<PageSpec> = g.iter().map(|&p| PageSpec { index: Some(p), rotate: 0 }).collect();
         let mut part = build(&src, &pages, &specs)?;
-        let name = format!("{base}_{:0pad$}_{}.pdf", i + 1, label(g), pad = pad);
+        let name = match valid_names[i] {
+            Some(n) => n.clone(),
+            None => format!("{base}_{:0pad$}_{}.pdf", i + 1, label(g), pad = pad),
+        };
         zip.start_file(name, opts).map_err(|e| Error::Msg(e.to_string()))?;
         zip.write_all(&save_vec(&mut part)?)?;
         count += g.len();

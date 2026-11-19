@@ -32,10 +32,14 @@ const TOOLS = {
     await page.getByLabel('Pages for part 1').fill('1-2');
     await page.getByRole('button', { name: 'Add part' }).click();
     const second = await page.getByLabel('Pages for part 2').inputValue();
+    // Part 2 gets a chosen name (with characters a file name can't have); part 1 keeps the default.
+    await page.getByLabel('File name for part 2').fill('Chapter: two?');
     const r = await runAndDownload(page, /^Split into 2 files/, 'split.zip');
     if (!isZip(r.path)) throw new Error('expected a ZIP');
-    const names = readFileSync(r.path).toString('latin1').match(/[\w-]+_p\d+(-\d+)?\.pdf/g) ?? [];
-    return `zip, part 2 = "${second}", ${[...new Set(names)].join(' ')}`;
+    const zip = readFileSync(r.path).toString('latin1');
+    const names = [...new Set(zip.match(/test-multi_[\w-]+\.pdf|Chapter two\.pdf/g) ?? [])];
+    if (!names.includes('Chapter two.pdf') || !names.includes('test-multi_1_p1-2.pdf')) throw new Error('zip names: ' + names.join(', '));
+    return `zip, part 2 = "${second}", ${names.join(' + ')}`;
   },
   async organize(page) {
     await upload(page, MULTI);

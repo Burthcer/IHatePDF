@@ -102,16 +102,23 @@ pub async fn run_tool(app: AppHandle, id: String, tool: String, inputs: Vec<Stri
                 } else {
                     None
                 };
+                // Optional file name per group (Split "Choose pages" parts); "" = the default name.
+                let names: Vec<String> = args["names"].as_array().map(|a| a.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect()).unwrap_or_default();
                 if let Some(groups) = groups {
-                    let valid: Vec<Vec<usize>> = groups.iter().map(|g| g.iter().copied().filter(|&i| i < total).collect::<Vec<_>>()).filter(|g| !g.is_empty()).collect();
+                    let (valid, valid_names): (Vec<Vec<usize>>, Vec<String>) = groups
+                        .iter()
+                        .enumerate()
+                        .map(|(i, g)| (g.iter().copied().filter(|&p| p < total).collect::<Vec<_>>(), names.get(i).cloned().unwrap_or_default()))
+                        .filter(|(g, _)| !g.is_empty())
+                        .unzip();
                     if valid.is_empty() {
                         return Err("No valid pages selected.".into());
                     }
                     if valid.len() == 1 {
-                        let name = format!("{}_{}.pdf", base, label(&valid[0]));
+                        let name = if valid_names[0].is_empty() { format!("{}_{}.pdf", base, label(&valid[0])) } else { valid_names[0].clone() };
                         return pages::split_one(first, &out2, &valid[0], &mut prog).map(|n| (n, Some(name))).map_err(e);
                     }
-                    return pages::split_zip(first, &out2, &base, &valid, &mut prog).map(|n| (n, Some(format!("{base}_split.zip")))).map_err(e);
+                    return pages::split_zip(first, &out2, &base, &valid, &valid_names, &mut prog).map(|n| (n, Some(format!("{base}_split.zip")))).map_err(e);
                 }
                 let mut idx = Vec::new();
                 for r in args["ranges"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
