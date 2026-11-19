@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { nativeFirst } from '../../services/nativeWorker';
 import { imagesNative } from '../pageTools.native';
-import { GripVertical, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, GripVertical, X } from 'lucide-react';
 import { GenericFileInput } from '../../components/common/GenericFileInput';
 import { ToolLayout } from '../../components/layout/ToolLayout';
 import { Field, IconButton, Notice, Segmented, cn } from '../../components/ui';
@@ -144,6 +144,13 @@ export const ImageToPdfView: React.FC<ImageToPdfViewProps> = ({ onBack }) => {
               <span className="text-2xs truncate flex-1" title={it.name}>
                 {it.name}
               </span>
+              {/* Arrows reorder without drag and drop (touch screens, keyboard). */}
+              <IconButton label={`Move image ${i + 1} earlier`} size="sm" disabled={i === 0} onClick={() => move(i, i - 1)}>
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </IconButton>
+              <IconButton label={`Move image ${i + 1} later`} size="sm" disabled={i === items.length - 1} onClick={() => move(i, i + 1)}>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </IconButton>
             </div>
             <IconButton label="Remove" size="sm" className="absolute top-1 right-1 bg-panel border-line opacity-0 group-hover:opacity-100" onClick={() => setItems((prev) => prev.filter((x) => x.id !== it.id))}>
               <X className="w-3.5 h-3.5" />

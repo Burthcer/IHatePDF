@@ -21,7 +21,7 @@ interface RedactViewProps {
   onBack: () => void;
 }
 
-const PAGE_W = 560;
+const PAGE_W = Math.min(560, window.innerWidth - 32); // fits phone screens
 const RENDER_SCALE = 2.5; // ≈180 dpi for flattened pages
 
 const PRESETS: Array<{ id: string; label: string; re: RegExp }> = [
@@ -283,7 +283,7 @@ export const RedactView: React.FC<RedactViewProps> = ({ initialFiles = [], onBac
         <div className="flex flex-col items-center gap-3">
           <div
             ref={pageRef}
-            className="relative bg-white shadow-page select-none cursor-crosshair"
+            className="relative bg-white shadow-page select-none cursor-crosshair touch-none"
             style={{ width: PAGE_W, height: page.height * scale }}
             onPointerDown={(e) => {
               if (e.button !== 0) return;

@@ -439,7 +439,7 @@ export const PageCanvas: React.FC<PageCanvasProps> = (props) => {
         className={cn(
           'absolute rounded-[1px]',
           tool === 'select' ? (b.editable ? 'cursor-text' : 'cursor-pointer') : tool === 'highlight' ? 'cursor-pointer' : 'pointer-events-none',
-          (selected || dragging) && 'outline outline-[1.5px] outline-accent',
+          (selected || dragging) && 'outline outline-[1.5px] outline-accent touch-none',
           !selected && hovered && tool !== 'text' && 'outline outline-1 outline-accent/60 bg-accent/5',
           !selected && !hovered && showBoxes && 'outline outline-1 outline-dashed outline-muted/40'
         )}
@@ -510,7 +510,8 @@ export const PageCanvas: React.FC<PageCanvasProps> = (props) => {
       <CanvasHost canvas={canvas} width={W} height={H} />
       <div
         ref={layerRef}
-        className="absolute inset-0"
+        // Drawing tools take the finger; in Select mode the page still scrolls (selected objects opt out).
+        className={cn('absolute inset-0', tool !== 'select' && 'touch-none')}
         style={{ cursor }}
         onPointerDown={onBackgroundPointerDown}
         onPointerMove={onPointerMove}
@@ -538,7 +539,7 @@ export const PageCanvas: React.FC<PageCanvasProps> = (props) => {
               className={cn(
                 'absolute',
                 tool === 'select' ? 'cursor-move hover:outline hover:outline-1 hover:outline-accent/60' : 'pointer-events-none',
-                selected && 'outline outline-[1.5px] outline-accent'
+                selected && 'outline outline-[1.5px] outline-accent touch-none'
               )}
               style={{ left: r.x * zoom, top: r.y * zoom, width: r.width * zoom, height: r.height * zoom }}
             />
@@ -555,7 +556,7 @@ export const PageCanvas: React.FC<PageCanvasProps> = (props) => {
             <div
               key={s.id}
               onPointerDown={(e) => startObjectDrag(e, sel, base)}
-              className={cn('absolute', tool === 'select' ? 'cursor-move' : 'pointer-events-none', isSelected(sel) && 'outline outline-[1.5px] outline-accent')}
+              className={cn('absolute', tool === 'select' ? 'cursor-move' : 'pointer-events-none', isSelected(sel) && 'outline outline-[1.5px] outline-accent touch-none')}
               style={{ left: r.x * zoom, top: r.y * zoom, width: Math.max(r.width, 4) * zoom, height: Math.max(r.height, 4) * zoom }}
             />
           );
@@ -570,7 +571,7 @@ export const PageCanvas: React.FC<PageCanvasProps> = (props) => {
             <div
               key={im.id}
               onPointerDown={(e) => startObjectDrag(e, sel, base)}
-              className={cn('absolute', tool === 'select' ? 'cursor-move' : 'pointer-events-none', isSelected(sel) && 'outline outline-[1.5px] outline-accent')}
+              className={cn('absolute', tool === 'select' ? 'cursor-move' : 'pointer-events-none', isSelected(sel) && 'outline outline-[1.5px] outline-accent touch-none')}
               style={{ left: r.x * zoom, top: r.y * zoom, width: r.width * zoom, height: r.height * zoom }}
             >
               {moving && <img src={im.url} alt="" className="w-full h-full opacity-70" draggable={false} />}
@@ -594,7 +595,7 @@ export const PageCanvas: React.FC<PageCanvasProps> = (props) => {
               className={cn(
                 'absolute',
                 tool === 'select' ? 'cursor-text hover:outline hover:outline-1 hover:outline-accent/60' : 'pointer-events-none',
-                isSelected(sel) && 'outline outline-[1.5px] outline-accent',
+                isSelected(sel) && 'outline outline-[1.5px] outline-accent touch-none',
                 showBoxes && !isSelected(sel) && 'outline outline-1 outline-dashed outline-muted/40'
               )}
               style={{ left: (r.x - 1) * zoom, top: (r.y - 1) * zoom, width: (r.width + 2) * zoom, height: (r.height + 2) * zoom }}
@@ -642,7 +643,7 @@ export const PageCanvas: React.FC<PageCanvasProps> = (props) => {
               <div
                 key={h}
                 onPointerDown={(e) => startResize(e, selection!, h, selRect!)}
-                className="absolute z-10 w-2 h-2 -ml-1 -mt-1 bg-panel border border-accent"
+                className="absolute z-10 w-2 h-2 -ml-1 -mt-1 bg-panel border border-accent touch-none hit-pad"
                 style={{ left: hx * zoom, top: hy * zoom, cursor: `${h}-resize` }}
               />
             );

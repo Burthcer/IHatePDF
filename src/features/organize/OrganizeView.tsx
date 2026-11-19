@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { nativeFirst } from '../../services/nativeWorker';
 import { organizeNative } from '../pageTools.native';
-import { Copy, FilePlus2, RotateCw, Trash2, Undo2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Copy, FilePlus2, RotateCw, Trash2, Undo2 } from 'lucide-react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
 import { PageThumb } from '../../components/common/PageThumb';
@@ -90,7 +90,7 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({ initialFiles = [], o
       options={
         <Section title={`${items.length} pages`}>
           <p className="text-xs text-muted leading-relaxed">
-            Drag pages to reorder. Hover a page for rotate, duplicate, insert-blank and delete.
+            Drag pages, or use the arrows under them, to reorder. Each page has rotate, duplicate, insert-blank and delete buttons.
           </p>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" icon={<Undo2 className="w-3.5 h-3.5" />} disabled={!history.length} onClick={() => {
@@ -116,7 +116,7 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({ initialFiles = [], o
           <Spinner /> Loading pages…
         </div>
       ) : (
-        <VirtualGrid count={items.length} minColWidth={140} rowHeight={196}>
+        <VirtualGrid count={items.length} minColWidth={140} rowHeight={224}>
           {(pos) => {
             const it = items[pos];
             const p = it.source >= 0 ? pages[it.source] : null;
@@ -154,9 +154,18 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({ initialFiles = [], o
                   aspect={p ? p.width / p.height : refAspect}
                   rotate={it.rotate}
                   label={
-                    <span>
-                      {pos + 1}
-                      {it.source >= 0 ? (it.source !== pos ? <span className="text-faint"> · was {it.source + 1}</span> : null) : <span className="text-faint"> · blank</span>}
+                    // Arrows reorder without drag and drop (touch screens, keyboard).
+                    <span className="inline-flex items-center gap-1">
+                      <IconButton label={`Move page ${pos + 1} earlier`} size="sm" disabled={pos === 0} onClick={() => moveTo(it.key, items[pos - 1].key)}>
+                        <ChevronLeft className="w-3.5 h-3.5" />
+                      </IconButton>
+                      <span>
+                        {pos + 1}
+                        {it.source >= 0 ? (it.source !== pos ? <span className="text-faint"> · was {it.source + 1}</span> : null) : <span className="text-faint"> · blank</span>}
+                      </span>
+                      <IconButton label={`Move page ${pos + 1} later`} size="sm" disabled={pos === items.length - 1} onClick={() => moveTo(it.key, items[pos + 1].key)}>
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </IconButton>
                     </span>
                   }
                 />

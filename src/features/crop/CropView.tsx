@@ -14,7 +14,7 @@ import type { PDFFile } from '../../types/pdf';
 import type { CropMarginsMm, CropPayload, ProcessedPdfResult } from '../../types/worker';
 
 const PT_PER_MM = 72 / 25.4;
-const PREVIEW_W = 460;
+const PREVIEW_W = Math.min(460, window.innerWidth - 32); // fits phone screens
 
 interface CropViewProps {
   initialFiles?: PDFFile[];
@@ -188,14 +188,14 @@ export const CropView: React.FC<CropViewProps> = ({ initialFiles = [], onBack })
             {/* shade what gets cut away */}
             <div className="absolute inset-0 pointer-events-none" style={{ background: 'rgba(20,18,14,0.45)', clipPath: `polygon(0 0, 100% 0, 100% 100%, 0 100%, 0 0, ${box.left}px ${box.top}px, ${box.left}px ${box.bottom}px, ${box.right}px ${box.bottom}px, ${box.right}px ${box.top}px, ${box.left}px ${box.top}px)` }} />
             <div className="absolute border border-accent pointer-events-none" style={{ left: box.left, top: box.top, width: box.right - box.left, height: box.bottom - box.top }} />
-            <div onPointerDown={handle('top')} className="absolute h-3 -mt-1.5 cursor-ns-resize" style={{ left: box.left, width: box.right - box.left, top: box.top }} />
-            <div onPointerDown={handle('bottom')} className="absolute h-3 -mt-1.5 cursor-ns-resize" style={{ left: box.left, width: box.right - box.left, top: box.bottom }} />
-            <div onPointerDown={handle('left')} className="absolute w-3 -ml-1.5 cursor-ew-resize" style={{ top: box.top, height: box.bottom - box.top, left: box.left }} />
-            <div onPointerDown={handle('right')} className="absolute w-3 -ml-1.5 cursor-ew-resize" style={{ top: box.top, height: box.bottom - box.top, left: box.right }} />
+            <div onPointerDown={handle('top')} className="absolute h-3 -mt-1.5 cursor-ns-resize touch-none hit-pad" style={{ left: box.left, width: box.right - box.left, top: box.top }} />
+            <div onPointerDown={handle('bottom')} className="absolute h-3 -mt-1.5 cursor-ns-resize touch-none hit-pad" style={{ left: box.left, width: box.right - box.left, top: box.bottom }} />
+            <div onPointerDown={handle('left')} className="absolute w-3 -ml-1.5 cursor-ew-resize touch-none hit-pad" style={{ top: box.top, height: box.bottom - box.top, left: box.left }} />
+            <div onPointerDown={handle('right')} className="absolute w-3 -ml-1.5 cursor-ew-resize touch-none hit-pad" style={{ top: box.top, height: box.bottom - box.top, left: box.right }} />
             {(['top', 'bottom', 'left', 'right'] as Side[]).map((side) => {
               const x = side === 'left' ? box.left : side === 'right' ? box.right : (box.left + box.right) / 2;
               const y = side === 'top' ? box.top : side === 'bottom' ? box.bottom : (box.top + box.bottom) / 2;
-              return <div key={side} onPointerDown={handle(side)} className="absolute w-2.5 h-2.5 -ml-[5px] -mt-[5px] bg-panel border border-accent" style={{ left: x, top: y, cursor: side === 'left' || side === 'right' ? 'ew-resize' : 'ns-resize' }} />;
+              return <div key={side} onPointerDown={handle(side)} className="absolute w-2.5 h-2.5 -ml-[5px] -mt-[5px] bg-panel border border-accent touch-none hit-pad" style={{ left: x, top: y, cursor: side === 'left' || side === 'right' ? 'ew-resize' : 'ns-resize' }} />;
             })}
           </div>
           <div className="flex items-center gap-3 text-xs text-muted">

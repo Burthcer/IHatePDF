@@ -1,59 +1,37 @@
-# IHatePDF v2.0.0-beta.3 (pre-release)
+# IHatePDF v2.1.0
 
-**This is a beta.** The stable version is still 1.4.0. The desktop app is rebuilt on **Tauri** with a **Rust core**. Same screens and tools; a much smaller installer, a faster start, and the heaviest tools moved off the page into Rust.
+The desktop app on **Tauri** with a **Rust core** (since 2.0), now with a rebuilt Split tool and fixes from testing the app on phones and narrow windows.
 
 ## Install
 
-1. Download **IHatePDF-Setup.exe** below, under *Assets* (about 24 MB, was 130 MB).
+1. Download **IHatePDF-Setup.exe** below, under *Assets* (about 26 MB).
 2. Run it. If Windows says *"Windows protected your PC"*, click **More info → Run anyway**. The installer isn't code-signed.
-3. It installs for your Windows account only (no administrator permission) and does **not** replace 1.x: uninstall 1.x first from *Settings → Apps*. Your saved files are never touched. It needs Microsoft Edge WebView2, which is part of Windows 10 and 11.
+3. It installs for your Windows account only (no administrator permission). Updating from 2.0.0 installs over it. Coming from 1.x: uninstall 1.x first from *Settings → Apps*. Your saved files are never touched. It needs Microsoft Edge WebView2, which is part of Windows 10 and 11.
 
-## What changed
+## New in 2.1.0
 
-| | 1.4.0 | 2.0.0 |
+- **Split, rebuilt.** "Choose pages" now works in *parts*: each part has its own box for page ranges (`1-3, 5, 8-`) and becomes its own PDF. Add as many parts as you need ("Add part" starts the next one where the last ended), remove any of them, and click page thumbnails to add or remove pages from the selected part. One part gives one PDF; several give a ZIP. "Every N pages" and "One per page" are unchanged.
+- **Organize pages and Images to PDF:** arrows under each page/image move it earlier or later, so reordering works without drag and drop (keyboard and touch screens).
+- **Edit PDF in a narrow window:** the toolbar wraps instead of hiding Undo, zoom and Download off the edge, and the properties panel appears under the page while something is selected.
+- **Scan to PDF:** "Add photos" opens the photo picker (it no longer forces the camera); the page look (Color / Gray / Document) sits under the camera so nothing moves after the first capture.
+- Touch screens: dragging a signature, crop edge, redaction box or selected Edit PDF object moves it instead of scrolling the page; small drag handles have a bigger hit area; buttons that only appeared on mouse hover are always visible.
+- Page previews in Redact, Sign, Crop, Scan and HTML to PDF fit narrow windows.
+
+## Since 1.4.0 (the 2.0 rebuild)
+
+| | 1.4.0 | 2.x |
 |---|---|---|
-| Installer | 130 MB | **24 MB** |
+| Installer | 130 MB | **about 26 MB** |
 | Launch to home screen (median of 3) | 1.19 s | **0.91 s** |
-| Idle memory, all app processes (median) | 408 MB | 423 MB |
 | Compress, 10 MB scan, click to result | 2.3 s | **0.8 s** |
 | Compress, peak extra memory, same file | +706 MB | **+130 MB** |
-| Compress, photo / 4 duplicate images | 313 / 393 ms | **91 / 142 ms** |
 
-Idle memory is about the same because the page itself (the same React app) dominates it; what drops is the memory tools use while they work.
+**In Rust:** Compress, Merge, Split, Organize pages, Rotate, Crop, Images to PDF (and Scan to PDF), PDF to JPG/PNG, Redact, Watermark, Page numbers, Sign, Repair (PDFium), Word, PowerPoint, Excel and HTML to PDF, PDF to PowerPoint, page previews and text reading (PDFium). Each falls back to the 1.4.0 engine for anything it can't handle, so a tool never does worse than before. Edit PDF, Forms, PDF/A, Protect, Unlock and Compare keep the 1.4.0 engines.
 
-**New in beta.3:** Word, PowerPoint, Excel and HTML to PDF, and PDF to PowerPoint (text boxes, backgrounds, slides and the .pptx), now run on the Rust core, with Hindi, Greek, Cyrillic and Chinese text supported. Each was compared with the TypeScript version on test files first (same pages and words; 242 PDFs for the PowerPoint text boxes) and the old version still runs if the new one cannot handle a file. Not yet checked: opening the generated .pptx in real PowerPoint.
+## How 2.1.0 was tested
 
-**New in beta.2:** Repair reads damaged files with PDFium (the 1.4.0 repair still runs when PDFium can't open a file); PDF to Markdown, Word and Excel read the text from PDFium (same layout code; 17 of 18 test outputs identical to before); Compare draws its pages with PDFium; every page preview in the app uses PDFium.
-
-**In Rust now:** Compress, Merge, Split, Organize pages, Rotate, Crop, Images to PDF (and Scan to PDF), PDF to JPG/PNG, Redact, Watermark, Page numbers, Sign, the page count when a file is opened, and the page thumbnails every page tool shows (PDFium draws pages; pdf.js is no longer loaded for them). The memory fail-safe also runs in Rust again. Each one falls back to the 1.4.0 engine for anything it can't handle, so a tool never does worse than before.
-
-**Still on the 1.4.0 engines (inside the new app):** Edit PDF, Forms, Repair, PDF/A, Protect, Unlock, Compare, every Word/Excel/PowerPoint/HTML conversion, and PDF to Word/Excel/PowerPoint/Markdown. Watermark and Page numbers fall back to the 1.4.0 engine for non-Western text. These move to Rust over the 2.x releases where it pays off.
-
-**Not in 2.0.0:** Share to phone and the local usage log. Both are in 1.4.0 and return in later 2.x releases. Forms, PDF/A, Protect and Unlock stay on the 1.4.0 code on purpose (appearance generation, compliance details, encryption: no measured problem, so no rewrite risk).
-
-## Compress quality
-
-Measured on the same pictures with both engines (SSIM against the original, higher is better):
-
-| Picture, setting | 1.4.0 | 2.0.0 |
-|---|---|---|
-| Screenshot, Light / Balanced | exact | exact |
-| Screenshot, Smallest | 0.904 | 0.914 |
-| Chart, Smallest (edge sharpness kept) | 76% | 91% |
-| Photo, Light / Balanced / Smallest | 0.968 / 0.966 / 0.963 | 0.968 / 0.966 / 0.962 |
-| Scanned text, Light / Balanced / Smallest | 0.973 / 0.941 / 0.866 | 0.972 / 0.939 / 0.868 |
-
-A Word file with a pasted screenshot and a photo, converted with Word to PDF and then compressed, keeps the screenshot exact at Light and Balanced.
-
-Images the Rust engine can't decode safely (JPEG 2000, CMYK, Lab/Separation colour, odd /Decode arrays) and files over 1 GB go to the 1.4.0 engine.
-
-## How it was tested
-
-- 27 of the 28 tools driven end to end in the real app (`scripts/e2e/all-tools.mjs` with `E2E_CDP=http://127.0.0.1:9222`); the 28th, Compress, was run from its own script because the 44 MB input is over the debug port's upload limit.
-- Compress, all levels plus custom sizes, on quality, scan, complex and edge PDFs (transparency, palette, CMYK, grayscale, rotated pages, duplicates, a picture inside a form): page count, text, per-page pixels and MuPDF warnings (`scripts/test-compress-rust.mjs`). It found one real bug (wrong `/Length` on re-encoded images), fixed.
-- Page tools: page order, blank pages, rotation, crop boxes on rotated pages, zip contents (`scripts/test-pages-rust.py`).
-- Watermark, Page numbers and Sign: Rust against the 1.4.0 workers on the same input and settings, page by page (14 cases: rotated and cropped pages, tiled, below the text, images, mirrored numbers): 13 are pixel-identical, one differs by 0.1 dB (`scripts/test-stamp-rust.ts`). Redact: the redacted text is gone from the file and the rest keeps its text.
-- Memory fail-safe: unit tests for the budget and levels (`cargo test`) and a run under a 256 MB budget.
-- `npm test`: the 1.4.0 conversion, editor and Word-picture suites still pass.
+- Every tool end to end (`scripts/e2e/all-tools.mjs`), including Split with two parts (ZIP with `p1-2` and `p3-4`), on the desktop web build.
+- The same suite on a phone-sized touch screen (Android emulator), plus real finger input: dragging a signature, a crop edge, a redaction box and an Edit PDF text block, and the reorder arrows.
+- `npm test` (conversion, editor and Word-picture suites).
 
 Full log: [docs/testing/WINDOWS_TESTS.md](testing/WINDOWS_TESTS.md).

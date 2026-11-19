@@ -3,6 +3,7 @@ import { chromium } from 'playwright-core';
 import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 // E2E_CDP=http://127.0.0.1:9222 drives the running Tauri app instead (see scripts/e2e/tauri.mjs for launching it).
@@ -52,6 +53,22 @@ export async function runAndDownload(page, actionName, outName, timeout = 180_00
   const save = page.getByRole('button', { name: /^Save now$/ }).first();
   const err = page.getByText('That didn’t work');
   await Promise.race([save.waitFor({ timeout }), err.waitFor({ timeout }).then(async () => { throw new Error('Tool error: ' + (await page.locator('aside').innerText())); })]);
+  if (process.env.E2E_ADB) {
+    // Android: the app saves into Download/IHatePDF on the phone; pull the new file and delete it there.
+    const adb = (...a) => execFileSync(process.env.E2E_ADB, a, { encoding: 'utf8' });
+    const dir = '/sdcard/Download/IHatePDF';
+    const ls = () => adb('shell', 'ls', dir).split('\n').map((x) => x.trim()).filter(Boolean);
+    const before = new Set((() => { try { return ls(); } catch { return []; } })());
+    await save.click();
+    let fresh = [];
+    for (let i = 0; i < 150 && !fresh.length; i++) { fresh = ls().filter((n) => !before.has(n)); if (!fresh.length) await page.waitForTimeout(200); }
+    if (!fresh.length) throw new Error('Nothing was saved to ' + dir);
+    await page.waitForTimeout(300);
+    const path = resolve(OUT, outName ?? fresh[0]);
+    adb('pull', `${dir}/${fresh[0]}`, path);
+    for (const f of fresh) adb('shell', `rm '${dir}/${f}'`);
+    return { path, size: statSync(path).size, suggested: fresh[0] };
+  }
   if (CDP) {
     // The desktop app saves into Downloads/IHatePDF (no download event): pick up the new file and remove it there.
     const before = new Set(readdirSync(SAVE_DIR));

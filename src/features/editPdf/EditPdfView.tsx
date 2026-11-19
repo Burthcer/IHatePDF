@@ -556,9 +556,9 @@ export const EditPdfView: React.FC<EditPdfViewProps> = ({ initialFiles = [], onB
     Object.keys(edits.blocks).length + Object.keys(edits.images).length + edits.texts.length + edits.addedImages.length + edits.shapes.length;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] min-h-[520px]">
-      {/* toolbar */}
-      <div className="flex items-center gap-2 h-12 px-3 border-b border-line bg-panel shrink-0 overflow-x-auto scroll-thin">
+    <div className="flex flex-col h-[calc(100dvh-3rem-env(safe-area-inset-top,0px))] min-h-[520px]">
+      {/* toolbar: wraps onto a second row on narrow (phone) screens so Download stays on screen */}
+      <div className="flex flex-wrap md:flex-nowrap items-center gap-x-2 gap-y-1 py-1 md:py-0 md:h-12 px-3 border-b border-line bg-panel shrink-0 md:overflow-x-auto scroll-thin">
         <IconButton label="Back to all tools" onClick={onBack}>
           <ArrowLeft className="w-4 h-4" />
         </IconButton>
@@ -621,7 +621,7 @@ export const EditPdfView: React.FC<EditPdfViewProps> = ({ initialFiles = [], onB
         <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageChosen} />
       </div>
 
-      <div className="flex flex-1 min-h-0">
+      <div className="flex flex-col md:flex-row flex-1 min-h-0">
         {/* thumbnails */}
         <aside className="hidden md:block w-[152px] shrink-0 border-r border-line bg-panel overflow-y-auto scroll-thin py-3 px-2">
           <VirtualGrid count={pages.length} minColWidth={120} rowHeight={pages[0] ? Math.min(220, Math.ceil((112 * pages[0].height) / pages[0].width) + 22) : 180} gapY={12}>
@@ -724,7 +724,13 @@ export const EditPdfView: React.FC<EditPdfViewProps> = ({ initialFiles = [], onB
         )}
 
         {/* inspector */}
-        <aside className="hidden lg:block w-[280px] shrink-0 border-l border-line bg-panel overflow-y-auto scroll-thin">
+        {/* Narrow screens: shown under the page while something is selected or being exported. */}
+        <aside
+          className={cn(
+            selection || exporting || exportError ? 'block' : 'hidden',
+            'lg:block w-full md:w-[280px] max-h-[45%] md:max-h-none shrink-0 border-t md:border-t-0 md:border-l border-line bg-panel overflow-y-auto scroll-thin'
+          )}
+        >
           {exporting && (
             <div className="p-4 border-b border-line">
               <ProgressLine progress={exporting.progress} stage={exporting.stage} />

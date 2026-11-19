@@ -28,8 +28,14 @@ const TOOLS = {
   async split(page) {
     await upload(page, MULTI);
     await page.getByText('Loading pages').waitFor({ state: 'detached' }).catch(() => {});
-    const r = await runAndDownload(page, /^(Split into|Extract pages)/, 'split');
-    return isZip(r.path) ? `zip ${r.size}B` : `${await pdfPages(r.path)} pages`;
+    // Two parts: 1-2 typed, then "Add part" fills in the rest (3-4).
+    await page.getByLabel('Pages for part 1').fill('1-2');
+    await page.getByRole('button', { name: 'Add part' }).click();
+    const second = await page.getByLabel('Pages for part 2').inputValue();
+    const r = await runAndDownload(page, /^Split into 2 files/, 'split.zip');
+    if (!isZip(r.path)) throw new Error('expected a ZIP');
+    const names = readFileSync(r.path).toString('latin1').match(/[\w-]+_p\d+(-\d+)?\.pdf/g) ?? [];
+    return `zip, part 2 = "${second}", ${[...new Set(names)].join(' ')}`;
   },
   async organize(page) {
     await upload(page, MULTI);
