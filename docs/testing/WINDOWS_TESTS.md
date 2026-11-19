@@ -91,6 +91,14 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-11-19 (night) · v2.2.1 (Split follow-on parts, overlaps), installed CI build
+
+Released from `main` (PR #15, run 44524940735). Installer (27.7 MB) in `PropPres\_installers\v2.2.1` (2.2.0's moved to `archive`); uninstalled 2.2.0, installed 2.2.1 silently: one entry, DisplayVersion 2.2.1.
+
+- **Installed app:** 27/29, same two known harness limits (Compress input over the debug port limit, passes via `tauri.mjs`; autoSave waits for a browser download). Split passes with the extended test (follow-on `1-3` → `4`, typed part stops following, "Page 2 is also in part 1", named output via the Rust engine).
+- Browser build: Split/Organize/Crop pass; "no pages left" case shows its message and disables the run button.
+- `npm test` 55/55. App, preview server and emulator closed after testing.
+
 ### 2026-11-19 (evening) · v2.2.0 (Split part names and colours), installed CI build
 
 Released from `main` (PR #14, run 44516744797). Downloaded `IHatePDF-Setup.exe` (27.9 MB) into `PropPres\_installers\v2.2.0` (2.1.0's moved to `_installers\archive`), uninstalled 2.1.0 (`uninstall.exe /S`), installed 2.2.0 (`/S`): one entry, DisplayVersion 2.2.0.
