@@ -1,12 +1,20 @@
-# IHatePDF v2.2.2
+# IHatePDF v2.2.3
 
-The desktop app on **Tauri** with a **Rust core** (since 2.0). 2.2.2 is a small fix on top of 2.2.1.
+The desktop app on **Tauri** with a **Rust core** (since 2.0). 2.2.3 brings the app's own wording up to date.
 
 ## Install
 
 1. Download **IHatePDF-Setup.exe** below, under *Assets* (about 26 MB).
 2. Run it. If Windows says *"Windows protected your PC"*, click **More info → Run anyway**. The installer isn't code-signed.
 3. It installs for your Windows account only (no administrator permission). Updating from 2.x installs over it. Coming from 1.x: uninstall 1.x first from *Settings → Apps*. Your saved files are never touched. It needs Microsoft Edge WebView2, which is part of Windows 10 and 11.
+
+## New in 2.2.3
+
+- **Share to phone** only offers what 2.x has: Same Wi-Fi. The PC hotspot and Bluetooth choices (which only answered "not in this build yet") are gone, and the tool's description says Wi-Fi.
+- The home screen and footer say files are processed **on this computer** (they said "in this browser tab", which is only true of the browser version); the footer lists Rust and PDFium.
+- Split and Organize pages describe what they do now (named parts; the reorder arrows).
+
+Changes since 2.2.2: [v2.2.2...v2.2.3](https://github.com/Burthcer/IHatePDF/compare/v2.2.2...v2.2.3).
 
 ## New in 2.2.2
 
@@ -21,7 +29,7 @@ Changes since 2.2.1: [v2.2.1...v2.2.2](https://github.com/Burthcer/IHatePDF/comp
 - **Split: overlaps and gaps are pointed out.** A page that goes into two parts (say part 2 changed to `5-12` while part 1 is `1-5`) gets both parts' colours and an amber "parts 1, 2" label, and each part's card says "Page 5 is also in part 1 (in both files)". Pages that are in no part are listed ("Not in any part (left out): 11-12").
 - A part that the app filled in but has no pages left says so instead of a generic range error.
 
-Changes since 2.2.0: [v2.2.0...v2.2.1](https://github.com/Burthcer/IHatePDF/compare/v2.2.0...v2.2.1). Earlier releases: [v2.2.1](https://github.com/Burthcer/IHatePDF/releases/tag/v2.2.1), [v2.2.0](https://github.com/Burthcer/IHatePDF/releases/tag/v2.2.0), [v2.1.0](https://github.com/Burthcer/IHatePDF/releases/tag/v2.1.0), [v2.0.0](https://github.com/Burthcer/IHatePDF/releases/tag/v2.0.0).
+Changes since 2.2.0: [v2.2.0...v2.2.1](https://github.com/Burthcer/IHatePDF/compare/v2.2.0...v2.2.1). Earlier releases: [v2.2.2](https://github.com/Burthcer/IHatePDF/releases/tag/v2.2.2), [v2.2.1](https://github.com/Burthcer/IHatePDF/releases/tag/v2.2.1), [v2.2.0](https://github.com/Burthcer/IHatePDF/releases/tag/v2.2.0), [v2.1.0](https://github.com/Burthcer/IHatePDF/releases/tag/v2.1.0), [v2.0.0](https://github.com/Burthcer/IHatePDF/releases/tag/v2.0.0).
 
 ## New in 2.2.0
 
@@ -48,8 +56,9 @@ Changes since 2.2.0: [v2.2.0...v2.2.1](https://github.com/Burthcer/IHatePDF/comp
 
 **In Rust:** Compress, Merge, Split, Organize pages, Rotate, Crop, Images to PDF (and Scan to PDF), PDF to JPG/PNG, Redact, Watermark, Page numbers, Sign, Repair (PDFium), Word, PowerPoint, Excel and HTML to PDF, PDF to PowerPoint, page previews and text reading (PDFium). Each falls back to the 1.4.0 engine for anything it can't handle, so a tool never does worse than before. Edit PDF, Forms, PDF/A, Protect, Unlock and Compare keep the 1.4.0 engines.
 
-## How 2.2.2 was tested
+## How 2.2.3 was tested
 
+- The desktop app built from this code: home, footer, Share, Split and Organize text checked on screen (the README screenshots were taken from it).
 - The desktop app built from this code: clicking the GitHub and devbhamaria.com buttons opens both in the default browser (Edge), and the app stays on its page.
 - Every tool end to end (`scripts/e2e/all-tools.mjs`) in the browser build, the installed app (Rust engine) and the phone build. The Split test now also checks that part 2 follows part 1 (`1-3` → `4`), that a typed part stops following, that an overlap is reported ("Page 2 is also in part 1"), and the named output (`test-multi_1_p1-2.pdf` + `Chapter two.pdf`).
 - The same suite on a phone-sized touch screen (Android emulator), plus real finger input: dragging a signature, a crop edge, a redaction box and an Edit PDF text block, and the reorder arrows.

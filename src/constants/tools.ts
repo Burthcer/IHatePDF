@@ -7,8 +7,8 @@ import type { ToolCategory, ToolMetadata, ToolType } from '../types/pdf';
 export const TOOLS: ToolMetadata[] = [
   // Organize
   { id: 'merge', title: 'Merge', description: 'Combine several PDFs into one, in the order you choose.', icon: 'Combine', color: '', category: 'organize', acceptedFiles: 'multiple', keywords: 'combine join append' },
-  { id: 'split', title: 'Split', description: 'Pull out page ranges, or split into one file per page or every N pages.', icon: 'Scissors', color: '', category: 'organize', acceptedFiles: 'single', keywords: 'extract separate burst' },
-  { id: 'organize', title: 'Organize pages', description: 'Reorder, duplicate, rotate or delete pages by dragging thumbnails.', icon: 'LayoutGrid', color: '', category: 'organize', acceptedFiles: 'single', keywords: 'reorder sort delete pages' },
+  { id: 'split', title: 'Split', description: 'Split into named parts by page range, every N pages, or one file per page.', icon: 'Scissors', color: '', category: 'organize', acceptedFiles: 'single', keywords: 'extract separate burst' },
+  { id: 'organize', title: 'Organize pages', description: 'Reorder (drag or use the arrows), duplicate, rotate or delete pages.', icon: 'LayoutGrid', color: '', category: 'organize', acceptedFiles: 'single', keywords: 'reorder sort delete pages' },
   { id: 'rotate', title: 'Rotate', description: 'Turn some or all pages by 90° steps.', icon: 'RotateCw', color: '', category: 'organize', acceptedFiles: 'single', keywords: 'turn orientation landscape' },
   { id: 'crop', title: 'Crop', description: 'Trim page margins on selected pages or the whole document.', icon: 'Crop', color: '', category: 'organize', acceptedFiles: 'single', keywords: 'trim margins' },
   { id: 'compare', title: 'Compare', description: 'See what changed between two versions of a document.', icon: 'GitCompare', color: '', category: 'organize', acceptedFiles: 'multiple', input: 'other', keywords: 'diff difference versions' },
@@ -46,7 +46,7 @@ export const TOOLS: ToolMetadata[] = [
   { id: 'unlock', title: 'Unlock', description: 'Remove a password or printing/copying restrictions you’re allowed to remove.', icon: 'Unlock', color: '', category: 'security', acceptedFiles: 'single', keywords: 'decrypt remove password restrictions' },
 
   // Share
-  { id: 'share', title: 'Share to phone', description: 'Send files or whole folders to a phone: scan a QR code over Wi-Fi or this PC’s own hotspot, or send over Bluetooth. Works offline, nothing is uploaded.', icon: 'QrCode', color: '', category: 'share', acceptedFiles: 'multiple', input: 'other', keywords: 'qr code bluetooth hotspot wifi send transfer phone mobile folder filebin offline' },
+  { id: 'share', title: 'Share to phone', description: 'Send files or whole folders to a phone on the same Wi-Fi: scan a QR code and download. No internet needed, nothing is uploaded.', icon: 'QrCode', color: '', category: 'share', acceptedFiles: 'multiple', input: 'other', keywords: 'qr code bluetooth hotspot wifi send transfer phone mobile folder filebin offline' },
 ];
 
 export const CATEGORIES: Array<{ id: ToolCategory; label: string }> = [
