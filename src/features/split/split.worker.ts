@@ -54,7 +54,7 @@ export async function splitPdf(
   fileName: string,
   ranges: SplitPayload['ranges'],
   onProgress?: (progress: number, stage: string) => void,
-  options: { groups?: number[][]; sink?: OutputSink } = {}
+  options: { groups?: number[][]; names?: string[]; sink?: OutputSink } = {}
 ): Promise<ProcessedPdfResult> {
   if (!fileBuffer) throw new Error('No PDF buffer supplied for splitting.');
 
@@ -67,13 +67,17 @@ export async function splitPdf(
   let groups = options.groups;
   if (!groups && ranges === 'all') groups = Array.from({ length: totalPages }, (_, i) => [i]);
   if (groups) {
-    const valid = groups.map((g) => g.filter((i) => i >= 0 && i < totalPages)).filter((g) => g.length > 0);
+    // Keep each group's chosen name with it while dropping empty groups.
+    const kept = groups
+      .map((g, i) => ({ pages: g.filter((p) => p >= 0 && p < totalPages), name: options.names?.[i] || '' }))
+      .filter((g) => g.pages.length > 0);
+    const valid = kept.map((g) => g.pages);
     if (valid.length === 0) throw new Error('No valid pages selected.');
     if (valid.length === 1) {
       onProgress?.(60, 'Extracting pages...');
       const out = await emitPdf(await buildDoc(sourceDoc, valid[0]), options.sink);
       onProgress?.(100, 'Done.');
-      return { fileName: `${base}_${label(valid[0])}.pdf`, ...out, pageCount: valid[0].length };
+      return { fileName: kept[0].name || `${base}_${label(valid[0])}.pdf`, ...out, pageCount: valid[0].length };
     }
     // Each part is written straight into the ZIP as it's made.
     const mem = options.sink ? null : memorySink();
@@ -82,7 +86,7 @@ export async function splitPdf(
     for (let i = 0; i < valid.length; i++) {
       onProgress?.(10 + Math.round((i / valid.length) * 85), `Writing file ${i + 1} of ${valid.length}...`);
       const part = await buildDoc(sourceDoc, valid[i]);
-      await zip.addEntry(`${base}_${String(i + 1).padStart(pad, '0')}_${label(valid[i])}.pdf`, (s) => saveToSink(part, s).then(() => undefined));
+      await zip.addEntry(kept[i].name || `${base}_${String(i + 1).padStart(pad, '0')}_${label(valid[i])}.pdf`, (s) => saveToSink(part, s).then(() => undefined));
     }
     await zip.finish();
     onProgress?.(100, 'Done.');
@@ -114,6 +118,6 @@ export async function splitPdf(
 
 serveTask<SplitPayload, ProcessedPdfResult>(
   'SPLIT_PDF',
-  (p, ctx) => splitPdf(p.fileBuffer, p.fileName, p.ranges, ctx.progress, { groups: p.groups, sink: ctx.sink() }),
+  (p, ctx) => splitPdf(p.fileBuffer, p.fileName, p.ranges, ctx.progress, { groups: p.groups, names: p.names, sink: ctx.sink() }),
   'Failed to split PDF document'
 );

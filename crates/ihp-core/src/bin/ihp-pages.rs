@@ -18,7 +18,7 @@ fn main() {
         }
         Some("splitzip") => {
             let groups: Vec<Vec<usize>> = a[5].split(',').map(|g| match g.split_once('-') { Some((x, y)) => (x.parse().unwrap()..=y.parse().unwrap()).collect(), None => vec![g.parse().unwrap()] }).collect();
-            split_zip(p(&a[2]), p(&a[3]), &a[4], &groups, &mut prog)
+            split_zip(p(&a[2]), p(&a[3]), &a[4], &groups, &[], &mut prog)
         }
         Some("rotate") => {
             let per: Vec<(usize, i32)> = a.get(5).map(|s| s.split(',').filter(|x| !x.is_empty()).map(|t| { let (i, d) = t.split_once(':').unwrap(); (i.parse().unwrap(), d.parse().unwrap()) }).collect()).unwrap_or_default();

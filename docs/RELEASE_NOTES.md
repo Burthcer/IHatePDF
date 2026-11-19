@@ -1,12 +1,17 @@
-# IHatePDF v2.1.0
+# IHatePDF v2.2.0
 
-The desktop app on **Tauri** with a **Rust core** (since 2.0), now with a rebuilt Split tool and fixes from testing the app on phones and narrow windows.
+The desktop app on **Tauri** with a **Rust core** (since 2.0). 2.2.0 finishes the new Split: name each part, and see at a glance which pages go where.
 
 ## Install
 
 1. Download **IHatePDF-Setup.exe** below, under *Assets* (about 26 MB).
 2. Run it. If Windows says *"Windows protected your PC"*, click **More info → Run anyway**. The installer isn't code-signed.
-3. It installs for your Windows account only (no administrator permission). Updating from 2.0.0 installs over it. Coming from 1.x: uninstall 1.x first from *Settings → Apps*. Your saved files are never touched. It needs Microsoft Edge WebView2, which is part of Windows 10 and 11.
+3. It installs for your Windows account only (no administrator permission). Updating from 2.x installs over it. Coming from 1.x: uninstall 1.x first from *Settings → Apps*. Your saved files are never touched. It needs Microsoft Edge WebView2, which is part of Windows 10 and 11.
+
+## New in 2.2.0
+
+- **Split: name each part.** Every part in "Choose pages" has a file-name box (the default name is shown greyed out). Characters a file name can't contain are dropped, and two parts with the same name become `name.pdf` and `name (2).pdf`. Each part shows the file it will produce.
+- **Split: colour per part.** Each part has its own colour on its card, and every page is outlined in the colour of the part it goes into (the selected part's pages with a thicker outline), with "part N" under the page in the same colour. Every N and One per page colour their files the same way.
 
 ## New in 2.1.0
 
@@ -28,9 +33,9 @@ The desktop app on **Tauri** with a **Rust core** (since 2.0), now with a rebuil
 
 **In Rust:** Compress, Merge, Split, Organize pages, Rotate, Crop, Images to PDF (and Scan to PDF), PDF to JPG/PNG, Redact, Watermark, Page numbers, Sign, Repair (PDFium), Word, PowerPoint, Excel and HTML to PDF, PDF to PowerPoint, page previews and text reading (PDFium). Each falls back to the 1.4.0 engine for anything it can't handle, so a tool never does worse than before. Edit PDF, Forms, PDF/A, Protect, Unlock and Compare keep the 1.4.0 engines.
 
-## How 2.1.0 was tested
+## How 2.2.0 was tested
 
-- Every tool end to end (`scripts/e2e/all-tools.mjs`), including Split with two parts (ZIP with `p1-2` and `p3-4`), on the desktop web build.
+- Every tool end to end (`scripts/e2e/all-tools.mjs`), including Split with two parts, part 2 named `Chapter: two?` (ZIP with `test-multi_1_p1-2.pdf` and `Chapter two.pdf`), in the browser build, the installed app (Rust engine) and the phone build.
 - The same suite on a phone-sized touch screen (Android emulator), plus real finger input: dragging a signature, a crop edge, a redaction box and an Edit PDF text block, and the reorder arrows.
 - `npm test` (conversion, editor and Word-picture suites).
 

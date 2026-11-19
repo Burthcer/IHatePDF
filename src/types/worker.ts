@@ -81,6 +81,8 @@ export interface SplitPayload {
   ranges: Array<{ from: number; to: number }> | 'all';
   /** One output file per group of 0-based page indices (ZIP when more than one). */
   groups?: number[][];
+  /** Optional output file name per group (with .pdf); "" or missing = the default name. */
+  names?: string[];
 }
 
 export interface RotatePayload {

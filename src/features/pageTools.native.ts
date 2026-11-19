@@ -46,6 +46,7 @@ export const splitNative = nativeTool<SplitPayload>({
   args: (p) => ({
     base: base(p.fileName),
     groups: p.groups,
+    names: p.names,
     all: !p.groups && p.ranges === 'all',
     ranges: Array.isArray(p.ranges) ? p.ranges : undefined,
   }),
