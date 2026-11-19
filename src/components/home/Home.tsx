@@ -194,8 +194,8 @@ export const Home: React.FC<HomeProps> = ({ onOpenTool }) => {
                 Get out.
               </h1>
               <p className="text-muted mt-4 max-w-lg text-[15px] leading-relaxed">
-                Edit the actual text in a PDF, merge, split, compress, convert, sign and more. Files are processed inside
-                this tab and never leave your machine — it works offline too.
+                Edit the actual text in a PDF, merge, split, compress, convert, sign and more. Files are processed{' '}
+                {window.ihpDesktop ? 'on this computer' : 'inside this tab'} and never leave your machine — it works offline too.
               </p>
             </div>
             <div className="space-y-3">

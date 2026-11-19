@@ -11,11 +11,9 @@ interface ShareViewProps {
 
 type Mode = 'wifi' | 'hotspot' | 'bluetooth';
 
-const MODES: Array<{ value: Mode; label: string }> = [
-  { value: 'wifi', label: 'Same Wi-Fi' },
-  { value: 'hotspot', label: 'PC hotspot (offline)' },
-  { value: 'bluetooth', label: 'Bluetooth (offline)' },
-];
+// ponytail: 2.x only has the Wi-Fi server (src-tauri/src/share.rs); the hotspot and Bluetooth code below stays for
+// when they are ported, but they are not offered (picking them only gave a "not in this build" error).
+const MODES: Array<{ value: Mode; label: string }> = [{ value: 'wifi', label: 'Same Wi-Fi' }];
 
 const MODE_INFO: Record<Mode, { title: string; body: string }> = {
   wifi: {
@@ -425,7 +423,7 @@ export const ShareView: React.FC<ShareViewProps> = ({ onBack }) => {
 
       <section className="space-y-3">
         <h3 className="label-mono">2 · How the phone connects</h3>
-        <Segmented value={mode} onChange={setMode} options={MODES} />
+        {MODES.length > 1 && <Segmented value={mode} onChange={setMode} options={MODES} />}
         <Notice tone="info" title={MODE_INFO[mode].title}>
           {MODE_INFO[mode].body}
         </Notice>

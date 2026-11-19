@@ -19,16 +19,19 @@ const UsageLogNotice: React.FC = () => {
   );
 };
 
+/** The desktop app (Tauri) has a bridge; the browser build doesn't. */
+const inApp = () => !!window.ihpDesktop;
+
 export const Footer: React.FC = () => (
   <footer className="border-t border-line mt-auto">
     <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row gap-2 sm:items-center justify-between text-xs text-muted">
       <div className="flex flex-col gap-1">
         <p>
-          <Wordmark className="text-ink" /> — every tool runs in this browser tab. No uploads, no accounts, no page limits.
+          <Wordmark className="text-ink" /> — every tool runs {inApp() ? 'on this computer' : 'in this browser tab'}. No uploads, no accounts, no page limits.
         </p>
         <UsageLogNotice />
       </div>
-      <p className="font-mono text-2xs">pdf-lib · pdf.js · MIT licensed</p>
+      <p className="font-mono text-2xs">{inApp() ? 'Rust · PDFium · pdf-lib · MIT licensed' : 'pdf-lib · pdf.js · MIT licensed'}</p>
     </div>
   </footer>
 );

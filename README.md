@@ -13,7 +13,7 @@
 ![Runs offline](https://img.shields.io/badge/runs-100%25_offline-247a48?style=flat-square)
 [![License: MIT](https://img.shields.io/badge/license-MIT-171612?style=flat-square)](LICENSE)
 
-**New in [2.2.2](https://github.com/Burthcer/IHatePDF/releases/tag/v2.2.2):** the GitHub button in the app works again, and a new button links to [devbhamaria.com](https://devbhamaria.com). Older versions: [all releases](https://github.com/Burthcer/IHatePDF/releases).
+**New in [2.2.3](https://github.com/Burthcer/IHatePDF/releases/tag/v2.2.3):** the app's wording matches what it does: Share to phone offers Wi-Fi only, and the app says files are processed on this computer. Older versions: [all releases](https://github.com/Burthcer/IHatePDF/releases).
 
 <br>
 
