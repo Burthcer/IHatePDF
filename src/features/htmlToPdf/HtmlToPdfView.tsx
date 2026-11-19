@@ -60,7 +60,7 @@ export const HtmlToPdfView: React.FC<HtmlToPdfViewProps> = ({ onBack }) => {
 
   const [pw, ph] = landscape ? [SIZES[size][1], SIZES[size][0]] : SIZES[size];
   const contentWidthPx = ((pw - MARGINS[margin] * 2) * 96) / 72;
-  const previewScale = Math.min(1, 520 / contentWidthPx);
+  const previewScale = Math.min(1, Math.min(520, window.innerWidth - 72) / contentWidthPx); // fits phone screens
 
   const execute = async () => {
     setCapturing(true);

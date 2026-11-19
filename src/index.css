@@ -132,3 +132,11 @@
 @media (prefers-reduced-motion: reduce) {
   .autosave-bar { animation: none; width: 100%; opacity: 0.4; }
 }
+
+/* Touch screens: finger-sized hit area for small drag handles, and controls that only show on hover stay visible. */
+@media (pointer: coarse) {
+  .hit-pad::after { content: ""; position: absolute; inset: -14px; }
+}
+@media (hover: none) {
+  .group-hover\:opacity-100 { opacity: 1; }
+}

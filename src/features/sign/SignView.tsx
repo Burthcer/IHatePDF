@@ -25,7 +25,7 @@ interface Signature {
   aspect: number; // width / height
 }
 
-const PAGE_W = 540;
+const PAGE_W = Math.min(540, window.innerWidth - 32); // fits phone screens
 const INK = ['#111111', '#1f3a93', '#0b6e4f'];
 
 /** Crops a canvas to its non-transparent pixels (plus padding) and returns PNG. */
@@ -324,7 +324,7 @@ export const SignView: React.FC<SignViewProps> = ({ initialFiles = [], onBack })
               onThisPage.map(({ p, i }) => (
                 <div
                   key={i}
-                  className="absolute outline outline-1 outline-accent/70 hover:outline-accent cursor-move group"
+                  className="absolute outline outline-1 outline-accent/70 hover:outline-accent cursor-move group touch-none"
                   style={{ left: p.x * scale, top: p.y * scale, width: p.width * scale, height: p.height * scale }}
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => {
@@ -347,7 +347,7 @@ export const SignView: React.FC<SignViewProps> = ({ initialFiles = [], onBack })
                     <X className="w-3 h-3" />
                   </IconButton>
                   <div
-                    className="absolute -right-1 -bottom-1 w-2.5 h-2.5 bg-panel border border-accent cursor-nwse-resize"
+                    className="absolute -right-1 -bottom-1 w-2.5 h-2.5 bg-panel border border-accent cursor-nwse-resize touch-none hit-pad"
                     onPointerDown={(e) => {
                       e.stopPropagation();
                       (e.currentTarget.parentElement!.parentElement as HTMLElement).setPointerCapture(e.pointerId);

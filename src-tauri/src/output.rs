@@ -76,6 +76,19 @@ pub fn out_write(request: Request, state: State<Outputs>) -> Result<(), String> 
     Ok(())
 }
 
+/// Android's IPC has no raw request bodies, so the phone sends chunks as base64.
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub fn out_write_b64(handle: String, data: String, state: State<Outputs>) -> Result<(), String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data).map_err(|e| e.to_string())?;
+    let mut map = state.0.lock().unwrap();
+    let o = map.get_mut(&handle).ok_or("Unknown output.")?;
+    o.file.write_all(&bytes).map_err(|e| e.to_string())?;
+    o.size += bytes.len() as u64;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn out_close(handle: String, discard: bool, state: State<Outputs>) -> Result<serde_json::Value, String> {
     crate::native::trace("out_close", std::time::Instant::now());

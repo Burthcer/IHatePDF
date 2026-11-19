@@ -161,6 +161,14 @@ pub async fn run_tool(app: AppHandle, id: String, tool: String, inputs: Vec<Stri
 
 /// Where pdfium.dll is: bundled next to the app (resources/), or in the source tree when running unbundled.
 fn pdfium_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    // Android: libpdfium.so is packaged as a native library; the loader finds it by name.
+    #[cfg(target_os = "android")]
+    {
+        let _ = app;
+        return Ok(std::path::PathBuf::from("libpdfium.so"));
+    }
+    #[cfg(not(target_os = "android"))]
+    {
     use tauri::Manager;
     let mut candidates = Vec::new();
     if let Ok(r) = app.path().resource_dir() {
@@ -175,6 +183,7 @@ fn pdfium_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         }
     }
     candidates.into_iter().find(|p| p.exists()).ok_or_else(|| "pdfium.dll not found".to_string())
+    }
 }
 
 /// PDF to JPG/PNG with PDFium. `pages` are 1-based. Returns { path, size, pages, fileName }.

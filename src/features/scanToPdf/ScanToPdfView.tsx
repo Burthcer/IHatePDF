@@ -26,6 +26,7 @@ interface Shot {
 }
 
 const MAX_SIDE = 2400;
+const W = Math.min(560, window.innerWidth - 32); // shot editor width, fits phone screens
 
 async function renderShot(shot: Omit<Shot, 'url' | 'bytes'>): Promise<{ url: string; bytes: ArrayBuffer }> {
   let canvas = warpQuad(shot.source, shot.quad);
@@ -70,7 +71,6 @@ function CornerEditor({ shot, onDone, onCancel }: { shot: Shot; onDone: (quad: P
   const [rotation, setRotation] = useState(shot.rotation);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dragging = useRef<number | null>(null);
-  const W = 560;
   const scale = W / shot.source.width;
   const H = shot.source.height * scale;
 
@@ -191,7 +191,7 @@ export const ScanToPdfView: React.FC<ScanToPdfViewProps> = ({ onBack }) => {
 
   const cameraPanel = (
     <Panel className="p-4 space-y-3">
-      <div className="relative bg-ink/95 rounded aspect-[4/3] overflow-hidden flex items-center justify-center">
+      <div className="relative bg-ink/95 rounded aspect-[3/4] sm:aspect-[4/3] overflow-hidden flex items-center justify-center">
         {stream ? <video ref={(el) => { videoRef.current = el; if (el && el.srcObject !== stream) el.srcObject = stream; }} autoPlay playsInline muted className="w-full h-full object-contain" /> : <Camera className="w-10 h-10 text-muted" />}
       </div>
       {cameraError && <Notice tone="warn">{cameraError}</Notice>}
@@ -215,7 +215,6 @@ export const ScanToPdfView: React.FC<ScanToPdfViewProps> = ({ onBack }) => {
           ref={photoRef}
           type="file"
           accept="image/*"
-          capture="environment"
           multiple
           className="hidden"
           onChange={async (e) => {
@@ -225,6 +224,10 @@ export const ScanToPdfView: React.FC<ScanToPdfViewProps> = ({ onBack }) => {
           }}
         />
       </div>
+      {/* In the panel (not the options column) so nothing moves under your finger after the first capture. */}
+      <Field label="Look for new pages">
+        <Segmented value={defaultFilter} onChange={setDefaultFilter} size="sm" options={[{ value: 'original', label: 'Color' }, { value: 'gray', label: 'Gray' }, { value: 'document', label: 'Document' }]} />
+      </Field>
     </Panel>
   );
 
@@ -240,11 +243,6 @@ export const ScanToPdfView: React.FC<ScanToPdfViewProps> = ({ onBack }) => {
       actionButtonLabel={`Make PDF (${shots.length} page${shots.length === 1 ? '' : 's'})`}
       onExecuteAction={execute}
       canExecute={shots.length > 0}
-      options={
-        <Field label="Default look for new pages">
-          <Segmented value={defaultFilter} onChange={setDefaultFilter} size="sm" options={[{ value: 'original', label: 'Color' }, { value: 'gray', label: 'Gray' }, { value: 'document', label: 'Document' }]} />
-        </Field>
-      }
       emptyState={cameraPanel}
     >
       {cameraPanel}
