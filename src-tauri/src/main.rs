@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod native;
+mod share;
 mod watchdog;
 mod output;
 
@@ -57,6 +58,7 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
+        .manage(share::Share::default())
         .manage(output::Outputs::default())
         .invoke_handler(tauri::generate_handler![
             show_in_folder,
@@ -85,7 +87,12 @@ fn main() {
             native::pdf_runs,
             native::pdf_texts,
             native::build_pptx,
-            native::edit_apply
+            native::edit_apply,
+            share::share_pick,
+            share::share_describe,
+            share::share_start,
+            share::share_stop,
+            share::share_set_minutes
         ])
         .setup(|app| {
             output::clean_work_dir();

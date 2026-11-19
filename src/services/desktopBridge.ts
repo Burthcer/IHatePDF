@@ -37,7 +37,23 @@ if (tauri && !window.ihpDesktop) {
       discard: (file: string) => invoke('out_discard', { file }),
       read: async (file: string) => new Uint8Array(await invoke('out_read', { file })),
     },
-    // share / bluetooth: not in the Tauri build yet (ShareView shows a notice).
+    // Share to phone: Wi-Fi mode in Rust (src-tauri/src/share.rs); PC hotspot and Bluetooth are not in this build.
+    share: {
+      pick: (kind: 'files' | 'folder') => invoke('share_pick', { kind }),
+      pathsOf: () => [] as string[],
+      describe: (paths: string[]) => invoke('share_describe', { paths }),
+      start: (paths: string[], minutes: number, mode: string) => invoke('share_start', { paths, minutes, mode }),
+      setMinutes: (minutes: number) => invoke('share_set_minutes', { minutes }),
+      stop: () => invoke('share_stop'),
+      onEnded: listen('ihp:share-ended'),
+    },
+    bluetooth: {
+      scan: () => Promise.reject(new Error('Bluetooth sharing isn\u2019t in this build yet. Use Wi-Fi sharing.')),
+      send: () => Promise.reject(new Error('Bluetooth sharing isn\u2019t in this build yet.')),
+      cancel: () => Promise.resolve(),
+      onEvent: () => () => undefined,
+      openSettings: () => undefined,
+    },
   };
   window.ihpDesktop = bridge as unknown as typeof window.ihpDesktop;
 }

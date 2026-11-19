@@ -761,7 +761,7 @@ impl<'a> Rt<'a> {
                     self.draw_items(out, children, env, &Frame { m }, layout_items, master_items, skip_ph)?;
                 }
                 Item::Table(t) => self.draw_table(out, t, env, &Frame { m: fr.m })?,
-                Item::Chart(..) => {}
+                Item::Chart(x, path) => self.draw_chart(out, x, path, env, &Frame { m: fr.m })?,
             }
         }
         Ok(())

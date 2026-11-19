@@ -14,7 +14,7 @@
 ![Tests](https://img.shields.io/badge/tests-85_passing-247a48?style=flat-square)
 [![License: MIT](https://img.shields.io/badge/license-MIT-171612?style=flat-square)](LICENSE)
 
-**New in 1.4.0:** a local usage log for labs (never uploaded, no file names), pictures in Word files now survive Word → PDF, and screenshots stay sharp when compressed. [What changed](#whats-new-in-140)
+**New in 2.0:** rebuilt in Rust. A 28 MB installer instead of 124 MB, a Compress that is about 3x faster and uses about 5x less extra memory, and a PowerPoint to PDF that now matches PowerPoint's own output. [Benchmarks and data](docs/benchmarks/README.md) · [What changed](#whats-new-in-20)
 
 <br>
 
@@ -27,9 +27,22 @@
 
 ---
 
-## Try the 2.0 beta
+## IHatePDF 2.0: rebuilt in Rust
 
-A rebuilt IHatePDF (Tauri + a Rust core, about 25 MB instead of 130 MB) is available as a **pre-release**: [IHatePDF 2.0.0-beta.2](https://github.com/Burthcer/IHatePDF/releases/tag/v2.0.0-beta.2). Compress, Merge, Split, Rotate, Crop, Redact, PDF to JPG and more run in Rust; Share to phone and the usage log are not in the beta yet. It installs for your account only and doesn't replace 1.x, so you can try it next to the version above. This page and the download button still point to the stable 1.4.0.
+IHatePDF 2.0 is a rebuild of the app: the Electron shell is replaced by **Tauri (the system WebView2)** and most of the PDF work now runs in a **Rust core** (`crates/ihp-core`) with **PDFium** for drawing pages. The original TypeScript engines are still in the app as a safety net: when the Rust engine cannot do a job (or hits a problem), the old engine runs, so a file is never worse off than in 1.4.0.
+
+| | 1.4.0 | **2.0.0** |
+|---|---|---|
+| **Installer** | 123.8 MB | **27.9 MB** |
+| **Compress**, 10 MB scan, click to result | 2,283 ms | **811 ms** (photo: 313 → 91 ms) |
+| **Compress**, extra peak memory on that scan | +706 MB | **+130 MB** |
+| **PowerPoint → PDF** vs PowerPoint's own PDF, on 30 real lecture decks (lower is closer) | 26.8 | **8.2** (decks built in PowerPoint: 79.3 → **2.0**) |
+| **Rust vs the old engine**, same inputs | | PowerPoint text boxes identical on 21,067 boxes; 805 of 805 edited pages identical in Edit PDF; Word 10 of 10; Excel 58 of 58 cell texts |
+| **Scripted checks in the installed app** | | 27 of 29 tools (the other 2 are test-harness limits), plus the Unicode, PowerPoint, Edit PDF and Share checks |
+
+**Full benchmark data:** [docs/benchmarks/README.md](docs/benchmarks/README.md) explains the method and links the [interactive page](docs/benchmarks/index.html) (download or clone the repository and open it in a browser), the [JSON](docs/benchmarks/benchmarks.json) and the [CSV](docs/benchmarks/benchmarks.csv). Run notes are in [docs/testing/TEST_LOG.md](docs/testing/TEST_LOG.md).
+
+Honest limits: Rust is not faster for every tool (the text analysis is level with TypeScript and idle memory is the same, because WebView2 draws the same page). Protect, Unlock, Forms, PDF/A and the Compare word diff stay on the TypeScript engines on purpose. The 2.0 installer is not code-signed.
 
 ---
 
@@ -56,12 +69,12 @@ A rebuilt IHatePDF (Tauri + a Rust core, about 25 MB instead of 130 MB) is avail
 
 ## Install on Windows
 
-1. **[Download IHatePDF-Setup.exe](https://github.com/Burthcer/IHatePDF/releases/latest/download/IHatePDF-Setup.exe)** (about 130 MB).
+1. **[Download IHatePDF-Setup.exe](https://github.com/Burthcer/IHatePDF/releases/latest/download/IHatePDF-Setup.exe)** (about 28 MB).
 2. **Run it.** Windows may say *"Windows protected your PC"*, because the installer isn't code-signed. Click **More info → Run anyway**.
-3. **Click through the setup.** Windows asks once for administrator permission: the installer adds a Windows Firewall rule so phones can download from [Share to phone](#share-to-phone) without the app ever showing a network prompt. You can choose the install folder and whether you want desktop and Start-menu shortcuts.
+3. **Click through the setup.** It installs for your Windows account only, so no administrator permission is needed. The first time you use [Share to phone](#share-to-phone), Windows asks once to let IHatePDF talk on your network; allow it so phones can download.
 4. **Open IHatePDF** from the desktop or the Start menu.
 
-**Updating:** download the new setup and run it. It replaces the old version in place (1.1.0 and 1.2.0 included), and your saved files are never touched. The one exception: a 1.1.0 installed under a *different* Windows account stays in that account's *Settings → Apps*; uninstall it there.
+**Updating:** download the new setup and run it; saved files are never touched. 2.0 installs next to nothing from 1.x: uninstall 1.4.0 first from *Settings → Apps* if you have it.
 **Uninstalling:** *Settings → Apps → IHatePDF → Uninstall*.
 
 ### System requirements
@@ -70,14 +83,16 @@ A rebuilt IHatePDF (Tauri + a Rust core, about 25 MB instead of 130 MB) is avail
 |---|---|
 | **Windows** | Windows 10 or 11, 64-bit |
 | **Memory** | 4 GB RAM works; 8 GB or more for PDFs over 500 MB |
-| **Disk** | About 400 MB for the app, plus free space about the size of the file you're working on |
-| **Install** | Administrator permission, once, during setup |
+| **Disk** | About 100 MB for the app, plus free space about the size of the file you're working on |
+| **Install** | No administrator permission (per-user install); needs the Microsoft Edge WebView2 runtime, which Windows 10 and 11 already include |
 
 Need nothing but a browser? The same app runs as a web page. See [Run it in a browser instead](#run-it-in-a-browser-instead).
 
 ---
 
 ## Share to phone
+
+> **In 2.0:** the Same Wi-Fi mode is in. The PC hotspot and Bluetooth modes from 1.4.0 are not in 2.0 yet (the buttons say so). The Wi-Fi mode is new code and has been tested from another device on the network, not yet on a real phone.
 
 Send files, or whole folders, from the PC to a phone. Nothing is uploaded anywhere and no app is needed on the phone. It's the first tool on the home screen.
 
@@ -121,10 +136,20 @@ Share to phone is only in the Windows desktop app; a browser tab can't run it.
 | 📤 **Convert from PDF** | **Word** — headings, lists, tables, bold/italic · **Excel** — detected tables · **PowerPoint** — editable text boxes · **JPG/PNG** — up to 600 dpi · **Markdown** |
 | 📥 **Convert to PDF** | **Images** · **Word** · **Excel** · **PowerPoint** · **HTML** — real, selectable text · **Scan** — camera with perspective correction |
 | ⚡ **Optimize** | **Compress** — Light / Balanced / Smallest or a custom size · **Repair** — recovers damaged and cut-off files · **PDF/A** — archival |
-| 📱 **Share** | **Share to phone** — files and folders to a phone by QR code (Wi-Fi or this PC's hotspot) or Bluetooth, offline |
+| 📱 **Share** | **Share to phone** — files and folders to a phone by QR code over Wi-Fi (hotspot and Bluetooth are 1.4.0 only for now) |
 | 🔒 **Security** | **Protect** — AES-256 password, printing/copying limits · **Unlock** — RC4 and AES files you have the password for |
 
 Password-protected PDFs work in every tool: you type the password once when you open the file.
+
+---
+
+## What's new in 2.0
+
+- **Rebuilt in Rust**, with Tauri instead of Electron: a 28 MB installer (was 124 MB), a faster and lighter Compress, PDFium for page drawing. See [the benchmarks](docs/benchmarks/README.md).
+- **PowerPoint → PDF rewritten.** Slides with theme colours, gradients, transparency, shadows, real shapes, pictures, tables and charts now come out like PowerPoint's own PDF (mean page difference 79.3 → 2.0 on decks built in PowerPoint, 26.8 → 8.2 on real lecture decks). Fonts are the ones installed on your PC.
+- **Edit PDF and PDF → PowerPoint** run on the Rust engine, with the old engine as a fallback.
+- **Share to phone**: Wi-Fi mode only for now.
+- **Not in 2.0 (yet):** the PC hotspot and Bluetooth sharing modes, and the local usage log. They are in 1.4.0.
 
 ---
 
@@ -160,6 +185,8 @@ Full details and every measurement: [release notes](docs/RELEASE_NOTES.md) · [t
 
 ## For labs: the usage log
 
+> **Not in 2.0.** The local usage log is part of 1.4.0 and has not been ported to the 2.0 build.
+
 New in 1.4.0. The app keeps a small log **on the PC** of what it did, so a lab can measure how reliable and how heavy it really is: which tools are used, whether jobs succeed, how long they take, memory and CPU, and whether temp files are cleaned up.
 
 - **Never uploaded.** It's a file on the PC; nothing is sent anywhere.
@@ -188,8 +215,10 @@ Everything it records, every setting, and how to check the PC over time (Day 1 /
 ## How it works
 
 Everything runs on your machine:
-- **[pdf-lib](https://pdf-lib.js.org/)** and **[pdf.js](https://mozilla.github.io/pdf.js/)** do the PDF work in Web Workers, so the window never freezes.
-- The desktop app wraps the same code in Electron.
+- **A Rust core** (`crates/ihp-core`) does most of the PDF work: Compress, Merge, Split, Organize, Rotate, Crop, Redact, Watermark, Page numbers, Sign, Repair, Word / PowerPoint / Excel / HTML to PDF, PDF to PowerPoint and the Edit PDF engine. **PDFium** draws pages, thumbnails and PDF to JPG.
+- **Tauri** wraps the app and the same web interface in the system WebView2 (no bundled browser).
+- **TypeScript engines** ([pdf-lib](https://pdf-lib.js.org/), [pdf.js](https://mozilla.github.io/pdf.js/) in Web Workers) are still there: they run when the Rust engine declines a job, for password-protected files, and for Protect, Unlock, Forms, PDF/A and the Compare word diff. The browser version of the app uses them alone.
+- **PowerPoint to PDF** is a DrawingML renderer (`crates/ihp-core/src/pptx`): theme and master inheritance, gradients, transparency, shadows, preset shapes, pictures (including SVG), tables, charts and the fonts installed on your PC.
 
 **The text editor** is a small PDF engine of its own (`src/features/editPdf/engine/`):
 1. It reads each page's drawing instructions and works out every character's font, position and color.
@@ -218,8 +247,8 @@ npm run dev          # then open the localhost link it prints
 
 ## More
 
-- [Release notes for 1.4.0](docs/RELEASE_NOTES.md) · [The usage log](docs/USAGE_LOG.md)
-- [Test results](docs/TEST_REPORT.md), and the [Windows test log](docs/testing/WINDOWS_TESTS.md)
+- [2.0 benchmarks and data](docs/benchmarks/README.md) · [Release notes](docs/RELEASE_NOTES.md) · [The usage log (1.4.0)](docs/USAGE_LOG.md)
+- [Test results](docs/TEST_REPORT.md), the [2.0 test log](docs/testing/TEST_LOG.md) and the [Windows test log](docs/testing/WINDOWS_TESTS.md)
 - [For developers](HANDOFF.md): how the code is organized, building the installer, and releasing.
 
 ## License

@@ -5,6 +5,7 @@
 //!
 //! Anything this engine can't read returns an error and the app runs the TypeScript engine instead.
 
+mod chart;
 mod color;
 mod fontsys;
 mod geom;
