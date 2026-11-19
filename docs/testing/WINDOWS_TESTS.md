@@ -91,6 +91,16 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-11-19 · v2.1.0 (Split in parts, touch and narrow-window fixes), installed CI build
+
+Released from `main` (PR #13, run 44509486382). Downloaded `IHatePDF-Setup.exe` (27.5 MB) from the v2.1.0 release into `PropPres\_installers\v2.1.0`, uninstalled 2.0.0 (per-user, `uninstall.exe /S`), installed 2.1.0 (`/S`, no UAC): one "IHatePDF" entry, DisplayVersion 2.1.0.
+
+- **Installed app, `all-tools.mjs` with `E2E_CDP`:** 27/29. Split's new test (two parts → ZIP with `test-multi_1_p1-2.pdf`, `test-multi_2_p3-4.pdf`) passes. The two failures are the known harness limits: Compress (the 44 MB input is over the debug port's upload limit; `scripts/e2e/tauri.mjs` compress on `complex.pdf` saved `complex_compressed.pdf`) and autoSave (waits for a browser download event; the app saves to Downloads/IHatePDF instead).
+- **Desktop web build (Edge, vite preview):** 29/29, Compress and autoSave included.
+- `npm test` all pass; `npm run lint` warnings only; `cargo check` OK.
+- **Gotcha:** an `adb forward tcp:9222` left over from Android testing takes the port; WebView2 then can't open its debug port. Run `adb forward --remove-all` first.
+- The 2.0.0 release page shows the old beta.3 notes (RELEASE_NOTES.md wasn't updated before #12); 2.1.0 has its own notes and is "Latest".
+
 ### 2026-11-19 · PowerPoint to PDF rewritten (Dev's report: colours and elements wrong), measured against PowerPoint itself
 
 Dev reported slides with colours or elements coming out wrong. Reproduced with decks built by real PowerPoint (COM) and PowerPoint's own PDF as the reference: the old engines (a regex-level reader, TypeScript and its Rust port) lost the master/layout (themed slides came out blank, text included), theme tints/shades, radial gradients, transparency, shadows, rotation, every shape except rectangles/ellipses, dashes, arrowheads, pictures with crop, bullets, numbering, SVG icons. The Rust engine is now a new DrawingML renderer (`crates/ihp-core/src/pptx/`: model.rs reads the package with a real XML parser, color.rs, geom.rs presets, fontsys.rs, render.rs, text.rs). The old TypeScript engine is unchanged and still runs when Rust declines or panics (`panic = "unwind"` in src-tauri + `catch_unwind`).
