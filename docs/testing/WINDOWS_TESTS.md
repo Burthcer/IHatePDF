@@ -91,6 +91,15 @@ Manual checks that need Dev at the laptop: the SmartScreen "More info → Run an
 
 ## Runs
 
+### 2026-11-19 (evening) · v2.2.0 (Split part names and colours), installed CI build
+
+Released from `main` (PR #14, run 44516744797). Downloaded `IHatePDF-Setup.exe` (27.9 MB) into `PropPres\_installers\v2.2.0` (2.1.0's moved to `_installers\archive`), uninstalled 2.1.0 (`uninstall.exe /S`), installed 2.2.0 (`/S`): one entry, DisplayVersion 2.2.0.
+
+- **Installed app, `all-tools.mjs` with `E2E_CDP`:** 27/29; Split (Rust engine) with part 2 named `Chapter: two?` → `test-multi_1_p1-2.pdf` + `Chapter two.pdf`. Same two known harness limits: Compress (44 MB input over the debug port's upload limit; `tauri.mjs` compress on `complex.pdf` saved `complex_compressed.pdf`) and autoSave (waits for a browser download event).
+- Browser build: Split with names passes (TypeScript engine); three-part screenshot in light and dark (colours on cards and page rings).
+- `npm test` 55/55; lint warnings only; `cargo check` OK.
+- App, vite preview and Android emulator closed after testing.
+
 ### 2026-11-19 · v2.1.0 (Split in parts, touch and narrow-window fixes), installed CI build
 
 Released from `main` (PR #13, run 44509486382). Downloaded `IHatePDF-Setup.exe` (27.5 MB) from the v2.1.0 release into `PropPres\_installers\v2.1.0`, uninstalled 2.0.0 (per-user, `uninstall.exe /S`), installed 2.1.0 (`/S`, no UAC): one "IHatePDF" entry, DisplayVersion 2.1.0.

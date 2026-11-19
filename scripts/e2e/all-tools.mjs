@@ -32,6 +32,18 @@ const TOOLS = {
     await page.getByLabel('Pages for part 1').fill('1-2');
     await page.getByRole('button', { name: 'Add part' }).click();
     const second = await page.getByLabel('Pages for part 2').inputValue();
+    // Part 2 was filled in by the app, so it follows part 1; typing in it makes it the user's, overlaps are flagged.
+    const p1 = page.getByLabel('Pages for part 1'), p2 = page.getByLabel('Pages for part 2');
+    await p1.fill('1-3');
+    if ((await p2.inputValue()) !== '4') throw new Error(`part 2 should follow part 1 (1-3 → 4), got "${await p2.inputValue()}"`);
+    await p1.fill('1-2');
+    await p2.fill('2-4');
+    await page.getByText('Page 2 is also in part 1').waitFor({ timeout: 5000 });
+    await p1.fill('1');
+    if ((await p2.inputValue()) !== '2-4') throw new Error('a typed part must not follow');
+    await page.getByText('Not in any part').waitFor({ state: 'detached', timeout: 5000 });
+    await p1.fill('1-2');
+    await p2.fill('3-4');
     // Part 2 gets a chosen name (with characters a file name can't have); part 1 keeps the default.
     await page.getByLabel('File name for part 2').fill('Chapter: two?');
     const r = await runAndDownload(page, /^Split into 2 files/, 'split.zip');
