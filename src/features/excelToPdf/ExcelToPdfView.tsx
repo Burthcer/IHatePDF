@@ -1,12 +1,14 @@
 import React from 'react';
 import { OfficeToPdfView } from '../../components/convert/OfficeToPdfView';
+import { nativeFirst } from '../../services/nativeWorker';
+import { excelToPdfNative } from './excelToPdf.native';
 
 export const ExcelToPdfView: React.FC<{ onBack: () => void }> = ({ onBack }) => (
   <OfficeToPdfView
     toolId="excelToPdf"
     accept=".xlsx,.xls,.xlsm,.ods,.csv"
     action="XLSX_TO_PDF"
-    workerFactory={() => new Worker(new URL('./xlsxToPdf.worker.ts', import.meta.url), { type: 'module' })}
+    workerFactory={nativeFirst(() => new Worker(new URL('./xlsxToPdf.worker.ts', import.meta.url), { type: 'module' }), { XLSX_TO_PDF: excelToPdfNative })}
     title="Choose a spreadsheet"
     subtitle=".xlsx, .xls, .ods or .csv"
     notes={

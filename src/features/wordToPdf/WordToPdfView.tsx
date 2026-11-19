@@ -1,12 +1,14 @@
 import React from 'react';
 import { OfficeToPdfView } from '../../components/convert/OfficeToPdfView';
+import { nativeFirst } from '../../services/nativeWorker';
+import { wordToPdfNative } from './wordToPdf.native';
 
 export const WordToPdfView: React.FC<{ onBack: () => void }> = ({ onBack }) => (
   <OfficeToPdfView
     toolId="wordToPdf"
     accept=".docx"
     action="WORD_TO_PDF"
-    workerFactory={() => new Worker(new URL('./wordToPdf.worker.ts', import.meta.url), { type: 'module' })}
+    workerFactory={nativeFirst(() => new Worker(new URL('./wordToPdf.worker.ts', import.meta.url), { type: 'module' }), { WORD_TO_PDF: wordToPdfNative })}
     title="Choose a Word document"
     subtitle=".docx — or drag it here"
     notes={

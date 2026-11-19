@@ -372,7 +372,7 @@ export async function convertPptxToPdf(
           let embedded = imageCache.get(slide.background.imageKey);
           if (!embedded) {
             const isPng = imgData[0] === 0x89 && imgData[1] === 0x50;
-            embedded = isPng ? await pdfDoc.embedPng(imgData) : await pdfDoc.embedJpg(imgData);
+            embedded = isPng ? await pdfDoc.embedPng(imgData) : await pdfDoc.embedJpg(imgData.slice());
             imageCache.set(slide.background.imageKey, embedded);
           }
           page.drawImage(embedded, {
@@ -404,7 +404,7 @@ export async function convertPptxToPdf(
           let embedded = imageCache.get(pic.imageKey);
           if (!embedded) {
             const isPng = imgData[0] === 0x89 && imgData[1] === 0x50;
-            embedded = isPng ? await pdfDoc.embedPng(imgData) : await pdfDoc.embedJpg(imgData);
+            embedded = isPng ? await pdfDoc.embedPng(imgData) : await pdfDoc.embedJpg(imgData.slice());
             imageCache.set(pic.imageKey, embedded);
           }
           page.drawImage(embedded, {

@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { nativeFirst } from '../../services/nativeWorker';
+import { rotateNative } from '../pageTools.native';
 import { RotateCcw, RotateCw } from 'lucide-react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
@@ -22,7 +24,9 @@ export const RotateView: React.FC<RotateViewProps> = ({ initialFiles = [], onBac
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const file = files[0];
   const { pages, thumbRef } = usePageThumbnails(file?.data);
-  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./rotate.worker.ts', import.meta.url), { type: 'module' }));
+  const runner = useToolRunner<ProcessedPdfResult>(
+    nativeFirst(() => new Worker(new URL('./rotate.worker.ts', import.meta.url), { type: 'module' }), { ROTATE_PAGES: rotateNative })
+  );
 
   const rotate = (indices: number[], delta: number) => {
     setTurns((prev) => {

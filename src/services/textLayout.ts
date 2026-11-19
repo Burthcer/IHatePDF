@@ -57,7 +57,7 @@ export interface PageLayout {
   lines: LayoutLineOut[];
 }
 
-interface Run {
+export interface Run {
   text: string;
   x: number;
   y: number;
@@ -452,7 +452,25 @@ function joinBlockRuns(segs: Segment[]): StyledRun[] {
   return out;
 }
 
-export async function analyzeDocumentLayout(doc: PDFDocumentProxy, onProgress?: (page: number, total: number) => void): Promise<PageLayout[]> {
+/** Text runs and picture boxes of one page (viewer space): from pdf.js, or from PDFium in the desktop app. */
+export type PageRunsProvider = (pageNumber: number) => Promise<{ runs: Run[]; width: number; height: number; images: Box[] }>;
+
+export function analyzeDocumentLayout(doc: PDFDocumentProxy, onProgress?: (page: number, total: number) => void): Promise<PageLayout[]> {
+  return analyzeLayout(
+    doc.numPages,
+    async (p) => {
+      const page = await doc.getPage(p);
+      try {
+        return await pageRuns(page);
+      } finally {
+        page.cleanup();
+      }
+    },
+    onProgress
+  );
+}
+
+export async function analyzeLayout(total: number, getRuns: PageRunsProvider, onProgress?: (page: number, total: number) => void): Promise<PageLayout[]> {
   interface PageWork {
     pageNumber: number;
     width: number;
@@ -465,10 +483,8 @@ export async function analyzeDocumentLayout(doc: PDFDocumentProxy, onProgress?: 
   const work: PageWork[] = [];
   const allSizes: number[] = [];
 
-  for (let p = 1; p <= doc.numPages; p++) {
-    const page = await doc.getPage(p);
-    const { runs, width, height, images } = await pageRuns(page);
-    page.cleanup();
+  for (let p = 1; p <= total; p++) {
+    const { runs, width, height, images } = await getRuns(p);
     const lines = buildLines(runs);
     const { tables, used } = detectTables(lines);
     // Second pass for tables set so tightly that their cells look like words of one line.
@@ -481,7 +497,7 @@ export async function analyzeDocumentLayout(doc: PDFDocumentProxy, onProgress?: 
       for (let k = 0; k < Math.min(r.text.length, 20); k++) allSizes.push(Math.round(r.size * 2) / 2);
     });
     work.push({ pageNumber: p, width, height, lines, tables, blocks, images });
-    onProgress?.(p, doc.numPages);
+    onProgress?.(p, total);
   }
 
   const body = median(allSizes) || 11;

@@ -5,6 +5,7 @@ import { Dropzone } from '../../components/common/Dropzone';
 import { ToolHeader } from '../../components/layout/ToolLayout';
 import { Button, Notice, Panel, ProgressLine, Segmented, Spinner, cn } from '../../components/ui';
 import { openPdfJsDocument } from '../../services/pdfWorkerSetup';
+import { hasNative, stageInput } from '../../services/nativeWorker';
 import { memoryManager } from '../../services/memoryManager';
 import { getTool } from '../../constants/tools';
 import { diffWords, type DiffOp, type Word } from './textDiff';
@@ -27,6 +28,28 @@ const CONTEXT = 10;
 /** Rendered page comparisons kept around (the rest are redrawn if scrolled back to). */
 const VISUAL_KEEP = 24;
 
+const invokeNative = (cmd: string, args: unknown): Promise<any> => (globalThis as unknown as { __TAURI__: { core: { invoke: (c: string, a: unknown) => Promise<any> } } }).__TAURI__.core.invoke(cmd, args);
+
+/** A document being compared: read by pdf.js, or (desktop app) by PDFium. */
+type Doc = PDFDocumentProxy | { native: string; pages: number };
+const isNative = (d: Doc): d is { native: string; pages: number } => 'native' in d;
+const pageCount = (d: Doc) => (isNative(d) ? d.pages : d.numPages);
+
+async function openDoc(data: Blob): Promise<Doc> {
+  if (hasNative()) {
+    try {
+      const path = await stageInput(data);
+      const info: { total: number } = await invokeNative('pdf_info', { path, start: 0, count: 1 });
+      if (info.total) return { native: path, pages: info.total };
+    } catch (err) {
+      console.warn('PDFium unavailable for Compare, using pdf.js:', err);
+    }
+  }
+  return openPdfJsDocument(data).promise;
+}
+
+// Words come from pdf.js on purpose: PDFium orders a page's text by its own reading-order rules, which changes
+// what the word diff reports (checked on the Compare fixtures: 6 changes vs 2, MuPDF and pdf.js agree on 2).
 async function extractWords(data: Blob): Promise<{ words: Word[]; pages: number }> {
   const doc = await openPdfJsDocument(data).promise;
   const words: Word[] = [];
@@ -44,8 +67,22 @@ async function extractWords(data: Blob): Promise<{ words: Word[]; pages: number 
   }
 }
 
-async function renderPage(doc: PDFDocumentProxy, p: number): Promise<HTMLCanvasElement | null> {
-  if (p > doc.numPages) return null;
+async function renderPage(doc: Doc, p: number): Promise<HTMLCanvasElement | null> {
+  if (p > pageCount(doc)) return null;
+  if (isNative(doc)) {
+    // PDFium draws the page at the comparison width; the overlay code below works on the canvas as before.
+    const bytes: ArrayBuffer = await invokeNative('render_thumb', { path: doc.native, index: p - 1, width: RENDER_W, quality: 0.95 });
+    const bmp = await createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }));
+    const c = document.createElement('canvas');
+    c.width = bmp.width;
+    c.height = bmp.height;
+    const ctx = c.getContext('2d', { alpha: false, willReadFrequently: true })!;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(bmp, 0, 0);
+    bmp.close();
+    return c;
+  }
   const page = await doc.getPage(p);
   const base = page.getViewport({ scale: 1 });
   const vp = page.getViewport({ scale: RENDER_W / base.width });
@@ -67,7 +104,7 @@ async function toUrl(c: HTMLCanvasElement): Promise<string> {
   return URL.createObjectURL(blob);
 }
 
-async function comparePage(a: PDFDocumentProxy, b: PDFDocumentProxy, index: number): Promise<VisualPage> {
+async function comparePage(a: Doc, b: Doc, index: number): Promise<VisualPage> {
   const [pa, pb] = await Promise.all([renderPage(a, index + 1), renderPage(b, index + 1)]);
   try {
     let diff: string | null = null;
@@ -158,7 +195,7 @@ export const CompareView: React.FC<CompareViewProps> = ({ onBack }) => {
   const [pageCount, setPageCount] = useState<number | null>(null);
   const [visual, setVisual] = useState<Map<number, VisualPage>>(new Map());
   const [error, setError] = useState<string | null>(null);
-  const docs = useRef<Promise<[PDFDocumentProxy, PDFDocumentProxy]> | null>(null);
+  const docs = useRef<Promise<[Doc, Doc]> | null>(null);
   const cache = useRef(new Map<number, VisualPage>());
   const pending = useRef<number[]>([]);
   const working = useRef(false);
@@ -173,7 +210,7 @@ export const CompareView: React.FC<CompareViewProps> = ({ onBack }) => {
     setVisual(new Map());
     const open = docs.current;
     docs.current = null;
-    void open?.then(([da, db]) => Promise.all([memoryManager.destroyPdfDocument(da), memoryManager.destroyPdfDocument(db)])).catch(() => undefined);
+    void open?.then(([da, db]) => Promise.all([da, db].map((d) => (isNative(d) ? Promise.resolve() : memoryManager.destroyPdfDocument(d))))).catch(() => undefined);
   }, []);
 
   useEffect(() => closeVisual, [closeVisual]);
@@ -191,7 +228,7 @@ export const CompareView: React.FC<CompareViewProps> = ({ onBack }) => {
       while (pending.current.length && gen === generation.current) {
         const i = pending.current.shift()!;
         if (cache.current.has(i)) continue;
-        docs.current ??= Promise.all([openPdfJsDocument(a.data).promise, openPdfJsDocument(b.data).promise]);
+        docs.current ??= Promise.all([openDoc(a.data), openDoc(b.data)]);
         const [da, db] = await docs.current;
         const page = await comparePage(da, db, i);
         if (gen !== generation.current) {

@@ -74,7 +74,9 @@ function QrCard({ step, title, text, children }: { step?: number; title: string;
 }
 
 export const ShareView: React.FC<ShareViewProps> = ({ onBack }) => {
-  const desktop = window.ihpDesktop;
+  // The Tauri desktop build doesn't have Share to phone yet (no share bridge): treat it as unavailable.
+  const desktop = window.ihpDesktop?.share ? window.ihpDesktop : undefined;
+  const desktopWithoutShare = !!window.ihpDesktop && !desktop;
   const [items, setItems] = useState<ShareItem[]>([]);
   const [mode, setMode] = useState<Mode>('wifi');
   const [minutes, setMinutes] = useState(1);
@@ -229,8 +231,10 @@ export const ShareView: React.FC<ShareViewProps> = ({ onBack }) => {
     return (
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-6">
         <ToolHeader tool={getTool('share')} onBack={onBack} />
-        <Notice tone="warn" title="Available in the desktop app">
-          A browser tab can’t share files to a phone. Install the IHatePDF desktop app to use this.
+        <Notice tone="warn" title={desktopWithoutShare ? 'Coming back soon' : 'Available in the desktop app'}>
+          {desktopWithoutShare
+            ? 'Share to phone isn’t in this version of the app yet. Every other tool works as before.'
+            : 'A browser tab can’t share files to a phone. Install the IHatePDF desktop app to use this.'}
         </Notice>
       </div>
     );

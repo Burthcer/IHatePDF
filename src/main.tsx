@@ -1,3 +1,4 @@
+import './services/desktopBridge';
 import './services/polyfills';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';

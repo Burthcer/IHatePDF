@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { nativeFirst } from '../../services/nativeWorker';
+import { imagesNative } from '../pageTools.native';
 import { GripVertical, X } from 'lucide-react';
 import { GenericFileInput } from '../../components/common/GenericFileInput';
 import { ToolLayout } from '../../components/layout/ToolLayout';
@@ -31,7 +33,9 @@ export const ImageToPdfView: React.FC<ImageToPdfViewProps> = ({ onBack }) => {
   const [margin, setMargin] = useState<ImagePageMargin>('small');
   const [pageSize, setPageSize] = useState<ImagePageSize>('a4');
   const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./imagesToPdf.worker.ts', import.meta.url), { type: 'module' }));
+  const runner = useToolRunner<ProcessedPdfResult>(
+    nativeFirst(() => new Worker(new URL('./imagesToPdf.worker.ts', import.meta.url), { type: 'module' }), { IMAGES_TO_PDF: imagesNative })
+  );
 
   const add = async (files: File[]) => {
     const bad: string[] = [];

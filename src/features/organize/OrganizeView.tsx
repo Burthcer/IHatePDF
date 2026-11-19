@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { nativeFirst } from '../../services/nativeWorker';
+import { organizeNative } from '../pageTools.native';
 import { Copy, FilePlus2, RotateCw, Trash2, Undo2 } from 'lucide-react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
@@ -33,7 +35,9 @@ export const OrganizeView: React.FC<OrganizeViewProps> = ({ initialFiles = [], o
   const [overKey, setOverKey] = useState<string | null>(null);
   const file = files[0];
   const { pages, thumbRef } = usePageThumbnails(file?.data);
-  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./organize.worker.ts', import.meta.url), { type: 'module' }));
+  const runner = useToolRunner<ProcessedPdfResult>(
+    nativeFirst(() => new Worker(new URL('./organize.worker.ts', import.meta.url), { type: 'module' }), { ORGANIZE_PAGES: organizeNative })
+  );
 
   useEffect(() => {
     setItems(pages.map((_, i) => ({ key: nextKey(), source: i, rotate: 0 })));

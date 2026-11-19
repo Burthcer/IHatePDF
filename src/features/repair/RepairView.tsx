@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { nativeFirst } from '../../services/nativeWorker';
+import { repairNative } from './repair.native';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
 import { Panel } from '../../components/ui';
@@ -52,7 +54,9 @@ export const RepairView: React.FC<RepairViewProps> = ({ initialFiles = [], onBac
   const [files, setFiles] = useState<PDFFile[]>(initialFiles.slice(0, 1));
   const [fallbackStage, setFallbackStage] = useState<string | null>(null);
   const [fallbackError, setFallbackError] = useState<string | null>(null);
-  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./repair.worker.ts', import.meta.url), { type: 'module' }));
+  const runner = useToolRunner<ProcessedPdfResult>(
+    nativeFirst(() => new Worker(new URL('./repair.worker.ts', import.meta.url), { type: 'module' }), { REPAIR_PDF: repairNative })
+  );
   const file = files[0];
 
   const execute = async () => {

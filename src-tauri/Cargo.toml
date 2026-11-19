@@ -1,0 +1,26 @@
+[package]
+name = "ihatepdf"
+version = "2.0.0"
+edition = "2021"
+description = "IHatePDF: offline PDF tools"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+ihp-core = { path = "../crates/ihp-core" }
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+zip = { version = "9.5", default-features = false, features = ["deflate"] }
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "unwind" # the PowerPoint renderer catches its own panics so the app can fall back to the TypeScript engine
+strip = true

@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { nativeFirst } from '../../services/nativeWorker';
+import { mergeNative } from '../pageTools.native';
 import { ArrowDown, ArrowUp, GripVertical, X } from 'lucide-react';
 import { Dropzone } from '../../components/common/Dropzone';
 import { ToolLayout } from '../../components/layout/ToolLayout';
@@ -21,7 +23,9 @@ export const MergeView: React.FC<MergeViewProps> = ({ initialFiles = [], onBack 
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
   const requested = useRef(new Set<string>());
-  const runner = useToolRunner<ProcessedPdfResult>(() => new Worker(new URL('./merge.worker.ts', import.meta.url), { type: 'module' }));
+  const runner = useToolRunner<ProcessedPdfResult>(
+    nativeFirst(() => new Worker(new URL('./merge.worker.ts', import.meta.url), { type: 'module' }), { MERGE_PDFS: mergeNative })
+  );
   const { renderThumbnail } = usePdfRenderer();
 
   useEffect(() => {

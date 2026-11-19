@@ -3,7 +3,7 @@
 IHatePDF is a PDF tool suite (28 tools) that runs entirely on the user's machine:
 - a React + TypeScript app built with Vite;
 - the PDF work runs in Web Workers on `pdf-lib` and `pdf.js`;
-- it is packaged for Windows with Electron and electron-builder (NSIS).
+- the desktop app is a Tauri shell (`src-tauri/`) around that app, with a Rust core (`crates/ihp-core`) that takes over the heavy tools; packaged for Windows as an NSIS installer.
 
 There is no backend. No tool makes a network request, and the app works offline.
 
@@ -36,15 +36,18 @@ src/
     repair/salvage.ts          byte-level recovery for unparseable files
   hooks/                       useToolRunner, useWorkerBridge, useFileIngestion (password prompt),
                                usePageThumbnails, usePdfRenderer, useLayoutAnalysis, useTheme
-  services/                    pdfLoader, pdfSecurity/legacyCrypto/pdfCrypto (encryption),
+  services/                    desktopBridge (window.ihpDesktop over Tauri), nativeWorker + nativeTools
+                               (Rust first, TS worker as fallback), pdfLoader, pdfSecurity/legacyCrypto/pdfCrypto (encryption),
                                pdfWorkerSetup + pdfjs.worker + polyfills (pdf.js), fonts,
                                pageOverlay, textLayout + layoutToMarkdown, pageRanges,
                                imagePrep, fileNames, memoryManager, workerClient, zip*
   types/                       pdf.ts (PDFFile, tool types), worker.ts (RPC envelopes, payloads)
-electron/                      main.cjs (app:// protocol, window, downloads), preload.cjs,
-                               share.cjs + zip.cjs + hotspot.cjs + bluetooth.cjs (Share to phone)
+src-tauri/                     Tauri shell: main.rs (window, single instance), output.rs (work-folder files,
+                               save), native.rs (compress_pdf, run_tool, render_pdf, pdf_info, render_thumb)
+crates/ihp-core/               Rust core: compress.rs, pages.rs (merge/split/organize/rotate/crop),
+                               images.rs (images to PDF), render.rs (PDFium); bin/ test CLIs
 build/                         app icon (icon.ico / icon.png)
-scripts/                       test suites, fixture generators, e2e/ browser + Electron tests
+scripts/                       test suites, fixture generators, e2e/ browser + Tauri tests
 docs/                          release notes, test report, publishing guide, screenshots/
 ```
 
@@ -60,17 +63,21 @@ Workers are written with `serveTask(action, (payload, ctx) => …)` (`services/w
 
 ## Memory
 
-**Budget (the fail-safe).** `electron/memoryGuard.cjs` sets a budget from the PC's RAM: max(1 GB, min(50%, RAM − 3 GB, 16 GB)), overridable with `IHP_MEMORY_BUDGET_MB`. The budget is for the *job*, not the app: twice a second the watchdog sums the app's processes (`app.getAppMetrics()`) and measures the growth since the first job started (the page reports its job count with `ihp:mem-jobs`), or, with no job running, since the lowest point of the last minute. So the app's idle memory (0.5–0.9 GB depending on Windows) never counts. The limit a job gets is `limitFor()`: the budget, or less while Windows itself is short of memory (what the job holds + free memory − a reserve of 10% of RAM, at least 1 GB; never below 256 MB), so on a busy PC the steps below start earlier. `levelFor()` turns growth into a level sent as `ihp:mem` (with `limitMB`): *high* from 70% of the limit (tools work in smaller pieces; `SystemNotice` shows "Low on memory: taking longer"), *over* above the limit (jobs pause at their next `memoryCheckpoint()` / `startJob().checkpoint()`, drop caches registered with `onMemoryPressure`, and force garbage collection: the app runs with `--expose-gc`), and *critical* only as a last resort: Windows nearly out of memory while the job holds over 128 MB (`reason: 'system'`), still over the limit after 8 s of pausing (`reason: 'system'` if Windows shrank the limit, else `'too-big'`), or twice the budget (`'too-big'`). On *critical*, `services/memoryGuard.ts` cancels running jobs (`MemoryLimitError`, "Stopped to protect this PC"). The page answers each *over*/*critical* report (`ihp:mem-ack`); a page that stops answering while over the budget is restarted after 1 s (`?recovered=memory`), one that answers but can't get out of *critical*, after 3 s. Thumbnails don't render while a job runs or memory is over, and pdf.js uses its own JPEG decoder instead of the browser's `ImageDecoder` on PCs with a budget under 2 GB (the browser's decoder keeps each decoded page, 35 MB for a 300 dpi scan, in shared memory).
+**Fail-safe.** `src-tauri/src/watchdog.rs` is the 1.4.0 watchdog in Rust: a budget from the PC's RAM (`IHP_MEMORY_BUDGET_MB` overrides), the app's process tree measured twice a second (`sysinfo`), levels normal/high/over/critical sent as `ihp:mem`, the page's `ack`/`jobs` over `mem_ack`/`mem_jobs`, and, as the last resort, a navigation to `/index.html?recovered=memory` when the page doesn't free memory. `IHP_SIMULATE_FREE_FILE` fakes Windows' free memory for tests. Unit tests: `cargo test` in `src-tauri`. Not ported: the render-process-gone reload (WebView2 has no equivalent event in Tauri 2).
 
-**Crashes.** `render-process-gone` reloads the window with `?recovered=crash`; `components/common/SystemNotice.tsx` explains what happened. Three crashes within a minute show an error and quit.
+**Big files.** `services/byteSource.ts` + `lazyPdf.ts` let pdf-lib parse a PDF while reading stream contents from the Blob only when they're written out; `pdfStreamSave.ts` writes a document in chunks. The Rust tools read whole files, so `nativeTools.MAX_NATIVE_BYTES` (1 GB) sends bigger inputs to the TypeScript engine.
 
-**Big files.** `services/byteSource.ts` + `lazyPdf.ts` let pdf-lib parse a PDF while reading stream contents from the Blob only when they're written out; `pdfStreamSave.ts` writes a document in chunks (`saveToSink`, or `saveSequential` for objects produced on demand). pdf.js reads Blobs of 16 MB or more by range (`openPdfJsDocument`). Thumbnails render only when on screen (`usePageThumbnails` + `VirtualGrid`).
-
-`services/memoryManager.ts` owns object URLs (revoked after download), a canvas pool (canvases are zeroed on release), and pdf.js document destruction (`destroyPdfDocument`; pdf.js 6 has no `doc.destroy()`, it goes through the loading task).
+`services/memoryManager.ts` owns object URLs, a canvas pool, and pdf.js document destruction.
 
 ## Usage log
 
-`electron/usageLog.cjs` writes a local JSON-lines log (see `docs/USAGE_LOG.md` for what's in it and how a lab configures it). Rules: **never log a file name, path or content** (the page can only send fixed fields; error text goes through `describeError`, which strips file-like strings; `usagelog.mjs` checks the log for names), cap the size (3 files × 5 MB), never let a logging failure reach the app. Jobs are logged in `useWorkerBridge.runTask` (`logJob` before the buffers are transferred, `end` on the result); the main process samples RAM and CPU every 500 ms while a job runs; temp files are counted in the `ihp:out-*` handlers and checked at start and quit. The summary tool is `scripts/log-summary.mjs`. When you add a tool that doesn't go through `useWorkerBridge`, log its jobs with `logJob` from `src/services/usageLog.ts`.
+Not in the Tauri build (the bridge has no `log`, so the page shows no controls). `docs/USAGE_LOG.md` documents the 1.4.0 behaviour.
+
+## Rust engines and the native adapter
+
+`services/nativeWorker.ts` `nativeFirst(factory, handlers)` returns a Worker-shaped object. For an action with a handler (and when running in the desktop app) it runs the handler; the handler stages the input PDFs into the app's work folder (`stageInput`: chunks through `out_write`), calls a Tauri command, and returns a result whose output is a work-folder file. A handler that returns `null` or throws sends the same request to the real TypeScript worker, so a Rust limitation is never worse than 1.4.0. `nativeTools.nativeTool({ tool, inputs, args, name })` is the generic handler for `run_tool`; `features/pageTools.native.ts` has the page and stamp tools (`crates/ihp-core/src/stamp.rs`, `pages.rs`, `images.rs`), `features/compress/compress.native.ts` Compress (it falls back when `skipped > 0`). To port another tool: add a function in `crates/ihp-core`, an arm in `native::run_tool`, a spec in `pageTools.native.ts`, and wrap the view's worker factory in `nativeFirst`. Test it with a CLI under `crates/ihp-core/src/bin/` and a script like `scripts/test-pages-rust.py`.
+
+PDFium (`src-tauri/resources/pdfium.dll`, fetched by `scripts/fetch-pdfium.mjs`, not committed) draws PDF to JPG/PNG (`render_pdf`), the redacted pages (`redact_pdf`), the thumbnails (`pdf_info`, `render_thumb`) and counts pages at ingestion (`pdf_probe`); recently used documents stay open (`render.rs` `with_doc`; `out_discard` closes one before deleting its file). `stageInput` copies a picked file into the work folder once and every user of it (page count, previews, the tool) shares that copy. The standard-font width and kerning tables in `afm.rs` are generated by `scripts/gen-afm.mjs`.
 
 ## Subsystems
 
@@ -114,18 +121,12 @@ Workers are written with `serveTask(action, (payload, ctx) => …)` (`services/w
 - `useToolRunner.download(name?)` honors the edited name;
 - the editor shows the same component in a floating card after Export.
 
-**Desktop** (`electron/main.cjs`, `electron/preload.cjs`):
-- `dist/` is served from a privileged `app://ihatepdf/` scheme with explicit MIME types, so `fetch`, module workers and WASM work as on a web server; `file://` is no longer used.
-- `show:false` + `ready-to-show`, a theme-matched `backgroundColor`, `v8CacheOptions: 'bypassHeatCheck'`, and no application menu.
-- Single-instance lock.
-- `will-prevent-unload` is ignored and `closed` → `app.quit()` on every platform, so the X button always ends the process.
-- `will-download` saves to `Downloads/IHatePDF/` with ` (n)` de-duplication and sends `ihp:saved {name, path}`. The preload exposes `window.ihpDesktop.onSaved` / `showInFolder`, which the AutoSave component uses.
-- The icon is at `build/icon.ico` (generated from `public/favicon.svg`). The packaged `app.asar` holds only `dist/` + `electron/`: `node_modules` is excluded, since everything is bundled by Vite.
-- **Share to phone** (`src/features/share/ShareView.tsx`, desktop only). Files and folders go to a phone three ways:
-  - *Same Wi-Fi* / *PC hotspot*: `share.cjs` serves a token-protected download page (QR code) for 1/5/10 min; folders and "everything" stream as stored (uncompressed) `.zip` from `zip.cjs`, ZIP64 past 4 GB. `hotspot.cjs` turns on Windows Mobile Hotspot through WinRT and shows a `WIFI:` join QR first, and turns it off afterwards if it turned it on.
-  - *Bluetooth*: `bluetooth.cjs` scans (~8 s inquiry, phones only, nothing preselected) and sends with OBEX Object Push over an RFCOMM socket; several items go as one `.zip`. Android only, 4 GB max.
-  - Hotspot and Bluetooth call Windows directly through `koffi` (FFI, in-process). No PowerShell or helper `.exe`: McAfee deleted a compiled helper, and PowerShell `Add-Type` (compiling C# at runtime) is a common antivirus trigger. WinRT method slots/IIDs come from `C:\Windows\System32\WinMetadata`.
-  - The installer is per-machine (one UAC prompt) so `build/installer.nsh` can add a Windows Firewall rule (IHatePDF only, TCP, local subnet) and remove any block rule; without it Windows prompts on first share. `scripts/e2e/share.mjs` tests it all on 127.0.0.1 (`IHP_SHARE_HOST`), so it never triggers that prompt.
+**Desktop** (`src-tauri/`, `src/services/desktopBridge.ts`):
+- Tauri serves `dist/` from the system WebView2 (`http://tauri.localhost`); `desktopBridge.ts` defines `window.ihpDesktop` (the same API the Electron preload had) over `window.__TAURI__`.
+- Results that are big or streamed are written to `%TEMP%\IHatePDF-work\` (`out_*` commands); **Save** copies them into `Downloads\IHatePDF\` with ` (n)` de-duplication and emits `ihp:saved`. Results held in memory go through the same route (`toolOutput.saveResult` stages them first): WebView2's blob-link downloads did not fire Tauri's download hook.
+- The work folder is emptied at start and when the window closes. Closing the window exits the app.
+- The installer is built with `npm run build:exe` (`scripts/build-exe.mjs`: fetches PDFium, runs `tauri build --bundles nsis`, copies the installer to `FinalApp/IHatePDF-Setup.exe`).
+- Share to phone and the usage log are not in this build (the bridge has no `share`/`bluetooth`/`log`; `ShareView` says so).
 - CI: `.github/workflows/windows-installer.yml` builds `IHatePDF-Setup.exe` on `windows-latest` and uploads it as an artifact.
 
 **Editor input** — pressing on an object captures the pointer on the page layer (for dragging), so the browser delivers `dblclick` to the layer, not the object. `PageCanvas` therefore also handles double-click on the layer and edits the current selection. Esc and Ctrl+Enter both finish an edit and keep the text.
@@ -136,7 +137,8 @@ Workers are written with `serveTask(action, (payload, ctx) => …)` (`services/w
 - `renderCompare.mjs` does a per-page pixel diff of two PDFs;
 - `snapshot.mjs` renders page 1 of several PDFs side by side;
 - `items.mjs` dumps text items;
-- `electron.mjs` tests the desktop app (run under `xvfb-run` on Linux).
+- `tauri.mjs`, `quality-tauri.mjs`, `bench-compress.mjs`, `bench-compress-mem.mjs` drive the running Tauri app over the debug port (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222 src-tauri/target/release/ihatepdf.exe`); `all-tools.mjs` does too with `E2E_CDP=http://127.0.0.1:9222`.
+- Rust: `scripts/test-compress-rust.mjs` + `pdf_regress.py` (pages, text, pixels), `test-pages-rust.py`, `quality_score.py` (SSIM of Compress), `bench-startup.mjs`.
 
 Large fixtures are generated into `test-fixtures/big/` (gitignored).
 
@@ -152,10 +154,13 @@ npm run lint                # oxlint (warnings only)
 npx tsx scripts/generateTestFixtures.ts && npm test      # 17 + 33 automated checks
 npx tsx scripts/test-streaming-tools.ts <file.pdf>      # every streaming tool on a big file, with peak memory
 node scripts/generateScanFixtures.mjs                    # realistic 300 dpi JPEG scans (10/50/150/500 MB) and journals in test-fixtures/scans/
-npx tsx scripts/e2e/memory/make-inputs.ts; node scripts/e2e/memory/matrix.mjs   # memory fail-safe tests in the real app (see scripts/e2e/memory/README.md)
+(cd crates/ihp-core && cargo build --release)           # CLIs used by the Rust tests
+PY=python node scripts/test-compress-rust.mjs            # Rust Compress regression (needs pymupdf, numpy, pillow)
+python scripts/test-pages-rust.py                        # Rust page tools
 npx vite preview --port 4173 & node scripts/e2e/all-tools.mjs   # all 28 tools in Chromium
 node scripts/e2e/screenshots.mjs   # regenerate docs/screenshots (needs the preview server + big fixtures)
-npm run build:exe           # FinalApp/IHatePDF-Setup.exe (Linux needs wine64 + wine32)
+npm run tauri:dev           # app with hot reload (needs Rust + MSVC Build Tools)
+npm run build:exe           # FinalApp/IHatePDF-Setup.exe
 ```
 
 ## Releases

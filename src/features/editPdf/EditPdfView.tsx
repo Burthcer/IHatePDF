@@ -33,6 +33,8 @@ import { Button, IconButton, Kbd, Notice, ProgressLine, Spinner, cn } from '../.
 import { openPdfJsDocument } from '../../services/pdfWorkerSetup';
 import { memoryManager } from '../../services/memoryManager';
 import { WorkerClient } from '../../services/workerClient';
+import { nativeFirst } from '../../services/nativeWorker';
+import { exportNative, openRecord, previewNative } from './editApply.native';
 import { discardResult, saveResult, type ResultData } from '../../services/toolOutput';
 import { usePageThumbnails } from '../../hooks/usePageThumbnails';
 import type { PDFFile } from '../../types/pdf';
@@ -170,7 +172,7 @@ export const EditPdfView: React.FC<EditPdfViewProps> = ({ initialFiles = [], onB
   useEffect(() => {
     if (!file) return;
     let cancelled = false;
-    const client = new WorkerClient(() => new Worker(new URL('./editPdf.worker.ts', import.meta.url), { type: 'module' }));
+    const client = new WorkerClient(nativeFirst(() => new Worker(new URL('./editPdf.worker.ts', import.meta.url), { type: 'module' }), { OPEN: openRecord, PREVIEW: previewNative, EXPORT: exportNative }));
     clientRef.current = client;
     setPages([]);
     setAnalyses({});

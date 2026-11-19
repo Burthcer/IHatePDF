@@ -7,6 +7,7 @@
 
 import type { ToolOutput } from '../types/worker';
 import { collectGarbage, memoryState } from './memoryGuard';
+import { stageInput } from './nativeWorker';
 
 interface OutputMessage {
   id: string;
@@ -128,6 +129,16 @@ export async function saveResult(data: ResultData, fileName: string, mimeType = 
   // (Wrapping a Blob only references its data.)
   const blob = data instanceof ArrayBuffer ? new Blob([data], { type: mimeType }) : data.kind === 'blob' ? new Blob([data.blob], { type: mimeType }) : null;
   if (!blob) throw new Error('This result is not ready yet.');
+  // Desktop app: the webview's download hook is unreliable for blob links, so write the file through the app instead.
+  if (window.ihpDesktop) {
+    const tmp = await stageInput(blob);
+    try {
+      await window.ihpDesktop.output.save(tmp, fileName);
+    } finally {
+      void window.ihpDesktop.output.discard(tmp);
+    }
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
