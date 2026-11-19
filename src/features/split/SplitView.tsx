@@ -21,7 +21,26 @@ interface Part {
   id: number;
   text: string;
   name: string;
+  /** Filled in by the app (not typed): keeps starting right after the part before it when that part changes. */
+  follows: boolean;
 }
+
+/** Highest page (1-based) a ranges text covers, or 0. */
+const lastPage = (text: string, total: number) => {
+  try {
+    return Math.max(0, ...rangesToPages(parsePageRanges(text, total)));
+  } catch {
+    return 0;
+  }
+};
+/** The pages after `last`: "6-12", "12", or "" when none are left. */
+const pagesAfter = (last: number, total: number) => (last >= total ? '' : last + 1 === total ? String(total) : `${last + 1}-${total}`);
+/** Parts the app filled in start right after the part before them (part 1 = 1-5 → part 2 = 6-…). */
+const reflow = (ps: Part[], total: number) => {
+  const out = [...ps];
+  for (let i = 1; i < out.length; i++) if (out[i].follows) out[i] = { ...out[i], text: pagesAfter(lastPage(out[i - 1].text, total), total) };
+  return out;
+};
 
 /** One colour per output file, on its card and around its pages (readable on light and dark). */
 const PART_COLORS = ['#2563eb', '#ea580c', '#16a34a', '#9333ea', '#db2777', '#0891b2', '#ca8a04', '#dc2626'];
@@ -47,7 +66,7 @@ export const SplitView: React.FC<SplitViewProps> = ({ initialFiles = [], onBack 
   const [files, setFiles] = useState<PDFFile[]>(initialFiles.slice(0, 1));
   const [mode, setMode] = useState<Mode>('parts');
   const nextId = useRef(2);
-  const [parts, setParts] = useState<Part[]>([{ id: 1, text: '1', name: '' }]);
+  const [parts, setParts] = useState<Part[]>([{ id: 1, text: '1', name: '', follows: false }]);
   const [active, setActive] = useState(1);
   const [everyN, setEveryN] = useState(2);
   const file = files[0];
@@ -60,8 +79,9 @@ export const SplitView: React.FC<SplitViewProps> = ({ initialFiles = [], onBack 
 
   const parsed = useMemo(
     () =>
-      parts.map((part) => {
+      parts.map((part, i) => {
         if (!total) return { ranges: [] as PageRange[], error: null as string | null };
+        if (part.follows && !part.text.trim()) return { ranges: [] as PageRange[], error: `No pages left after part ${i}: change part ${i} or remove this part.` };
         try {
           return { ranges: parsePageRanges(part.text, total), error: null };
         } catch (e) {
@@ -108,27 +128,47 @@ export const SplitView: React.FC<SplitViewProps> = ({ initialFiles = [], onBack 
   /** 0-based page → the output files (0-based) it goes into. */
   const filesOf = useMemo(() => {
     const m = new Map<number, number[]>();
-    groups.forEach((g, gi) => g.forEach((p) => m.set(p, [...(m.get(p) ?? []), gi])));
+    groups.forEach((g, gi) =>
+      g.forEach((p) => {
+        const at = m.get(p) ?? [];
+        if (!at.includes(gi)) m.set(p, [...at, gi]);
+      })
+    );
     return m;
   }, [groups]);
 
+  /** Per part: its pages that other parts also take, and which parts (shown as a warning on the card). */
+  const overlaps = useMemo(
+    () =>
+      groups.map((g, gi) => {
+        const shared = g.filter((p) => (filesOf.get(p)?.length ?? 0) > 1);
+        const others = [...new Set(shared.flatMap((p) => filesOf.get(p)!.filter((x) => x !== gi)))].sort((a, b) => a - b);
+        return { pages: formatPageSet(shared.map((p) => p + 1)), count: new Set(shared).size, others };
+      }),
+    [groups, filesOf]
+  );
+  const leftOut = useMemo(() => (choosing && total ? formatPageSet(Array.from({ length: total }, (_, i) => i).filter((p) => !filesOf.has(p)).map((p) => p + 1)) : ''), [choosing, total, filesOf]);
+
   const edit = (id: number, change: Partial<Part>) => {
-    setParts((ps) => ps.map((p) => (p.id === id ? { ...p, ...change } : p)));
+    // Typing (or tapping pages) makes a part the user's own; parts after it that the app filled in follow along.
+    const own = change.text !== undefined ? { follows: false } : {};
+    setParts((ps) => reflow(ps.map((p) => (p.id === id ? { ...p, ...change, ...own } : p)), total));
     runner.reset();
   };
 
   const addPart = () => {
     // Start the new part right after the last one, so "Add part" walks through the document.
-    const last = Math.max(0, ...rangesToPages(parsed[parsed.length - 1]?.ranges ?? []));
-    const text = last >= total ? '' : last + 1 === total ? String(total) : `${last + 1}-${total}`;
     const id = nextId.current++;
-    setParts((ps) => [...ps, { id, text, name: '' }]);
+    setParts((ps) => reflow([...ps, { id, text: '', name: '', follows: true }], total));
     setActive(id);
     runner.reset();
   };
 
   const removePart = (id: number) => {
-    const next = parts.filter((p) => p.id !== id);
+    const next = reflow(
+      parts.filter((p) => p.id !== id),
+      total
+    );
     setParts(next);
     if (id === active) setActive(next[next.length - 1].id);
     runner.reset();
@@ -231,12 +271,19 @@ export const SplitView: React.FC<SplitViewProps> = ({ initialFiles = [], onBack 
                     <p className={cn('text-2xs pl-5', err ? 'text-danger' : 'font-mono text-muted')}>
                       {err ?? `${count} page${count === 1 ? '' : 's'} → ${fileNames[i] ?? ''}`}
                     </p>
+                    {!err && overlaps[i]?.count > 0 && (
+                      <p className="text-2xs pl-5 text-warn">
+                        {overlaps[i].count === 1 ? 'Page' : 'Pages'} {overlaps[i].pages} {overlaps[i].count === 1 ? 'is' : 'are'} also in part{' '}
+                        {overlaps[i].others.map((o) => o + 1).join(', ')} (in both files)
+                      </p>
+                    )}
                   </div>
                 );
               })}
               <Button size="sm" icon={<Plus className="w-3.5 h-3.5" />} onClick={addPart} disabled={!total}>
                 Add part
               </Button>
+              {leftOut && <p className="text-2xs text-muted">Not in any part (left out): {leftOut}</p>}
             </div>
           )}
           {mode === 'every' && (
@@ -274,13 +321,14 @@ export const SplitView: React.FC<SplitViewProps> = ({ initialFiles = [], onBack 
             const page = i + 1;
             const fs = filesOf.get(i);
             const color = fs ? partColor(fs[0]) : undefined;
+            const shared = (fs?.length ?? 0) > 1;
             return (
               <PageThumb
                 key={i}
                 src={p.url}
                 viewRef={thumbRef(i)}
                 aspect={p.width / p.height}
-                ring={outputs > 1 || choosing ? color : undefined}
+                ring={fs && (outputs > 1 || choosing) ? fs.slice(0, 2).map(partColor) : undefined}
                 selected={choosing && activePages.has(page)}
                 dimmed={!fs}
                 onClick={choosing ? () => togglePage(page) : undefined}
@@ -288,9 +336,10 @@ export const SplitView: React.FC<SplitViewProps> = ({ initialFiles = [], onBack 
                   <span>
                     {page}
                     {fs && outputs > 1 && (
-                      <span className="font-medium" style={{ color }}>
+                      <span className={cn('font-medium', shared && 'text-warn')} style={shared ? undefined : { color }} title={shared ? 'This page goes into more than one file' : undefined}>
                         {' '}
-                        · {choosing ? 'part' : 'file'} {fs.map((f) => f + 1).join(', ')}
+                        · {choosing ? 'part' : 'file'}
+                        {shared ? 's' : ''} {fs.map((f) => f + 1).join(', ')}
                       </span>
                     )}
                   </span>

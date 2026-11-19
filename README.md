@@ -14,7 +14,7 @@
 ![Tests](https://img.shields.io/badge/tests-85_passing-247a48?style=flat-square)
 [![License: MIT](https://img.shields.io/badge/license-MIT-171612?style=flat-square)](LICENSE)
 
-**New in 2.2:** Split parts get their own file names and colours (each part's pages are outlined in its colour). **2.1:** Split works in parts, each with its own page ranges and its own PDF; reorder arrows in Organize and Images to PDF; Edit PDF fits narrow windows. **New in 2.0:** rebuilt in Rust. A 28 MB installer instead of 124 MB, a Compress that is about 3x faster and uses about 5x less extra memory, and a PowerPoint to PDF that now matches PowerPoint's own output. [Benchmarks and data](docs/benchmarks/README.md) · [What changed](#whats-new-in-20)
+**New in [2.2.1](https://github.com/Burthcer/IHatePDF/releases/tag/v2.2.1):** in Split, a new part starts right after the one before it (and keeps following it until you type in it), and pages in two parts or in none are pointed out. **[2.2](https://github.com/Burthcer/IHatePDF/releases/tag/v2.2.0):** Split parts get their own file names and colours. **[2.1](https://github.com/Burthcer/IHatePDF/releases/tag/v2.1.0):** Split works in parts, each with its own page ranges and its own PDF; reorder arrows in Organize and Images to PDF; Edit PDF fits narrow windows. **[2.0](https://github.com/Burthcer/IHatePDF/releases/tag/v2.0.0):** rebuilt in Rust. A 28 MB installer instead of 124 MB, a Compress that is about 3x faster and uses about 5x less extra memory, and a PowerPoint to PDF that now matches PowerPoint's own output. [Benchmarks and data](docs/benchmarks/README.md) · [What changed](#whats-new-in-20)
 
 <br>
 
