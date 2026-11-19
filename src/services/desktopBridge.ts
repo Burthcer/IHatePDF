@@ -56,4 +56,12 @@ if (tauri && !window.ihpDesktop) {
     },
   };
   window.ihpDesktop = bridge as unknown as typeof window.ihpDesktop;
+
+  // The WebView blocks new windows, so target=_blank links did nothing: open web links in the default browser.
+  document.addEventListener('click', (e) => {
+    const a = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
+    if (!a || !/^https?:/i.test(a.href) || new URL(a.href).origin === location.origin) return;
+    e.preventDefault();
+    void invoke('plugin:opener|open_url', { url: a.href }).catch((err) => console.warn('Could not open link:', err));
+  });
 }
